@@ -1,0 +1,10 @@
+ollama:
+  model: "qwen2.5:7b"
+  temperature: 0.0
+
+search:
+  backend: "tavily"   # (placeholder pour switcher plus tard)
+  max_results: 2
+
+cli:
+  thread_id: "1"
