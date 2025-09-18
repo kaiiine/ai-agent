@@ -1,0 +1,18 @@
+ollama
+ipykernel
+python-dotenv
+pydantic
+langchain
+langchain-ollama
+requests
+openai
+googlemaps
+
+# graph
+langgraph 
+langsmith
+
+# tools
+langchain-tavily
+
+pydantic-settings
