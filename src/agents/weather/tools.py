@@ -1,7 +1,7 @@
 """
 Weather tools for agents.
 """
-from src.config.config import GEOCODE_CONFIG
+from configs.config import GEOCODE_CONFIG
 import requests
 from langchain.tools import tool
 
