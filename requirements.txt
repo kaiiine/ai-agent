@@ -16,3 +16,6 @@ langsmith
 langchain-tavily
 
 pydantic-settings
+
+# Interface Rich
+rich
