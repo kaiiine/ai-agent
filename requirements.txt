@@ -19,3 +19,9 @@ pydantic-settings
 
 # Interface Rich
 rich
+
+# mcp
+mcp[cli]
+
+imap-client
+imap-tools

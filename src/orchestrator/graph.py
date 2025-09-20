@@ -14,6 +14,7 @@ def build_orchestrator():
     def chatbot(state: GlobalState):
         # LLM décide: répondre direct OU appeler un tool
         return {"messages": [llm_with_tools.invoke(state["messages"])]}
+        
 
     g = StateGraph(GlobalState)
     g.add_node("chatbot", chatbot)
