@@ -1,8 +1,6 @@
-import time
+import json
 from time import perf_counter
-
 from langchain_core.messages import AIMessageChunk, AIMessage, ToolMessage
-
 from rich.live import Live
 from rich.rule import Rule
 from rich.prompt import Prompt
@@ -13,8 +11,36 @@ from .config import fmt_ms, SessionConfig
 from .language import detect_lang, enforce_lang_ephemeral_system, enforce_lang_output
 from .panels import live_panel_initial, tool_call_panel
 from .render import update_live_markdown, finalize_live
+from .commands import debug_state
 
 console = Console()
+
+
+def _print_prompt_debug(state: dict):
+    """Affiche tout le prompt envoyé au LLM (mode debug)."""
+    try:
+        parts = []
+        for m in state.get("messages", []):
+            if isinstance(m, dict):
+                parts.append(f"[bold]{m.get('role','?')}:[/bold] {m.get('content','')}")
+        console.print(Panel("\n\n".join(parts), title="🧾 Prompt complet", border_style="magenta"))
+    except Exception as e:
+        console.print(f"[red]Erreur affichage prompt: {e}[/red]")
+
+
+def _print_tool_calls_debug(msg, node: str):
+    """Affiche les tool-calls émis par le LLM (mode debug)."""
+    tool_calls = getattr(msg, "tool_calls", None) or []
+    for tc in tool_calls:
+        name = tc.get("name") or "tool"
+        args = tc.get("args") or tc.get("arguments") or {}
+        console.print(Panel(
+            f"[bold cyan]Nom:[/bold cyan] {name}\n\n"
+            f"[bold]Arguments:[/bold]\n```json\n{json.dumps(args, indent=2, ensure_ascii=False)}\n```",
+            title=f"🔧 Appel d’outil (nœud: {node})",
+            border_style="cyan"
+        ))
+
 
 def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     console.print(Rule(style="dim"))
@@ -22,11 +48,9 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     if not user_message:
         return
 
-    # Quitter
     if user_message.lower() in {"quit", "exit", "q"}:
         raise KeyboardInterrupt
 
-    # Slash-commands
     if user_message.startswith("/"):
         from .commands import handle_slash
         out_panel = handle_slash(user_message, state, cfg)
@@ -34,21 +58,25 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             console.print(out_panel)
         return
 
-    # Langue
+    cfg.debug = debug_state["enabled"]
+
+    # Détection langue
     user_lang = cfg.lang_pref if cfg.lang_pref in {"fr", "en"} else detect_lang(user_message)
     enforce_lang_ephemeral_system(state, user_lang)
 
-    # Ajoute le message user
+    # Ajout du message
     state["messages"].append({"role": "user", "content": user_message})
 
-    # Config LangGraph
+    # Affichage du prompt complet si debug
+    if cfg.debug:
+        _print_prompt_debug(state)
+
     config = {"configurable": {"thread_id": cfg.thread_id}}
 
     console.print("[bold green]🤔 L'agent réfléchit...[/]")
     agent_panel = live_panel_initial()
 
     try:
-        from rich.live import Live
         with Live(agent_panel, console=console, refresh_per_second=20) as live:
             response_content = ""
             saw_any_token = False
@@ -57,6 +85,10 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
 
             for msg, meta in graph.stream(state, config=config, stream_mode="messages"):
                 node = meta.get("langgraph_node") or "unknown"
+
+                if cfg.debug:
+                    console.print(f"[dim]node={node} run_id={meta.get('run_id')}[/dim]")
+                    _print_tool_calls_debug(msg, node)
 
                 if isinstance(msg, ToolMessage):
                     tool_name = getattr(msg, "tool_name", None) or meta.get("tool", "tool")
@@ -83,7 +115,6 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 finalize_live(live, response_final, footer)
                 state["messages"].append({"role": "assistant", "content": response_final})
             else:
-                # Fallback
                 final_state = graph.invoke(state, config=config)
                 last = final_state["messages"][-1]
                 response_text = last["content"] if isinstance(last, dict) else getattr(last, "content", "")

@@ -2,15 +2,18 @@
 import os, yaml
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
+load_dotenv()  
 
 class Settings(BaseSettings):
     # LLM
-    ollama_model: str = "qwen2.5:7b"
+    ollama_model: str = "llama3:8b"
     temperature: float = 0.0
 
     # Search
+    tavily_api_key: str = os.getenv("TAVILY_API_KEY")
     search_backend: str = "tavily"
-    search_max_results: int = 2
+    search_max_results: int = 10
 
     # CLI
     cli_thread_id: str = "1"

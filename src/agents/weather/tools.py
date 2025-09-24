@@ -33,7 +33,7 @@ def get_coordinates(city: str) -> dict:
 
 @tool
 def get_weather_by_city(city: str) -> dict:
-    """Retourne la météo actuelle pour une ville (lookup coords interne)."""
+    """Retourne la météo (température, vent etc..) actuelle pour une ville (lookup coords interne)."""
     coords = get_coordinates(city)
     lat, lon = coords["latitude"], coords["longitude"]
     r = requests.get(
