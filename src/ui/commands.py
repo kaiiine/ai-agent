@@ -54,5 +54,10 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig):
     if cmd == "/dump":
         formatted = Pretty(state["messages"], expand_all=True)
         return Panel(formatted, title="🗂️ Dump complet de l'historique", border_style="cyan")
+    
+    if cmd == "/deepth_search":
+        cfg.depth_search = not cfg.depth_search
+        status = "activée" if cfg.depth_search else "désactivée"
+        return Panel(f"🔎 Depth Search {status}.", border_style="magenta", title="Commande")
 
     return None
