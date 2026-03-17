@@ -7,8 +7,12 @@ load_dotenv()
 
 class Settings(BaseSettings):
     # LLM
-    ollama_model: str = "llama3:8b"
+    ollama_model: str = "lfm2:latest"
     temperature: float = 0.0
+
+    # GROQ
+    groq_model: str = "openai/gpt-oss-20b"
+    groq_api_key: str|None = None
 
     # Search
     tavily_api_key: str = os.getenv("TAVILY_API_KEY")
@@ -52,12 +56,12 @@ def _load_yaml_config() -> dict:
 def _merge_yaml_into_settings() -> Settings:
     yml = _load_yaml_config()
     return Settings(
-        ollama_model=yml.get("ollama", {}).get("model", "qwen2.5:7b"),
+        ollama_model=yml.get("ollama", {}).get("model", "lfm2:latest"),
         temperature=yml.get("ollama", {}).get("temperature", 0.0),
         search_backend=yml.get("search", {}).get("backend", "tavily"),
         search_max_results=yml.get("search", {}).get("max_results", 2),
         cli_thread_id=yml.get("cli", {}).get("thread_id", "1"),
-        # Pas besoin de passer les API keys ici : BaseSettings va
+        groq_model=yml.get("groq", {}).get("model", "openai/gpt-oss-20b")
         # les prendre automatiquement depuis l'environnement.
     )
 
