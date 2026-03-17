@@ -6,6 +6,7 @@ from typing import Sequence, Set
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 
 # === SETTIGNS ===
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -57,14 +58,21 @@ def _load_credentials(scopes: Sequence[str]):
             client_config = json.load(f)
 
         flow = InstalledAppFlow.from_client_config(client_config, SCOPES_ALL)
-        creds = creds = flow.run_local_server(port=0, open_browser=False)
+        creds = flow.run_local_server(port=0, open_browser=False)
         with open(TOKEN_PATH, "wb") as f:
             pickle.dump(creds, f)
 
     elif not creds.valid and getattr(creds, "refresh_token", None):
-        creds.refresh(Request())
-        with open(TOKEN_PATH, "wb") as f:
-            pickle.dump(creds, f)
+        try:
+            creds.refresh(Request())
+        except RefreshError:
+            # 🔥 refresh token mort → on repart de zéro
+            if TOKEN_PATH.exists():
+                TOKEN_PATH.unlink()
+            return _load_credentials(scopes)
+        else:
+            with open(TOKEN_PATH, "wb") as f:
+                pickle.dump(creds, f)
 
     return creds
 

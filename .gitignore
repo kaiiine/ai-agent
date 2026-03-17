@@ -209,3 +209,4 @@ __marimo__/
 # Other files
 credentials.json
 gcp-oauth.keys.json
+models/

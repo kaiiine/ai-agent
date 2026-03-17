@@ -2,27 +2,51 @@ ollama
 ipykernel
 python-dotenv
 pydantic
+pydantic-settings
 langchain
 langchain-ollama
+langchain-groq
+langchain-tavily
 requests
 openai
 googlemaps
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
 
 # graph
 langgraph 
 langsmith
 
 # tools
-langchain-tavily
 tavily-python
-
-pydantic-settings
 
 # Interface Rich
 rich
+prompt_toolkit
+
+# Slack
+slack_sdk
 
 # mcp
 mcp[cli]
 
+# Email
 imap-client
 imap-tools
+
+# GROQ
+groq
+
+# PyTorch & ML (install separately with CUDA support)
+# torch (install with: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121)
+# torchvision
+transformers==4.44.2
+diffusers
+accelerate
+safetensors
+pillow
+huggingface-hub
+
+
+click
