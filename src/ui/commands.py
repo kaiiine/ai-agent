@@ -9,17 +9,23 @@ from .config import SessionConfig
 debug_state = {"enabled": False}
 
 _COMMANDS = [
-    ("/new",          "démarre un nouveau thread de conversation"),
-    ("/clear",        "efface l'écran et réaffiche l'en-tête"),
-    ("/help",         "affiche cette liste de commandes"),
-    ("/model <nom>",  "change le modèle LLM"),
-    ("/temp <val>",   "change la température (ex: /temp 0.7)"),
-    ("/lang <fr|en>", "force la langue de réponse"),
-    ("/save",         "sauvegarde le transcript de la session"),
-    ("/config",       "affiche la configuration courante"),
-    ("/debug",        "active/désactive le mode debug"),
-    ("/dump",         "affiche tous les messages du thread"),
-    ("q / exit",      "quitte Axon"),
+    ("/attach",            "joint un fichier (code, texte, PDF, image) à ton prochain message"),
+    ("/paste",             "colle une image depuis le presse-papiers"),
+    ("/attachments",       "liste les pièces jointes en attente"),
+    ("/detach [fichier]",  "supprime une pièce jointe (ou toutes si sans argument)"),
+    ("/letter",            "génère une lettre de motivation — attach ton CV d'abord, puis colle l'offre"),
+    ("/upgrade",           "améliore une lettre existante — attach ton CV, colle la lettre puis l'offre"),
+    ("/clear",             "efface l'écran et réaffiche l'en-tête"),
+    ("/new",               "démarre un nouveau thread de conversation"),
+    ("/help",              "affiche cette liste de commandes"),
+    ("/model <nom>",       "change le modèle LLM"),
+    ("/temp <val>",        "change la température (ex: /temp 0.7)"),
+    ("/lang <fr|en>",      "force la langue de réponse"),
+    ("/save",              "sauvegarde le transcript de la session"),
+    ("/config",            "affiche la configuration courante"),
+    ("/debug",             "active/désactive le mode debug"),
+    ("/dump",              "affiche tous les messages du thread"),
+    ("q / exit",           "quitte Axon"),
 ]
 
 

@@ -6,9 +6,13 @@ from dotenv import load_dotenv
 load_dotenv()  
 
 class Settings(BaseSettings):
-    # LLM
+    # LLM local
     ollama_model: str = "lfm2:latest"
     temperature: float = 0.0
+
+    # Ollama Cloud
+    ollama_cloud_model: str = "gpt-oss:120b-cloud"
+    ollama_api_key: str | None = None  # OLLAMA_API_KEY dans .env
 
     # GROQ
     groq_model: str = "openai/gpt-oss-20b"

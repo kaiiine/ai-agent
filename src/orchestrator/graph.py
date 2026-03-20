@@ -9,7 +9,7 @@ from langgraph.graph import StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from src.orchestrator.state import GlobalState
-from src.llm.models import make_llm
+from src.llm.models import make_llm, make_llm_ollama_cloud
 from src.llm.prompts import SYSTEM_PROMPT
 from src.orchestrator.registry import build_all_tools
 from src.infra.checkpoint import build_checkpointer
@@ -27,7 +27,7 @@ def _ensure_system_prompt(messages: List, tools_names: str, today: str) -> List:
 
 
 def _chat_node_factory():
-    llm = make_llm()
+    llm = make_llm_ollama_cloud()
     tools = build_all_tools()
     llm_with_tools = llm.bind_tools(tools)
 

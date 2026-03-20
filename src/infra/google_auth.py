@@ -33,8 +33,11 @@ SCOPES_DRIVE = [
     "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/drive.metadata.readonly",
 ]
+SCOPES_CALENDAR = [
+    "https://www.googleapis.com/auth/calendar",
+]
 SCOPES_ALL: list[str] = list({
-    *SCOPES_GMAIL, *SCOPES_DOCS, *SCOPES_SLIDES, *SCOPES_SHEETS, *SCOPES_DRIVE
+    *SCOPES_GMAIL, *SCOPES_DOCS, *SCOPES_SLIDES, *SCOPES_SHEETS, *SCOPES_DRIVE, *SCOPES_CALENDAR
 })
 
 def _load_credentials(scopes: Sequence[str]):
@@ -95,3 +98,6 @@ def get_sheets_service():
 
 def get_drive_service():
     return get_service("drive", "v3", SCOPES_DRIVE)
+
+def get_calendar_service():
+    return get_service("calendar", "v3", SCOPES_CALENDAR)

@@ -54,7 +54,7 @@ def banner():
         Text(""),
         _c("kaine's intelligent agent",                 dim_o),
         Text(""),
-        _c("help · clear · new · save · config · q",    "dim"),
+        _c("help · attach · clear · new · save · q",    "dim"),
         Text(""),
     )
 
