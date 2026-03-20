@@ -7,11 +7,22 @@ from src.agents.gmail.tools import gmail_search, gmail_edit_draft, gmail_confirm
 from src.agents.google_drive.tools import drive_find_file_id, drive_list_files, drive_delete_file, drive_get_file_metadata, drive_read_file
 from src.agents.google_doc.tools import google_docs_create, google_docs_update, google_docs_read
 from src.agents.google_slide.tools import create_presentation, add_slide
+from src.agents.filesystem.tools import local_find_file, local_read_file, local_list_directory
+from src.agents.google_calendar.tools import (
+    calendar_list_events, calendar_create_event, calendar_update_event,
+    calendar_delete_event, calendar_list_calendars, calendar_search_events,
+)
 from src.agents.time.tools import get_current_time
 from src.agents.slack.tools import (
     slack_list_channels, slack_read_channel, slack_get_mentions,
     slack_list_dms, slack_send_message, slack_search_messages, slack_find_user,
 )
+from src.agents.shell.tools import shell_run, shell_cd, shell_pwd, shell_ls, notify, clipboard_read, clipboard_write
+from src.agents.git.tools import git_status, git_log, git_diff, git_suggest_commit, url_fetch
+from src.agents.system.tools import (
+    screenshot_take, process_list, process_kill, wifi_info,
+)
+from src.agents.arxiv.tools import arxiv_search, arxiv_get_paper
 
 
 def build_all_tools() -> List[BaseTool]:
@@ -40,6 +51,17 @@ def build_all_tools() -> List[BaseTool]:
         # === GOOGLE SLIDES ===
         create_presentation,
         add_slide,
+        # === FILESYSTEM LOCAL ===
+        local_find_file,
+        local_list_directory,
+        local_read_file,
+        # === GOOGLE CALENDAR ===
+        calendar_list_events,
+        calendar_create_event,
+        calendar_update_event,
+        calendar_delete_event,
+        calendar_list_calendars,
+        calendar_search_events,
         # === SLACK ===
         slack_list_channels,
         slack_read_channel,
@@ -48,4 +70,26 @@ def build_all_tools() -> List[BaseTool]:
         slack_send_message,
         slack_search_messages,
         slack_find_user,
+        # === SHELL / SYSTÈME ===
+        shell_cd,
+        shell_pwd,
+        shell_ls,
+        shell_run,
+        notify,
+        clipboard_read,
+        clipboard_write,
+        # === GIT + WEB ===
+        git_status,
+        git_log,
+        git_diff,
+        git_suggest_commit,
+        url_fetch,
+        # === SYSTÈME ===
+        screenshot_take,
+        process_list,
+        process_kill,
+        wifi_info,
+        # === ARXIV ===
+        arxiv_search,
+        arxiv_get_paper,
     ]

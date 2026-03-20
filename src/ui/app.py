@@ -6,7 +6,7 @@ from rich.align import Align
 
 from src.orchestrator.graph import build_orchestrator
 from src.ui.config import SessionConfig
-from src.ui.panels import banner
+from src.ui.panels import banner, ACCENT
 from src.ui.streaming import stream_once
 
 load_dotenv()
@@ -26,5 +26,5 @@ def run_cli():
             stream_once(graph, state, cfg)
     except KeyboardInterrupt:
         console.print()
-        console.print(Rule("à bientôt", characters="·", style="dim white"))
+        console.print(Rule("à bientôt", characters="·", style=f"dim {ACCENT}"))
         console.print()
