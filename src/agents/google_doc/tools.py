@@ -9,7 +9,14 @@ _LAST_CREATED_DOC_ID: str | None = None
 @tool("google_docs_create")
 def google_docs_create(title: str) -> dict:
     """
-    Crée un nouveau Google Doc vide. Utiliser SEULEMENT quand l'utilisateur demande explicitement de créer un document.
+    Crée un nouveau Google Doc vide avec le titre donné.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - créer un nouveau document Google Docs
+    - démarrer un nouveau document partagé
+    - créer un fichier texte dans Google Drive
+
+    Mots-clés : créer document, Google Docs, nouveau fichier, document partagé, Drive
     """
     global _LAST_CREATED_DOC_ID
 
@@ -39,7 +46,14 @@ def google_docs_create(title: str) -> dict:
 @tool("google_docs_update")
 def google_docs_update(doc_id: str, md: str) -> dict:
     """
-    Ajoute du contenu à un Google Doc existant.
+    Ajoute du contenu texte à un Google Doc existant.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - écrire dans un Google Doc
+    - ajouter du texte ou du contenu à un document
+    - remplir un document Google Docs
+
+    Mots-clés : écrire dans Doc, ajouter contenu, Google Docs, modifier document, rédiger
     """
     global _LAST_CREATED_DOC_ID
 
@@ -72,8 +86,14 @@ def google_docs_update(doc_id: str, md: str) -> dict:
 @tool("google_docs_read")
 def google_docs_read(doc_id: str) -> dict:
     """
-    Lit le contenu texte complet d'un Google Doc existant.
-    Utiliser après avoir obtenu un doc_id via drive_find_file_id.
+    Lit le contenu textuel complet d'un Google Doc existant.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - lire un Google Doc
+    - accéder au texte d'un document Google
+    - voir le contenu d'un doc partagé
+
+    Mots-clés : lire Google Doc, contenu document, texte, document partagé, Drive
 
     Args:
         doc_id: ID du document Google Docs (44 caractères)

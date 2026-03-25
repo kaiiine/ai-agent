@@ -93,11 +93,19 @@ def command_panel(text: str, error: bool = False):
 
 
 def config_table(cfg: SessionConfig) -> Table:
+    from src.infra.settings import settings
+
+    def _active_model(s) -> str:
+        if s.llm_backend == "groq":        return s.groq_model
+        if s.llm_backend == "ollama_cloud": return s.ollama_cloud_model
+        return s.ollama_model
+
     tbl = Table(box=_BOX, show_header=True, header_style="dim")
-    tbl.add_column("param", style="dim", no_wrap=True)
-    tbl.add_column("value", style="white")
-    tbl.add_row("thread_id", cfg.thread_id)
-    tbl.add_row("model", cfg.model)
-    tbl.add_row("temperature", str(cfg.temp))
-    tbl.add_row("lang", cfg.lang_pref)
+    tbl.add_column("param",  style="dim",   no_wrap=True)
+    tbl.add_column("value",  style="white")
+    tbl.add_row("thread_id",   cfg.thread_id)
+    tbl.add_row("backend",     settings.llm_backend)
+    tbl.add_row("model",       _active_model(settings))
+    tbl.add_row("temperature", str(settings.temperature))
+    tbl.add_row("lang",        cfg.lang_pref)
     return tbl

@@ -9,32 +9,48 @@ from langgraph.graph import StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from src.orchestrator.state import GlobalState
-from src.llm.models import make_llm, make_llm_ollama_cloud
+from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq
 from src.llm.prompts import SYSTEM_PROMPT
 from src.orchestrator.registry import build_all_tools
 from src.infra.checkpoint import build_checkpointer
-from src.utils.tools import get_tool_names
+from src.orchestrator.tool_retriever import ToolRetriever
 
 
 def _ensure_system_prompt(messages: List, tools_names: str, today: str) -> List:
+    system_msg = SystemMessage(content=SYSTEM_PROMPT.format(tools_available=tools_names, today=today))
     if not messages:
-        return [SystemMessage(content=SYSTEM_PROMPT.format(tools_available=tools_names, today=today))]
+        return [system_msg]
     first = messages[0]
     role0 = first.get("type") if isinstance(first, dict) else getattr(first, "type", None)
-    if role0 != "system":
-        return [SystemMessage(content=SYSTEM_PROMPT.format(tools_available=tools_names, today=today))] + messages
-    return messages
+    if role0 == "system":
+        # Remplace le system prompt existant avec les tools sélectionnés à jour
+        return [system_msg] + messages[1:]
+    return [system_msg] + messages
 
 
 def _chat_node_factory():
-    llm = make_llm_ollama_cloud()
+    _factories = {
+        "groq":         make_llm_groq,
+        "ollama_cloud": make_llm_ollama_cloud,
+        "ollama":       make_llm,
+    }
     tools = build_all_tools()
-    llm_with_tools = llm.bind_tools(tools)
+    retriever = ToolRetriever(tools)
 
     def chatbot(state: GlobalState):
+        # Re-read settings on every call so /model, /temp, /backend take effect immediately
+        from src.infra.settings import settings
+        factory = _factories.get(settings.llm_backend, make_llm_ollama_cloud)
+
+        last_message = state["messages"][-1]
+        query = last_message.content if hasattr(last_message, "content") else str(last_message)
+        selected_tools = retriever.get(query)
+
+        llm_with_tools = factory().bind_tools(selected_tools)
+
         messages = state["messages"]
         today = datetime.now().strftime("%Y-%m-%d")
-        tools_names = get_tool_names()
+        tools_names = ", ".join(t.name for t in selected_tools)
         messages = _ensure_system_prompt(messages, tools_names, today)
         messages = trim_messages(
             messages,

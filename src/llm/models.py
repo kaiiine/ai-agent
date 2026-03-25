@@ -31,12 +31,27 @@ def make_llm_ollama_cloud():
     else:
         # Ollama local avec offload cloud (après `ollama signin`)
         cloud_model = settings.ollama_cloud_model
-        if not cloud_model.endswith("-cloud"):
-            cloud_model += "-cloud"
         return ChatOllama(
             model=cloud_model,
             temperature=settings.temperature,
         )
+
+
+def make_coding_llm():
+    """Coding specialist — en local réutilise le même modèle que l'orchestrateur."""
+    if settings.llm_backend == "ollama":
+        # Même modèle que l'orchestrateur → pas de double chargement en RAM
+        return ChatOllama(model=settings.ollama_model, temperature=0.0)
+    elif settings.llm_backend == "groq":
+        return ChatGroq(
+            api_key=settings.groq_api_key,
+            model=settings.groq_model,
+            temperature=0.0,
+            max_tokens=8192,
+            streaming=True,
+        )
+    else:
+        return ChatOllama(model=settings.coding_model, temperature=0.0)
 
 
 def make_llm_groq():

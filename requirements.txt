@@ -4,6 +4,7 @@ python-dotenv
 pydantic
 pydantic-settings
 langchain
+langchain-community
 langchain-ollama
 langchain-groq
 langchain-tavily
@@ -13,6 +14,7 @@ googlemaps
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
+chromadb
 
 # graph
 langgraph 

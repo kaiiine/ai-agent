@@ -113,8 +113,14 @@ def _resolve_channel(client: WebClient, name_or_id: str) -> str:
 @tool("slack_find_user")
 def slack_find_user(name: str) -> Dict[str, Any]:
     """
-    Recherche un utilisateur Slack par nom approximatif (prénom, nom, username).
-    Retourne son vrai nom, son @handle et son ID pour pouvoir lui envoyer un DM.
+    Recherche un utilisateur Slack par son nom approximatif et retourne ses informations.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - trouver l'identifiant Slack de quelqu'un par son nom
+    - chercher un collègue ou contact sur Slack
+    - obtenir le handle @user d'une personne
+
+    Mots-clés : slack, utilisateur, chercher personne, trouver contact, @mention, ID utilisateur
 
     Args:
         name: nom approximatif (ex: "nicolas", "danquigny", "nicolas danquigny")
@@ -152,7 +158,14 @@ def slack_find_user(name: str) -> Dict[str, Any]:
 @tool("slack_list_channels")
 def slack_list_channels(include_private: bool = True) -> Dict[str, Any]:
     """
-    Liste les channels Slack disponibles (publics et privés).
+    Liste tous les channels Slack auxquels l'utilisateur a accès.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir les canaux Slack disponibles
+    - trouver le nom ou l'ID d'un channel
+    - explorer les channels publics et privés
+
+    Mots-clés : slack, channels, canaux, liste, #canal, salons
 
     Args:
         include_private: inclure les channels privés (True par défaut)
@@ -180,7 +193,14 @@ def slack_list_channels(include_private: bool = True) -> Dict[str, Any]:
 @tool("slack_read_channel")
 def slack_read_channel(channel: str, limit: int = 20) -> Dict[str, Any]:
     """
-    Lit les derniers messages d'un channel (public, privé) ou d'un DM.
+    Lit les derniers messages d'un channel Slack ou d'une conversation directe.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - lire les messages récents d'un channel
+    - voir ce qui se passe dans un canal Slack
+    - consulter ses DMs
+
+    Mots-clés : slack, lire messages, channel, canal, DM, conversation, derniers messages
 
     Args:
         channel: nom (#general) ou ID du channel/DM
@@ -216,7 +236,15 @@ def slack_read_channel(channel: str, limit: int = 20) -> Dict[str, Any]:
 @tool("slack_get_mentions")
 def slack_get_mentions(limit: int = 20) -> Dict[str, Any]:
     """
-    Récupère les messages récents où l'utilisateur est mentionné (@mention).
+    Récupère les messages récents où l'utilisateur est mentionné sur Slack.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir ses mentions récentes sur Slack
+    - savoir où il a été @mentionné
+    - consulter les alertes le concernant
+
+    Mots-clés : slack, mentions, @me, alertes, cité, ping, notifications
+
     Nécessite SLACK_USER_TOKEN dans .env avec le scope search:read.
 
     Args:
@@ -251,7 +279,14 @@ def slack_get_mentions(limit: int = 20) -> Dict[str, Any]:
 @tool("slack_list_dms")
 def slack_list_dms() -> Dict[str, Any]:
     """
-    Liste les conversations directes (DMs) actives.
+    Liste les conversations directes (DMs) Slack actives.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir ses conversations privées sur Slack
+    - trouver une conversation directe avec quelqu'un
+    - lister ses DMs actifs
+
+    Mots-clés : slack, DM, message privé, conversation directe, discussions
 
     Returns:
         {"status": "ok", "dms": [{"id", "user_id", "name"}, ...]}
@@ -281,7 +316,15 @@ def slack_send_message(
     thread_ts: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Envoie un message dans un channel Slack ou en DM.
+    Envoie un message dans un channel Slack ou en DM à un utilisateur.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - envoyer un message sur Slack
+    - écrire dans un channel ou à quelqu'un en DM
+    - répondre dans un thread Slack
+
+    Mots-clés : slack, envoyer message, poster, channel, DM, écrire, notifier
+
     Le message est envoyé tel quel — le LLM doit le rédiger proprement avant d'appeler ce tool.
 
     Args:
@@ -311,7 +354,15 @@ def slack_send_message(
 @tool("slack_search_messages")
 def slack_search_messages(query: str, limit: int = 20) -> Dict[str, Any]:
     """
-    Recherche dans tous les messages Slack (texte libre).
+    Recherche des messages dans tous les channels Slack accessibles.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - retrouver un message Slack par mots-clés
+    - chercher dans l'historique Slack
+    - trouver une décision, info ou lien partagé sur Slack
+
+    Mots-clés : slack, recherche, chercher message, historique, trouver, mots-clés
+
     Nécessite SLACK_USER_TOKEN dans .env avec le scope search:read.
 
     Args:

@@ -7,8 +7,17 @@ from langchain_core.tools import tool
 @tool("get_current_time")
 def get_current_time(timezone: str = "Europe/Paris") -> dict:
     """
-    Retourne l'heure et la date courante pour un fuseau donné.
+    Retourne la date et l'heure actuelle précise pour un fuseau horaire donné.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - connaître la date ou l'heure actuelle
+    - savoir quel jour on est aujourd'hui
+    - calculer des délais à partir d'une date précise
+
+    Mots-clés : heure, date, aujourd'hui, maintenant, fuseau horaire, jour, année, temps
+
     Ne jamais inventer la date : utiliser ce tool quand la date/année du moment est requise.
+
     Args:
       timezone: ex. "Europe/Paris"
     Returns:
