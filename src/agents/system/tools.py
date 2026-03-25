@@ -83,8 +83,14 @@ def clipboard_write(text: str) -> Dict[str, Any]:
 @tool("screenshot_take")
 def screenshot_take(region: Optional[str] = None) -> Dict[str, Any]:
     """
-    Prend un screenshot de l'écran et l'analyse visuellement.
-    Fonctionne sur Wayland (grim) et X11 (scrot, import).
+    Prend une capture d'écran et la retourne pour analyse visuelle.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir ce qui est affiché à l'écran
+    - analyser visuellement l'interface ou une fenêtre
+    - prendre une photo de l'écran pour la décrire
+
+    Mots-clés : screenshot, capture d'écran, photo écran, voir écran, analyser visuellement
 
     Args:
         region: optionnel, region à capturer au format "x,y,width,height" (Wayland uniquement)
@@ -139,7 +145,14 @@ def screenshot_take(region: Optional[str] = None) -> Dict[str, Any]:
 @tool("process_list")
 def process_list(sort_by: str = "cpu", top_n: int = 15) -> Dict[str, Any]:
     """
-    Liste les processus actifs triés par consommation CPU ou mémoire.
+    Liste les processus actifs en cours triés par CPU ou mémoire.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir les processus qui tournent sur la machine
+    - identifier ce qui consomme du CPU ou de la RAM
+    - surveiller les ressources système
+
+    Mots-clés : processus, CPU, mémoire, RAM, charge, système, htop, activité, performance
 
     Args:
         sort_by: "cpu" ou "memory" (défaut: "cpu")
@@ -183,7 +196,14 @@ def process_list(sort_by: str = "cpu", top_n: int = 15) -> Dict[str, Any]:
 @tool("process_kill")
 def process_kill(pid: int, name_hint: str = "") -> Dict[str, Any]:
     """
-    Termine un processus par son PID. TOUJOURS demander confirmation avant d'appeler.
+    Termine un processus par son PID. Demander toujours confirmation avant.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - arrêter un processus ou un programme qui tourne
+    - tuer un programme bloqué ou qui consomme trop
+    - stopper un service système
+
+    Mots-clés : tuer processus, kill, arrêter programme, stopper, PID, terminer
 
     Args:
         pid: PID du processus à terminer
@@ -209,7 +229,14 @@ def process_kill(pid: int, name_hint: str = "") -> Dict[str, Any]:
 @tool("wifi_info")
 def wifi_info() -> Dict[str, Any]:
     """
-    Affiche les informations réseau : SSID, IP locale, IP publique, signal Wi-Fi.
+    Affiche les informations réseau : SSID Wi-Fi, IP locale, signal et latence.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - connaître son réseau Wi-Fi actuel
+    - vérifier sa connexion internet
+    - savoir son IP locale ou son signal Wi-Fi
+
+    Mots-clés : wifi, réseau, IP, connexion, internet, signal, SSID, ping, latence
     """
     result: Dict[str, Any] = {"status": "ok"}
 

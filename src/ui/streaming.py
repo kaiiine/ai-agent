@@ -69,7 +69,8 @@ def _debug_prompt(state: dict, graph, cfg: SessionConfig):
         snapshot = graph.get_state(config)
         messages = snapshot.values.get("messages", []) if snapshot.values else state.get("messages", [])
 
-        parts = [f"[dim]system:[/dim] {SYSTEM_PROMPT.format(tools_available=get_tool_names())[:300]}..."]
+        from datetime import date
+        parts = [f"[dim]system:[/dim] {SYSTEM_PROMPT.format(tools_available=get_tool_names(), today=date.today())[:300]}..."]
         for m in messages:
             content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
             role = m.get("role", "?") if isinstance(m, dict) else getattr(m, "type", "?")
@@ -274,13 +275,25 @@ def _collect_multiline(prompt_text: str, icon: str = "📋") -> str | None:
 
 
 def _run_letter_stream(graph, prompt_text: str, attachments, cfg: SessionConfig) -> str:
-    """Lance le stream pour une lettre, retourne le texte généré."""
-    from .attachments import build_message_with_attachments
+    """Lance le stream pour une lettre, retourne le texte généré.
+    Appelle le LLM directement (pas via le graph) pour éviter le overhead
+    du system prompt + tools descriptions qui ferait exploser le contexte.
+    """
+    from langchain_core.messages import HumanMessage
+    from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq
+    from src.infra.settings import settings
+    _factories = {"ollama": make_llm, "groq": make_llm_groq, "ollama_cloud": make_llm_ollama_cloud}
+    factory = _factories.get(settings.llm_backend, make_llm_ollama_cloud)
 
-    message_dict = build_message_with_attachments(prompt_text, attachments)
-    current_state = {"messages": [message_dict]}
-    config = {"configurable": {"thread_id": cfg.thread_id}}
+    # Construire le message avec pièces jointes
+    if attachments:
+        from .attachments import build_message_with_attachments
+        msg_dict = build_message_with_attachments(prompt_text, attachments)
+        human_msg = HumanMessage(content=msg_dict["content"])
+    else:
+        human_msg = HumanMessage(content=prompt_text)
 
+    llm = factory()
     stop_thinking = threading.Event()
 
     def _thinking_loop(live):
@@ -300,27 +313,14 @@ def _run_letter_stream(graph, prompt_text: str, attachments, cfg: SessionConfig)
             t = threading.Thread(target=_thinking_loop, args=(live,), daemon=True)
             t.start()
 
-            for msg, meta in graph.stream(current_state, config=config, stream_mode="messages"):
-                if isinstance(msg, ToolMessage):
-                    tool_name = getattr(msg, "tool_name", None) or meta.get("tool", "tool")
-                    live.update(tool_call_panel(tool_name))
+            for chunk in llm.stream([human_msg]):
+                chunk_text = chunk.content or "" if hasattr(chunk, "content") else str(chunk)
+                if not chunk_text:
                     continue
-                if isinstance(msg, AIMessageChunk):
-                    chunk_text = msg.content or ""
-                    if not chunk_text:
-                        continue
-                    stop_thinking.set()
-                    saw_any_token = True
-                    response_content += chunk_text
-                    update_live_markdown(live, response_content, deb, cursor=True)
-                elif isinstance(msg, AIMessage) and not saw_any_token:
-                    chunk_text = msg.content or ""
-                    if not chunk_text:
-                        continue
-                    stop_thinking.set()
-                    saw_any_token = True
-                    response_content = chunk_text
-                    update_live_markdown(live, response_content, deb, cursor=False)
+                stop_thinking.set()
+                saw_any_token = True
+                response_content += chunk_text
+                update_live_markdown(live, response_content, deb, cursor=True)
 
             stop_thinking.set()
             footer = fmt_ms(perf_counter() - t0)
@@ -411,6 +411,84 @@ def _handle_ameliore(graph, state: dict, cfg: SessionConfig) -> None:
     prompt = _AMELIORE_PROMPT.format(lettre=lettre, offre=offre)
     result = _run_letter_stream(graph, prompt, attachments, cfg)
     _export_letter(result)
+
+
+def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
+    """Streams a single text message to the graph (no slash commands, no HITL re-check)."""
+    from langchain_core.messages import HumanMessage
+
+    current_state = {"messages": [HumanMessage(content=text)]}
+    config = {"configurable": {"thread_id": cfg.thread_id}}
+
+    stop_thinking = threading.Event()
+
+    def _thinking_loop(live):
+        i = 0
+        while not stop_thinking.is_set():
+            try:
+                live.update(live_panel_initial(i % 4))
+            except Exception:
+                pass
+            i += 1
+            stop_thinking.wait(0.4)
+
+    try:
+        with Live(live_panel_initial(), console=console, refresh_per_second=20, vertical_overflow="visible") as live:
+            response_content = ""
+            saw_any_token = False
+            last_node = ""
+            deb = {"DEBOUNCE": 0.03, "last_update": 0.0}
+            t0 = perf_counter()
+
+            t = threading.Thread(target=_thinking_loop, args=(live,), daemon=True)
+            t.start()
+
+            for msg, meta in graph.stream(current_state, config=config, stream_mode="messages"):
+                node = meta.get("langgraph_node") or "unknown"
+                if isinstance(msg, ToolMessage):
+                    tool_name = getattr(msg, "tool_name", None) or meta.get("tool", "tool")
+                    if tool_name in ("dev_plan_create", "dev_plan_step_done"):
+                        stop_thinking.set()
+                        live.update(Text(""))
+                        live.stop()
+                        from src.agents.coding.pending import render_plan
+                        render_plan(console)
+                        live.start(refresh=False)
+                        last_node = "tools"
+                    else:
+                        live.update(tool_call_panel(tool_name))
+                    last_node = "tools"
+                    continue
+                if isinstance(msg, AIMessageChunk):
+                    chunk_text = msg.content or ""
+                    if not chunk_text:
+                        continue
+                    if last_node == "tools":
+                        response_content = ""
+                        saw_any_token = False
+                        last_node = "chatbot"
+                    stop_thinking.set()
+                    saw_any_token = True
+                    response_content += chunk_text
+                    update_live_markdown(live, response_content, deb, cursor=True)
+                elif isinstance(msg, AIMessage) and not saw_any_token:
+                    chunk_text = msg.content or ""
+                    if not chunk_text:
+                        continue
+                    if last_node == "tools":
+                        response_content = ""
+                        last_node = "chatbot"
+                    stop_thinking.set()
+                    saw_any_token = True
+                    response_content = chunk_text
+                    update_live_markdown(live, response_content, deb, cursor=False)
+
+            stop_thinking.set()
+            footer = fmt_ms(perf_counter() - t0)
+            if saw_any_token:
+                finalize_live(live, response_content, footer)
+    except Exception as e:
+        console.print(command_panel(f"erreur : {e}", error=True))
 
 
 def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
@@ -520,78 +598,164 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     if cfg.debug:
         _debug_prompt(state, graph, cfg)
 
+    from src.ui.edit_mode import get_mode
+    from src.agents.coding.specialist import set_progress_callback
+
+    pending_refinements: list[str] = []
     stop_thinking = threading.Event()
 
     def _thinking_loop(live):
         i = 0
         while not stop_thinking.is_set():
-            live.update(live_panel_initial(i % 4))
+            try:
+                live.update(live_panel_initial(i % 4))
+            except Exception:
+                pass
             i += 1
             stop_thinking.wait(0.4)
 
+    live = Live(live_panel_initial(), console=console, refresh_per_second=20, vertical_overflow="visible")
+
+    def _coding_progress(tool_name: str, args: dict) -> None:
+        """Called by the coding specialist for plan/file events — updates the terminal in real time."""
+        stop_thinking.set()
+        try:
+            live.update(Text(""))
+            live.stop()
+        except Exception:
+            pass
+        nonlocal response_content, saw_any_token
+        response_content = ""
+        saw_any_token = False
+        if tool_name in ("dev_plan_create", "dev_plan_step_done"):
+            from src.agents.coding.pending import render_plan
+            render_plan(console)
+        elif tool_name == "dev_explain":
+            message = args.get("message", "") if args else ""
+            if message:
+                from rich.markdown import Markdown
+                console.print(Panel(
+                    Markdown(message),
+                    border_style=f"dim {ACCENT}",
+                    title="[dim]analyse[/dim]",
+                    title_align="left",
+                    padding=(0, 2),
+                ))
+        elif tool_name == "propose_file_change" and get_mode() == "ask":
+            from .review import review_single_latest
+            action, refinement = review_single_latest()
+            if action == "refine" and refinement:
+                pending_refinements.append(refinement)
+        try:
+            live.start(refresh=False)
+        except Exception:
+            pass
+
+    set_progress_callback(_coding_progress)
+
     try:
-        with Live(live_panel_initial(), console=console, refresh_per_second=20, vertical_overflow="visible") as live:
-            response_content = ""
-            saw_any_token = False
-            last_node = ""
-            deb = {"DEBOUNCE": 0.03, "last_update": 0.0}
-            t0 = perf_counter()
+        live.start(refresh=False)
+        response_content = ""
+        saw_any_token = False
+        last_node = ""
+        last_debug_node = ""
+        deb = {"DEBOUNCE": 0.03, "last_update": 0.0}
+        t0 = perf_counter()
 
-            t = threading.Thread(target=_thinking_loop, args=(live,), daemon=True)
-            t.start()
+        t = threading.Thread(target=_thinking_loop, args=(live,), daemon=True)
+        t.start()
 
-            for msg, meta in graph.stream(current_state, config=config, stream_mode="messages"):
-                node = meta.get("langgraph_node") or "unknown"
+        for msg, meta in graph.stream(current_state, config=config, stream_mode="messages"):
+            node = meta.get("langgraph_node") or "unknown"
 
-                if cfg.debug:
-                    console.print(f"[dim]node={node}[/dim]")
+            if cfg.debug and node != last_debug_node:
+                console.print(f"[dim]→ {node}[/dim]")
+                last_debug_node = node
 
-                if isinstance(msg, ToolMessage):
-                    tool_name = getattr(msg, "tool_name", None) or meta.get("tool", "tool")
+            if isinstance(msg, ToolMessage):
+                tool_name = getattr(msg, "tool_name", None) or meta.get("tool", "tool")
+                if tool_name == "propose_file_change" and get_mode() == "ask":
+                    stop_thinking.set()
+                    live.stop()
+                    from .review import review_single_latest
+                    action, refinement = review_single_latest()
+                    if action == "refine" and refinement:
+                        pending_refinements.append(refinement)
+                    live.start(refresh=False)
+                elif tool_name in ("dev_plan_create", "dev_plan_step_done"):
+                    stop_thinking.set()
+                    response_content = ""
+                    saw_any_token = False
+                    live.update(Text(""))
+                    live.stop()
+                    from src.agents.coding.pending import render_plan
+                    render_plan(console)
+                    live.start(refresh=False)
+                else:
                     live.update(tool_call_panel(tool_name))
-                    if cfg.debug:
-                        live.console.print(Panel(
-                            Pretty(msg.content),
-                            title=f"[dim]{tool_name}[/dim]",
-                            border_style="dim",
-                        ))
-                    last_node = "tools"
+                if cfg.debug:
+                    live.console.print(Panel(
+                        Pretty(msg.content),
+                        title=f"[dim]{tool_name}[/dim]",
+                        border_style="dim",
+                    ))
+                last_node = "tools"
+                continue
+
+            if isinstance(msg, AIMessageChunk):
+                chunk_text = msg.content or ""
+                if not chunk_text:
                     continue
+                if last_node == "tools":
+                    response_content = ""
+                    saw_any_token = False
+                    last_node = "chatbot"
+                stop_thinking.set()
+                saw_any_token = True
+                response_content += chunk_text
+                update_live_markdown(live, response_content, deb, cursor=True)
+            elif isinstance(msg, AIMessage) and not saw_any_token:
+                chunk_text = msg.content or ""
+                if not chunk_text:
+                    continue
+                if last_node == "tools":
+                    response_content = ""
+                    last_node = "chatbot"
+                stop_thinking.set()
+                saw_any_token = True
+                response_content = chunk_text
+                update_live_markdown(live, response_content, deb, cursor=False)
 
-                if isinstance(msg, AIMessageChunk):
-                    chunk_text = msg.content or ""
-                    if not chunk_text:
-                        continue
-                    # Nouveau run du chatbot après un tool call → repart de zéro
-                    if last_node == "tools":
-                        response_content = ""
-                        saw_any_token = False
-                        last_node = "chatbot"
-                    stop_thinking.set()
-                    saw_any_token = True
-                    response_content += chunk_text
-                    update_live_markdown(live, response_content, deb, cursor=True)
-                elif isinstance(msg, AIMessage) and not saw_any_token:
-                    chunk_text = msg.content or ""
-                    if not chunk_text:
-                        continue
-                    if last_node == "tools":
-                        response_content = ""
-                        last_node = "chatbot"
-                    stop_thinking.set()
-                    saw_any_token = True
-                    response_content = chunk_text
-                    update_live_markdown(live, response_content, deb, cursor=False)
-
-            footer = fmt_ms(perf_counter() - t0)
-
-            if saw_any_token:
-                finalize_live(live, enforce_lang_output(response_content, user_lang), footer)
-            else:
-                final_state = graph.invoke(current_state, config=config)
-                last = final_state["messages"][-1]
-                text = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
-                finalize_live(live, enforce_lang_output(text, user_lang), footer)
+        footer = fmt_ms(perf_counter() - t0)
+        if saw_any_token:
+            finalize_live(live, enforce_lang_output(response_content, user_lang), footer)
+        else:
+            final_state = graph.invoke(current_state, config=config)
+            last = final_state["messages"][-1]
+            text = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
+            finalize_live(live, enforce_lang_output(text, user_lang), footer)
+        live.stop()
 
     except Exception as e:
+        try:
+            live.stop()
+        except Exception:
+            pass
         console.print(command_panel(f"erreur : {e}", error=True))
+    finally:
+        set_progress_callback(None)
+
+    # ── Post-stream: write files or ask ───────────────────────────────────────
+    from src.agents.coding.pending import pending_changes
+    if pending_changes:
+        # Fallback: batch review for any remaining (edge cases)
+        while pending_changes:
+            from .review import review_pending
+            action, refinement = review_pending()
+            if action == "refine" and refinement:
+                pending_refinements.append(refinement)
+            else:
+                break
+
+    for refinement in pending_refinements:
+        _stream_message(graph, refinement, cfg)

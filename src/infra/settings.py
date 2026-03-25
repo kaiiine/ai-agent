@@ -12,6 +12,10 @@ class Settings(BaseSettings):
 
     # Ollama Cloud
     ollama_cloud_model: str = "gpt-oss:120b-cloud"
+
+    # Coding specialist (delegated coding tasks)
+    coding_model: str = "qwen3-coder-next:cloud"
+    coding_model_local: str = "qwen2.5-coder:14b"
     ollama_api_key: str | None = None  # OLLAMA_API_KEY dans .env
 
     # GROQ
@@ -22,6 +26,9 @@ class Settings(BaseSettings):
     tavily_api_key: str = os.getenv("TAVILY_API_KEY")
     search_backend: str = "tavily"
     search_max_results: int = 10
+
+    # Backend LLM actif : "groq" | "ollama" | "ollama_cloud"
+    llm_backend: str = "ollama_cloud"
 
     # CLI
     cli_thread_id: str = "1"
@@ -60,13 +67,14 @@ def _load_yaml_config() -> dict:
 def _merge_yaml_into_settings() -> Settings:
     yml = _load_yaml_config()
     return Settings(
-        ollama_model=yml.get("ollama", {}).get("model", "lfm2:latest"),
+        ollama_model=yml.get("ollama", {}).get("model", "qwen2.5:7b"),
         temperature=yml.get("ollama", {}).get("temperature", 0.0),
         search_backend=yml.get("search", {}).get("backend", "tavily"),
         search_max_results=yml.get("search", {}).get("max_results", 2),
         cli_thread_id=yml.get("cli", {}).get("thread_id", "1"),
-        groq_model=yml.get("groq", {}).get("model", "openai/gpt-oss-20b")
-        # les prendre automatiquement depuis l'environnement.
+        groq_model=yml.get("groq", {}).get("model", "openai/gpt-oss-20b"),
+        llm_backend=yml.get("llm_backend", "ollama_cloud"),
+        coding_model=yml.get("coding_model", "qwen3-coder-next:cloud"),
     )
 
 settings = _merge_yaml_into_settings()

@@ -11,8 +11,15 @@ def _file_url(file_id: str) -> str:
 @tool("drive_find_file_id")
 def drive_find_file_id(name: str, exact: bool = False) -> Dict[str, Any]:
     """
-    Recherche des fichiers Drive par nom (exact ou approximatif).
-    À utiliser en premier quand l'utilisateur mentionne un nom de fichier ou document.
+    Recherche des fichiers Google Drive par nom et retourne leurs identifiants.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - trouver un fichier sur Google Drive par son nom
+    - localiser un document, une feuille ou une présentation Drive
+    - obtenir l'ID d'un fichier Drive pour d'autres opérations
+
+    Mots-clés : Google Drive, fichier, trouver, chercher document, ID fichier, cloud, Drive
+
     Si plusieurs résultats, les lister et demander à l'utilisateur lequel il veut.
 
     Args:
@@ -52,9 +59,14 @@ def drive_find_file_id(name: str, exact: bool = False) -> Dict[str, Any]:
 @tool("drive_read_file")
 def drive_read_file(file_id: str) -> Dict[str, Any]:
     """
-    Lit le contenu d'un fichier Drive.
-    Supporte: Google Docs (texte), Google Sheets (CSV), fichiers texte brut.
-    Utiliser après avoir obtenu un file_id via drive_find_file_id.
+    Lit le contenu d'un fichier Google Drive (Docs, Sheets, ou texte brut).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - lire le contenu d'un Google Doc ou fichier Drive
+    - accéder au texte d'un document partagé
+    - voir ce qu'il y a dans une feuille Google Sheets
+
+    Mots-clés : lire Drive, Google Docs, Google Sheets, contenu fichier, document cloud
 
     Args:
         file_id: ID du fichier Drive
@@ -107,7 +119,14 @@ def drive_read_file(file_id: str) -> Dict[str, Any]:
 @tool("drive_list_files")
 def drive_list_files(q: Optional[str] = None, page_size: int = 50, page_token: Optional[str] = None) -> Dict[str, Any]:
     """
-    Liste des fichiers Drive avec filtre optionnel.
+    Liste les fichiers disponibles sur Google Drive avec filtre optionnel.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - parcourir son Google Drive
+    - lister tous ses fichiers cloud
+    - filtrer par type de fichier dans Drive
+
+    Mots-clés : Google Drive, liste fichiers, parcourir, cloud, documents en ligne
 
     Args:
         q: requête Drive optionnelle (ex: "mimeType='application/pdf'")
@@ -142,7 +161,13 @@ def drive_list_files(q: Optional[str] = None, page_size: int = 50, page_token: O
 @tool("drive_delete_file")
 def drive_delete_file(file_id: str, permanently: bool = False) -> Dict[str, Any]:
     """
-    Supprime un fichier Drive (APRÈS confirmation explicite de l'utilisateur).
+    Supprime ou met à la corbeille un fichier Google Drive. Demander confirmation avant.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - supprimer un fichier de son Google Drive
+    - mettre un document à la corbeille Drive
+
+    Mots-clés : supprimer Drive, effacer fichier, corbeille, Google Drive, delete
 
     Args:
         file_id: ID du fichier
@@ -162,7 +187,14 @@ def drive_delete_file(file_id: str, permanently: bool = False) -> Dict[str, Any]
 @tool("drive_get_file_metadata")
 def drive_get_file_metadata(file_id: str) -> Dict[str, Any]:
     """
-    Métadonnées d'un fichier Drive (nom, type, taille, propriétaire, URL).
+    Retourne les métadonnées d'un fichier Drive (nom, taille, type, propriétaire, URL).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir les infos d'un fichier Drive (taille, date, propriétaire)
+    - obtenir l'URL directe d'un fichier
+    - vérifier les détails d'un document cloud
+
+    Mots-clés : infos fichier, métadonnées, Drive, taille, propriétaire, URL, détails
     """
     svc = get_drive_service()
     try:

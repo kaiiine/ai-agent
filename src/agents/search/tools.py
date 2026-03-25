@@ -88,10 +88,16 @@ def web_research_report(
     search_depth: str = "advanced",
 ) -> str:
     """
-    Recherche web (Tavily) et retourne un rapport **Markdown** très détaillé,complet, structuré et sans invention.
-    - Le contenu est **exclusivement** issu des sources web.
-    - Par défaut (quote_only=True), le rapport contient des **citations** + références ; aucune paraphrase libre.
-    - Si quote_only=False, ajoute une section "Points à retenir" en formulations prudentes (chaque point cite une source).
+    Effectue une recherche web approfondie et retourne un rapport Markdown structuré avec sources et citations.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - rechercher des informations sur internet ou le web
+    - connaître l'actualité sur un sujet, une personne, une entreprise
+    - trouver de la documentation, des articles, des tutoriels en ligne
+    - vérifier des faits, des prix, des dates récentes
+    - faire une veille sur un sujet
+
+    Mots-clés : recherche, internet, web, actualité, information, documentation, article, news, veille, google
 
     Args:
         query: Requête utilisateur.

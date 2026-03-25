@@ -2,7 +2,7 @@ ollama:
   model: "qwen2.5:7b"
   temperature: 0.0
 
-llm_backend: "groq"   # "groq" | "ollama" — choisir le backend LLM principal
+llm_backend: "ollama_cloud"   # "groq" | "ollama" | "ollama_cloud"
 
 search:
   backend: "tavily"

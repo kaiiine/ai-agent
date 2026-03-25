@@ -30,7 +30,14 @@ def shell_run(
 ) -> Dict[str, Any]:
     """
     Exécute une commande shell et retourne stdout/stderr/exit_code.
-    Utiliser pour : scripts Python, commandes système, build, tests, etc.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - lancer un script Python, Bash ou n'importe quelle commande terminal
+    - compiler, tester ou builder un projet
+    - exécuter une commande système
+    - installer des paquets, démarrer un serveur, lancer des tests
+
+    Mots-clés : terminal, commande, shell, bash, script, exécuter, lancer, installer, build, npm, pip, run
 
     RÈGLE DE SÉCURITÉ : Si la commande est destructive (rm, git reset --hard, etc.),
     demander TOUJOURS confirmation explicite à l'utilisateur avant d'appeler ce tool.
@@ -90,8 +97,14 @@ def shell_run(
 @tool("notify")
 def notify(title: str, message: str, urgency: str = "normal") -> Dict[str, Any]:
     """
-    Envoie une notification desktop (notify-send).
-    Utiliser pour signaler la fin d'une tâche longue ou un événement important.
+    Envoie une notification desktop via notify-send.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - être notifié de la fin d'une tâche longue
+    - envoyer une alerte ou un rappel sur le bureau
+    - signaler un événement important visuellement
+
+    Mots-clés : notification, alerte, bureau, desktop, notifier, rappel, popup
 
     Args:
         title: titre de la notification
@@ -117,7 +130,15 @@ def notify(title: str, message: str, urgency: str = "normal") -> Dict[str, Any]:
 @tool("clipboard_read")
 def clipboard_read() -> Dict[str, Any]:
     """
-    Lit le contenu du presse-papiers Wayland/X11.
+    Lit le contenu actuel du presse-papiers.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - accéder au texte qu'il a copié
+    - récupérer une URL, du code ou du texte depuis le clipboard
+    - utiliser ce qui est dans son presse-papiers
+
+    Mots-clés : presse-papiers, clipboard, copier, coller, récupérer
+
     Returns:
         {"status": "ok", "content": "...", "type": "text"}
     """
@@ -164,7 +185,15 @@ def _find_dir(name: str) -> Optional[Path]:
 @tool("shell_cd")
 def shell_cd(path: str) -> Dict[str, Any]:
     """
-    Change le répertoire de travail courant de la session.
+    Change le répertoire de travail courant pour les prochaines commandes shell.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - naviguer dans un dossier ou projet spécifique
+    - aller dans un répertoire avant d'exécuter des commandes
+    - se placer dans un projet pour lancer des scripts
+
+    Mots-clés : changer dossier, naviguer, aller dans, cd, répertoire, projet
+
     Persiste pour tous les appels shell_run suivants.
     Supporte les chemins absolus, relatifs ET les noms approximatifs de projets.
 
@@ -195,7 +224,14 @@ def shell_cd(path: str) -> Dict[str, Any]:
 @tool("shell_pwd")
 def shell_pwd() -> Dict[str, Any]:
     """
-    Retourne le répertoire de travail courant de la session.
+    Retourne le répertoire de travail courant de la session shell.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - savoir dans quel dossier on se trouve actuellement
+    - connaître le répertoire courant avant d'exécuter des commandes
+
+    Mots-clés : répertoire courant, où suis-je, dossier actuel, cwd, pwd
+
     Returns:
         {"cwd": "/chemin/courant"}
     """
@@ -205,8 +241,14 @@ def shell_pwd() -> Dict[str, Any]:
 @tool("shell_ls")
 def shell_ls(path: Optional[str] = None, all_files: bool = False) -> Dict[str, Any]:
     """
-    Liste le contenu du répertoire courant ou d'un sous-dossier.
-    Plus rapide que local_list_directory pour naviguer dans un repo/projet.
+    Liste rapidement le contenu du répertoire courant ou d'un sous-dossier.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir les fichiers d'un projet en cours
+    - lister les fichiers du dossier courant
+    - explorer rapidement la structure d'un repo
+
+    Mots-clés : lister, ls, fichiers, dossier courant, contenu répertoire, explorer projet
 
     Args:
         path: sous-dossier à lister (relatif au cwd ou absolu). None = cwd courant.
@@ -241,7 +283,15 @@ def shell_ls(path: Optional[str] = None, all_files: bool = False) -> Dict[str, A
 @tool("clipboard_write")
 def clipboard_write(text: str) -> Dict[str, Any]:
     """
-    Écrit du texte dans le presse-papiers Wayland/X11.
+    Écrit du texte dans le presse-papiers pour pouvoir le coller ailleurs.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - copier du texte dans le presse-papiers
+    - préparer du code ou du texte à coller dans une autre appli
+    - mettre un résultat dans le clipboard
+
+    Mots-clés : copier, clipboard, presse-papiers, coller, mettre en mémoire
+
     Args:
         text: texte à copier
     Returns:

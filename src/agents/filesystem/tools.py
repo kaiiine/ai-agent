@@ -8,6 +8,7 @@ from typing import Dict, Any, List
 from langchain_core.tools import tool
 
 _HOME = Path.home()
+_PROJECTS_DIR = _HOME / "Documents" / "projets-perso"
 _MAX_RESULTS = 20
 _MAX_FILE_SIZE = 200_000  # 200KB
 
@@ -85,8 +86,14 @@ def _search_dirs(pattern: str, base: str | None = None) -> list[str]:
 @tool("local_find_file")
 def local_find_file(name: str, root: str = "") -> Dict[str, Any]:
     """
-    Recherche un fichier local par nom approximatif, depuis $HOME.
-    Utiliser quand l'utilisateur mentionne un nom de fichier local.
+    Cherche un fichier local sur le disque par nom approximatif.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - trouver un fichier local dont il connaît une partie du nom
+    - localiser un document (CV, rapport, facture) sur son ordinateur
+    - savoir où est stocké un fichier
+
+    Mots-clés : fichier, trouver fichier, localiser, document local, chercher, CV, PDF, disque
 
     Args:
         name: nom ou fragment du fichier à chercher (approximatif, ex: "cv", "rapport", "budget")
@@ -145,8 +152,15 @@ def local_find_file(name: str, root: str = "") -> Dict[str, Any]:
 @tool("local_list_directory")
 def local_list_directory(path: str = "", name: str = "") -> Dict[str, Any]:
     """
-    Liste le contenu d'un dossier local.
-    Utiliser quand l'utilisateur veut voir les fichiers dans un dossier.
+    Liste le contenu d'un dossier local (fichiers et sous-dossiers).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir ce qu'il y a dans un dossier
+    - explorer l'arborescence d'un répertoire local
+    - trouver les fichiers contenus dans un dossier
+
+    Mots-clés : dossier, répertoire, contenu, lister fichiers, explorer, arborescence
+
     TOUJOURS utiliser name= pour chercher par nom. Ne jamais inventer un chemin.
 
     Args:
@@ -218,8 +232,14 @@ def local_list_directory(path: str = "", name: str = "") -> Dict[str, Any]:
 @tool("local_read_file")
 def local_read_file(path: str) -> Dict[str, Any]:
     """
-    Lit le contenu d'un fichier local. Supporte : texte, code, PDF.
-    Utiliser après avoir obtenu le chemin via local_find_file ou local_list_directory.
+    Lit et retourne le contenu textuel d'un fichier local (texte, code, PDF).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - lire le contenu d'un fichier local
+    - voir le code source d'un fichier
+    - ouvrir et analyser un document texte ou PDF local
+
+    Mots-clés : lire fichier, ouvrir, contenu, code source, PDF, texte, fichier local
 
     Args:
         path: chemin absolu du fichier

@@ -45,8 +45,15 @@ def arxiv_search(
     category: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Recherche des articles scientifiques sur arXiv par mots-clés.
-    Utile pour de la veille IA/ML, des papers de cours, ou de la recherche.
+    Recherche des articles scientifiques sur arXiv (IA, ML, NLP, etc.).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - trouver des papers ou articles de recherche scientifique
+    - faire une veille IA/ML ou NLP
+    - chercher des publications académiques sur un sujet
+    - préparer un état de l'art ou une bibliographie
+
+    Mots-clés : paper, article, recherche, arXiv, IA, machine learning, NLP, publication, académique, LLM
 
     Args:
         query: mots-clés de recherche (ex: "RAG retrieval augmented generation", "LLM fine-tuning")
@@ -79,8 +86,14 @@ def arxiv_search(
 @tool("arxiv_get_paper")
 def arxiv_get_paper(arxiv_id: str) -> Dict[str, Any]:
     """
-    Récupère les détails complets d'un paper arXiv par son ID.
-    L'ID peut être au format "2301.07041" ou l'URL complète.
+    Récupère les détails complets d'un paper arXiv par son identifiant ou URL.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - obtenir le résumé complet d'un paper précis
+    - accéder aux détails d'un article arXiv (auteurs, date, abstract)
+    - lire un paper dont il a l'ID ou l'URL
+
+    Mots-clés : paper, abstract, arXiv, article, résumé, auteurs, recherche scientifique
 
     Args:
         arxiv_id: ID arXiv (ex: "2301.07041") ou URL arXiv

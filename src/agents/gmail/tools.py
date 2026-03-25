@@ -21,10 +21,15 @@ def _draft_markdown(prefix="📤 Brouillon"):
 @tool
 def gmail_search(query: str = "newer_than:7d", max_results: int = 7) -> str:
     """
-    🔍 **Recherche des emails Gmail récents ou filtrés**
+    Recherche et liste les emails Gmail selon un filtre (date, expéditeur, objet, statut).
 
-    Interroge l'API Gmail avec une requête de recherche (syntaxe Gmail) et renvoie une
-    liste formatée des messages trouvés (expéditeur, objet, date).
+    Utilise ce tool quand l'utilisateur veut :
+    - voir ses derniers emails ou mails non lus
+    - chercher un mail d'une personne précise
+    - trouver un email avec un sujet particulier
+    - consulter sa boîte de réception récente
+
+    Mots-clés : mail, email, gmail, boîte, réception, non lu, message, expéditeur, objet
 
     **Args:**
         - `query` (str, optionnel) : Requête Gmail.  
@@ -70,10 +75,14 @@ def gmail_search(query: str = "newer_than:7d", max_results: int = 7) -> str:
 @tool
 def gmail_summarize(message_id: str) -> str:
     """
-    📨 **Résumé détaillé d'un email Gmail**
+    Lit et résume le contenu complet d'un email Gmail à partir de son identifiant.
 
-    Récupère le message complet via son ID et retourne un résumé structuré en Markdown :
-    expéditeur, objet, date, extrait et début du corps.
+    Utilise ce tool quand l'utilisateur veut :
+    - lire le contenu d'un mail en détail
+    - savoir ce que dit un email précis
+    - résumer un message reçu
+
+    Mots-clés : mail, email, lire, contenu, résumé, corps du message, détail
 
     **Args:**
         - `message_id` (str) : Identifiant Gmail du message à résumer  
@@ -120,10 +129,14 @@ def gmail_summarize(message_id: str) -> str:
 @tool
 def gmail_send_email(to: str, subject: str, body: str) -> str:
     """
-    ✉️ **Prépare un brouillon d'email**
+    Prépare un brouillon d’email Gmail (sans l’envoyer) pour révision avant envoi.
 
-    Stocke un brouillon en mémoire (non envoyé) pour révision ou modification ultérieure.
-    Utiliser `gmail_confirm_send()` pour l’envoyer réellement.
+    Utilise ce tool quand l’utilisateur veut :
+    - écrire un email, un mail, un message à quelqu’un
+    - rédiger un email à envoyer via Gmail
+    - composer une réponse à un mail
+
+    Mots-clés : envoyer mail, écrire email, rédiger message, gmail, email, destinataire, sujet
 
     **Args:**
         - `to` (str) : Adresse du destinataire
@@ -142,9 +155,13 @@ def gmail_send_email(to: str, subject: str, body: str) -> str:
 @tool
 def gmail_edit_draft(field: str, value: str) -> str:
     """
-    ✏️ **Modifie un champ du brouillon en cours**
+    Modifie un champ (destinataire, sujet ou corps) du brouillon email en cours.
 
-    Permet de mettre à jour l’adresse, l’objet ou le corps d’un brouillon avant envoi.
+    Utilise ce tool quand l’utilisateur veut :
+    - corriger l’adresse, l’objet ou le texte d’un mail déjà rédigé
+    - changer quelque chose dans le brouillon avant envoi
+
+    Mots-clés : modifier mail, corriger email, brouillon, changer destinataire, modifier sujet
 
     **Args:**
         - `field` (str) : Champ à modifier (`"to"`, `"subject"`, `"body"`)
@@ -163,9 +180,13 @@ def gmail_edit_draft(field: str, value: str) -> str:
 @tool
 def gmail_confirm_send() -> str:
     """
-    ✅ **Envoie le brouillon Gmail en cours**
+    Envoie définitivement le brouillon Gmail en cours après validation.
 
-    Finalise et envoie le brouillon précédemment créé avec `gmail_send_email()`.
+    Utilise ce tool quand l'utilisateur veut :
+    - confirmer et envoyer le mail rédigé
+    - valider l'envoi d'un email
+
+    Mots-clés : envoyer mail, confirmer envoi, valider email, expédier, send
 
     **Returns:**
         - Confirmation avec l’ID Gmail du message envoyé

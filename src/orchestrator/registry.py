@@ -23,6 +23,30 @@ from src.agents.system.tools import (
     screenshot_take, process_list, process_kill, wifi_info,
 )
 from src.agents.arxiv.tools import arxiv_search, arxiv_get_paper
+from langchain_core.tools import tool as lc_tool
+
+
+@lc_tool("run_coding_agent")
+def run_coding_agent(task: str) -> str:
+    """
+    Délègue une tâche de code au modèle spécialisé qui analyse, lit et modifie des projets locaux.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - modifier, améliorer ou refactoriser du code dans un projet local
+    - créer de nouvelles fonctionnalités dans un projet
+    - corriger des bugs dans son code
+    - analyser l'architecture ou la structure d'un projet
+    - ajouter des tests, améliorer la documentation d'un projet
+
+    Mots-clés : coder, développer, projet, code, bug, feature, refactoriser, modifier fichier, créer, programmer
+
+    Args:
+        task: description détaillée de la tâche (inclure le nom du projet si connu)
+    Returns:
+        résumé de ce qui a été analysé et proposé
+    """
+    from src.agents.coding.specialist import run_coding_task
+    return run_coding_task(task)
 
 
 def build_all_tools() -> List[BaseTool]:
@@ -92,4 +116,6 @@ def build_all_tools() -> List[BaseTool]:
         # === ARXIV ===
         arxiv_search,
         arxiv_get_paper,
+        # === CODING / PROJETS ===
+        run_coding_agent,
     ]

@@ -35,7 +35,15 @@ def _find_repo(path_hint: Optional[str]) -> Optional[Path]:
 @tool("git_status")
 def git_status(repo_path: Optional[str] = None) -> Dict[str, Any]:
     """
-    Affiche le statut du repo git (fichiers modifiés, staged, non suivis).
+    Affiche le statut Git du repo (fichiers modifiés, staged, non suivis).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir l'état courant d'un repo Git
+    - savoir quels fichiers ont été modifiés depuis le dernier commit
+    - vérifier ce qui est staged ou non
+
+    Mots-clés : git, statut, modifié, staged, commit, fichiers changés, status
+
     Args:
         repo_path: chemin vers le repo (optionnel, détecté automatiquement)
     """
@@ -53,7 +61,15 @@ def git_status(repo_path: Optional[str] = None) -> Dict[str, Any]:
 @tool("git_log")
 def git_log(repo_path: Optional[str] = None, n: int = 10) -> Dict[str, Any]:
     """
-    Affiche les N derniers commits du repo.
+    Affiche l'historique des derniers commits d'un repo Git.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir les derniers commits d'un projet
+    - consulter l'historique Git
+    - savoir qui a fait quoi et quand
+
+    Mots-clés : git, historique, commits, log, journal, versions, branches
+
     Args:
         repo_path: chemin vers le repo (optionnel)
         n: nombre de commits à afficher (défaut: 10)
@@ -74,7 +90,15 @@ def git_log(repo_path: Optional[str] = None, n: int = 10) -> Dict[str, Any]:
 @tool("git_diff")
 def git_diff(repo_path: Optional[str] = None, staged: bool = False) -> Dict[str, Any]:
     """
-    Affiche le diff des changements courants.
+    Affiche les différences (diff) des changements en cours par rapport au dernier commit.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir ce qui a changé dans les fichiers modifiés
+    - analyser les modifications avant un commit
+    - comparer le code actuel avec la version commitée
+
+    Mots-clés : git, diff, changements, modifications, avant commit, code modifié
+
     Args:
         repo_path: chemin vers le repo (optionnel)
         staged: True = diff des fichiers staged (à committer), False = unstaged
@@ -102,8 +126,15 @@ def git_diff(repo_path: Optional[str] = None, staged: bool = False) -> Dict[str,
 @tool("git_suggest_commit")
 def git_suggest_commit(repo_path: Optional[str] = None) -> Dict[str, Any]:
     """
-    Analyse le diff staged et suggère un message de commit clair et concis.
-    Utiliser APRÈS que l'utilisateur a fait git add.
+    Analyse les changements stagés et propose un message de commit formaté.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - générer un message de commit pour ses modifications
+    - avoir une suggestion de commit après git add
+    - rédiger un commit clair et descriptif
+
+    Mots-clés : git, commit, message, suggestion, staged, résumé changements
+
     Args:
         repo_path: chemin vers le repo (optionnel)
     Returns:
@@ -135,8 +166,15 @@ def git_suggest_commit(repo_path: Optional[str] = None) -> Dict[str, Any]:
 @tool("url_fetch")
 def url_fetch(url: str, max_chars: int = 20_000) -> Dict[str, Any]:
     """
-    Fetche une URL et retourne le contenu en texte propre (markdown-like).
-    Utiliser pour lire une page de documentation, un article, un README GitHub.
+    Récupère et retourne le contenu textuel d'une URL (page web, documentation, README).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - lire le contenu d'une URL précise
+    - accéder à de la documentation en ligne
+    - récupérer un README GitHub ou une page de doc
+
+    Mots-clés : URL, page web, lire lien, documentation, readme, github, accéder
+
     NE PAS utiliser pour les recherches générales — utiliser web_research_report pour ça.
 
     Args:

@@ -21,7 +21,14 @@ def calendar_list_events(
     calendar_id: str = "primary",
 ) -> Dict[str, Any]:
     """
-    Liste les prochains événements du calendrier.
+    Liste les prochains événements du calendrier Google pour les X prochains jours.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir ses rendez-vous à venir
+    - consulter son agenda ou planning
+    - savoir ce qu'il a cette semaine ou ce mois-ci
+
+    Mots-clés : calendrier, agenda, rendez-vous, événement, planning, semaine, Google Calendar
 
     Args:
         days_ahead: nombre de jours à venir à afficher (défaut 7)
@@ -75,7 +82,14 @@ def calendar_create_event(
     calendar_id: str = "primary",
 ) -> Dict[str, Any]:
     """
-    Crée un événement dans le calendrier. TOUJOURS demander confirmation avant de créer.
+    Crée un nouvel événement dans Google Calendar. Toujours demander confirmation avant.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - ajouter un rendez-vous dans son agenda
+    - planifier une réunion, un rappel ou un événement
+    - créer un créneau dans Google Calendar
+
+    Mots-clés : créer événement, agenda, rendez-vous, planifier, réunion, calendrier, Google Calendar
 
     Args:
         title: titre de l'événement
@@ -135,7 +149,14 @@ def calendar_update_event(
     calendar_id: str = "primary",
 ) -> Dict[str, Any]:
     """
-    Modifie un événement existant. TOUJOURS demander confirmation avant de modifier.
+    Modifie un événement existant dans Google Calendar (titre, horaire, lieu).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - changer l'heure ou le titre d'un rendez-vous
+    - modifier un événement déjà créé
+    - reporter ou déplacer une réunion
+
+    Mots-clés : modifier événement, changer rendez-vous, reporter, déplacer réunion, calendrier
 
     Args:
         event_id: ID de l'événement (obtenu via calendar_list_events)
@@ -188,7 +209,14 @@ def calendar_delete_event(
     calendar_id: str = "primary",
 ) -> Dict[str, Any]:
     """
-    Supprime un événement. TOUJOURS demander confirmation explicite avant de supprimer.
+    Supprime un événement du calendrier. Toujours demander confirmation explicite avant.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - annuler un rendez-vous
+    - supprimer un événement de son agenda
+    - effacer une réunion du calendrier
+
+    Mots-clés : supprimer événement, annuler rendez-vous, effacer, calendrier, Google Calendar
 
     Args:
         event_id: ID de l'événement
@@ -205,7 +233,15 @@ def calendar_delete_event(
 @tool("calendar_list_calendars")
 def calendar_list_calendars() -> Dict[str, Any]:
     """
-    Liste tous les calendriers accessibles (perso, partagés, etc.).
+    Liste tous les calendriers Google accessibles (personnel, partagés, etc.).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - voir ses calendriers Google disponibles
+    - trouver l'ID d'un calendrier secondaire
+    - savoir quels agendas sont accessibles
+
+    Mots-clés : liste calendriers, agendas, Google Calendar, calendriers disponibles, ID calendrier
+
     Returns:
         {"status": "ok", "calendars": [{"id", "name", "primary", "color"}, ...]}
     """
@@ -234,7 +270,14 @@ def calendar_search_events(
     calendar_id: str = "primary",
 ) -> Dict[str, Any]:
     """
-    Recherche des événements par mot-clé dans le titre ou la description.
+    Recherche des événements Google Calendar par mot-clé dans le titre ou la description.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - retrouver un événement par son nom ou contenu
+    - chercher un rendez-vous spécifique dans l'agenda
+    - trouver quand a lieu une réunion précise
+
+    Mots-clés : chercher événement, trouver rendez-vous, calendrier, recherche, agenda
 
     Args:
         query: mot-clé à rechercher

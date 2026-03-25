@@ -4,8 +4,15 @@ from ...infra.google_auth import get_slides_service
 @tool
 def create_presentation(title: str) -> str:
     """
-    Crée une nouvelle présentation Google Slides vide. Utiliser SEULEMENT quand l'utilisateur demande explicitement de créer une présentation.
-    
+    Crée une nouvelle présentation Google Slides vide.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - créer une présentation PowerPoint / Google Slides
+    - démarrer un nouveau diaporama
+    - créer des slides pour une réunion ou exposé
+
+    Mots-clés : présentation, slides, Google Slides, PowerPoint, diaporama, créer
+
     Args:
         title: Nom de la présentation à créer
     Returns:
@@ -18,8 +25,14 @@ def create_presentation(title: str) -> str:
 @tool
 def add_slide(presentation_id: str, title: str, bullets: list[str] | None = None) -> str:
     """
-    Ajoute une slide à une présentation existante. Nécessite l'ID obtenu avec create_presentation.
-    
+    Ajoute une slide à une présentation Google Slides existante.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - ajouter une diapositive à une présentation
+    - insérer une nouvelle slide dans un diaporama existant
+
+    Mots-clés : ajouter slide, diapositive, présentation, Google Slides, insérer
+
     Args:
         presentation_id: ID de la présentation (depuis create_presentation)
         title: Titre de la slide
