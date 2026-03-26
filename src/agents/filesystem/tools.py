@@ -8,7 +8,8 @@ from typing import Dict, Any, List
 from langchain_core.tools import tool
 
 _HOME = Path.home()
-_PROJECTS_DIR = _HOME / "Documents" / "projets-perso"
+
+from src.utils.paths import get_projects_dir
 _MAX_RESULTS = 20
 _MAX_FILE_SIZE = 200_000  # 200KB
 

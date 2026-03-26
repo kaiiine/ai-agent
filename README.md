@@ -1,6 +1,60 @@
-# Axon — Agent IA personnel en terminal
+<div align="center">
 
-Interface conversationnelle en ligne de commande propulsée par LangGraph, avec agents spécialisés, sélection sémantique des outils, et support multi-backend LLM.
+```
+  ██████╗ ██╗  ██╗ ██████╗ ███╗  ██╗
+ ██╔══██╗╚██╗██╔╝██╔═══██╗████╗ ██║
+ ███████║ ╚███╔╝ ██║   ██║██╔██╗██║
+ ██╔══██║ ██╔██╗ ██║   ██║██║╚████║
+ ██║  ██║██╔╝ ██╗╚██████╔╝██║ ╚███║
+ ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚══╝
+```
+
+**Agent IA personnel en terminal — LangGraph · multi-backend · HITL**
+
+![Python](https://img.shields.io/badge/Python-3.11+-orange?style=flat-square&logo=python&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-blue?style=flat-square)
+![Ollama](https://img.shields.io/badge/Ollama-local%20%2B%20cloud-black?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+
+</div>
+
+---
+
+## Installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kaiiine/ai-agent/main/install.sh | sh
+```
+
+> Clone le repo, installe les dépendances, configure les APIs, télécharge les modèles Ollama, crée un alias `axon` global.
+
+```bash
+# Ou manuellement :
+git clone https://github.com/kaiiine/ai-agent.git && cd ai-agent && bash setup.sh
+```
+
+**Prérequis :** Python 3.11+ · [Ollama](https://ollama.com/download)
+
+---
+
+## Démarrage rapide
+
+```bash
+axon
+# ou
+cd ai-agent && source venv/bin/activate && python -m src.ui.main
+```
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Axon  ·  ollama_cloud  ·  qwen3-coder:cloud            │
+│                                                          │
+│  > Résume mes derniers emails non lus                    │
+│  > Va dans mon projet X et corrige le bug dans auth.ts   │
+│  > Cherche des papers sur les RAG hybrides               │
+│  > Quel temps fait-il à Paris ?                          │
+└─────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -9,31 +63,31 @@ Interface conversationnelle en ligne de commande propulsée par LangGraph, avec 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    UI Terminal (Rich)                    │
-│   streaming.py · commands.py · panels.py · picker.py    │
+│   streaming · commands · panels · picker · review       │
 └────────────────────────┬────────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────────┐
-│                  Orchestrateur (LangGraph)                │
+│                  Orchestrateur (LangGraph)               │
 │                                                          │
-│   ┌──────────────┐     ┌─────────────────────────────┐  │
-│   │  ToolRetriever│     │      chatbot node (LLM)     │  │
-│   │  (Chroma +    │────▶│  bind_tools(selected_tools) │  │
-│   │  embeddings)  │     └──────────┬──────────────────┘  │
-│   └──────────────┘                │                      │
-│                         ┌─────────▼──────────────────┐  │
-│                         │       ToolNode              │  │
-│                         │  (exécute les tool calls)   │  │
-│                         └─────────────────────────────┘  │
+│   ┌───────────────────┐    ┌──────────────────────────┐  │
+│   │   ToolRetriever   │    │     chatbot node (LLM)   │  │
+│   │  nomic-embed-text │───▶│  bind_tools(relevant)    │  │
+│   │  + multi-anchors  │    └────────────┬─────────────┘  │
+│   └───────────────────┘                │                 │
+│                              ┌─────────▼─────────────┐  │
+│                              │       ToolNode         │  │
+│                              │  (exécute tool calls)  │  │
+│                              └────────────────────────┘  │
 └─────────────────────────────────────────────────────────┘
                          │
-           ┌─────────────┼────────────────┐
-           │             │                │
-    ┌──────▼──┐   ┌─────▼──────┐  ┌──────▼──────────┐
-    │  Agents │   │   Shell /  │  │ Coding Specialist│
-    │ Google  │   │  Git / FS  │  │  (LLM dédié +   │
-    │ Slack   │   │  System    │  │  propose_file)   │
-    │ Gmail…  │   └────────────┘  └─────────────────┘
-    └─────────┘
+          ┌──────────────┼──────────────────┐
+          │              │                  │
+   ┌──────▼──┐   ┌───────▼──────┐   ┌──────▼──────────────┐
+   │ Agents  │   │  Shell / Git │   │  Coding Specialist   │
+   │ Google  │   │  Filesystem  │   │  LLM dédié + HITL   │
+   │ Slack   │   │  System      │   │  propose_file_change │
+   │ Arxiv…  │   └──────────────┘   └─────────────────────┘
+   └─────────┘
 ```
 
 **Flux d'une requête :**
@@ -41,269 +95,181 @@ Interface conversationnelle en ligne de commande propulsée par LangGraph, avec 
 1. L'utilisateur tape un message
 2. Le `ToolRetriever` sélectionne les outils sémantiquement pertinents (parmi ~40)
 3. L'orchestrateur (LLM) appelle les outils nécessaires
-4. Les réponses sont streamées token par token dans le terminal
-5. Pour les tâches de code, le spécialiste `run_coding_agent` prend le relai avec son propre loop
+4. Les réponses sont streamées token par token
+5. Pour les tâches de code → `run_coding_agent` délègue au spécialiste avec workflow HITL
 
 ---
 
-## Agents et outils disponibles
+## Agents & outils
 
-### Recherche et information
+### Recherche & information
 | Outil | Description |
 |-------|-------------|
-| `web_research_report` | Recherche web via Tavily |
-| `arxiv_search` / `arxiv_get_paper` | Recherche de papers académiques |
+| `web_research_report` | Recherche web approfondie via Tavily |
+| `arxiv_search` · `arxiv_get_paper` | Papers académiques |
 | `get_weather_by_city` | Météo en temps réel |
-| `get_current_time` | Date et heure courante |
+| `get_current_time` | Date et heure |
 
-### Système de fichiers local
+### Fichiers locaux
 | Outil | Description |
 |-------|-------------|
-| `local_find_file` | Trouver un fichier par pattern |
+| `local_find_file` | Trouver un fichier par nom/pattern |
 | `local_list_directory` | Lister un répertoire |
 | `local_read_file` | Lire le contenu d'un fichier |
 
-### Shell et système
+### Shell & système
 | Outil | Description |
 |-------|-------------|
-| `shell_run` | Exécuter une commande shell |
-| `shell_cd` / `shell_pwd` / `shell_ls` | Navigation |
-| `notify` | Notification système |
-| `clipboard_read` / `clipboard_write` | Presse-papiers |
+| `shell_run` | Exécuter une commande (avec garde destructive) |
+| `shell_cd` · `shell_pwd` · `shell_ls` | Navigation (fuzzy) |
+| `notify` | Notification desktop |
+| `clipboard_read` · `clipboard_write` | Presse-papiers |
 | `screenshot_take` | Capture d'écran |
-| `process_list` / `process_kill` | Gestion des processus |
-| `wifi_info` | Infos réseau |
+| `process_list` · `process_kill` · `wifi_info` | Système |
 
 ### Git
 | Outil | Description |
 |-------|-------------|
-| `git_status` / `git_log` / `git_diff` | Inspection du repo |
+| `git_status` · `git_log` · `git_diff` | Inspection |
 | `git_suggest_commit` | Suggestion de message de commit |
-| `url_fetch` | Fetch d'une URL |
+| `url_fetch` | Fetch d'une URL distante |
 
-### Gmail
+### Google Workspace
 | Outil | Description |
 |-------|-------------|
-| `gmail_search` | Chercher des emails |
-| `gmail_summarize` | Résumer un email |
-| `gmail_send_email` / `gmail_edit_draft` / `gmail_confirm_send` | Envoi d'emails |
-
-### Google Calendar
-`calendar_list_events` · `calendar_create_event` · `calendar_update_event` · `calendar_delete_event` · `calendar_list_calendars` · `calendar_search_events`
-
-### Google Drive / Docs / Slides
-`drive_list_files` · `drive_read_file` · `drive_find_file_id` · `drive_delete_file` · `drive_get_file_metadata`
-`google_docs_create` · `google_docs_update` · `google_docs_read`
-`create_presentation` · `add_slide`
+| `gmail_search` · `gmail_summarize` | Lire les emails |
+| `gmail_send_email` · `gmail_edit_draft` · `gmail_confirm_send` | Envoyer |
+| `calendar_list_events` · `calendar_create_event` · … | Agenda |
+| `drive_list_files` · `drive_read_file` · `drive_find_file_id` · … | Drive |
+| `google_docs_create` · `google_docs_update` · `google_docs_read` | Docs |
+| `create_presentation` · `add_slide` | Slides |
 
 ### Slack
 `slack_find_user` · `slack_list_channels` · `slack_read_channel` · `slack_get_mentions` · `slack_list_dms` · `slack_send_message` · `slack_search_messages`
 
-### Agent de code (spécialiste)
+### Agent de code (HITL)
 | Outil | Description |
 |-------|-------------|
-| `run_coding_agent` | Délègue une tâche de code au spécialiste |
-| `dev_plan_create` | Crée un plan d'exécution (étapes) |
-| `dev_plan_step_done` | Valide une étape du plan |
+| `run_coding_agent` | Délègue au spécialiste de code |
+| `dev_plan_create` | Crée un plan d'exécution |
+| `dev_plan_step_done` | Valide une étape |
 | `dev_explain` | Présente l'analyse à l'utilisateur |
-| `propose_file_change` | Propose une modification de fichier (avec diff + approbation) |
+| `propose_file_change` | Propose une modification (diff + approbation) |
 | `find_git_repos` | Trouve les repos git locaux |
+
+---
+
+## Agent de code — workflow HITL
+
+Chaque tâche de code suit un workflow strict avec approbation humaine à chaque modification :
+
+```
+1. dev_plan_create(steps=[...])        ← Toujours en premier
+       ↓
+2. find_git_repos + shell_cd           ← Navigation vers le bon projet
+       ↓
+3. local_read_file / shell_run         ← Analyse du code existant
+       ↓
+4. dev_explain(message=...)            ← Explication à l'utilisateur
+       ↓
+5. propose_file_change(path, content)  ← Diff affiché + demande d'approbation
+   ┌──────────────────────────────┐
+   │  ✓ Appliquer                 │
+   │  ✗ Refuser                   │
+   │  ~ Préciser                  │
+   └──────────────────────────────┘
+       ↓
+6. Vérification auto (build/lint)      ← npm run build · pytest · tsc…
+       ↓
+7. Résumé final
+```
+
+Les fichiers ne sont **jamais écrits directement** — `shell_run` bloque toute écriture via `sed -i`, `cat >`, etc.
+
+---
+
+## ToolRetriever — sélection sémantique
+
+À chaque requête, seuls les outils pertinents sont injectés dans le contexte :
+
+```
+Requête → OllamaEmbeddings (nomic-embed-text) → Chroma vectorstore → top-k outils
+                                                        ↓
+                                              Expansion par groupes
+                                              (git détecté → tous les outils git)
+```
+
+**Multi-vector anchors** : les méta-outils abstraits (comme `run_coding_agent`) sont indexés avec plusieurs formulations sémantiques couvrant différentes intentions utilisateur. Résultat : une requête comme *"va dans mon repo et refais l'UI"* sélectionne toujours `run_coding_agent` même si les mots-clés ne matchent pas directement sa description.
 
 ---
 
 ## Backends LLM
 
-Trois backends configurables à la volée via `/backend` :
+Configurables à la volée via `/backend` :
 
 | Backend | Modèle par défaut | Usage |
 |---------|-------------------|-------|
-| `ollama` | `qwen2.5:7b` | Local (GPU requis) |
-| `ollama_cloud` | `gpt-oss:120b-cloud` | Cloud via Ollama |
+| `ollama` | `qwen2.5:7b` | 100% local (GPU) |
+| `ollama_cloud` | `kimi-k2:cloud` | Cloud via Ollama |
 | `groq` | `llama-3.3-70b-versatile` | API Groq |
 
-Le spécialiste de code utilise `qwen3-coder-next:cloud` (cloud) ou le même modèle que l'orchestrateur (local).
+Le spécialiste de code utilise `qwen3-coder-next:cloud` (cloud) ou le modèle de l'orchestrateur (local).
 
 ---
 
-## Sélection sémantique des outils (ToolRetriever)
-
-À chaque requête, le `ToolRetriever` sélectionne les outils les plus pertinents :
-
-```
-Requête → OllamaEmbeddings (nomic-embed-text) → Chroma vectorstore → top-k outils
-```
-
-- Seuls les outils sélectionnés sont injectés dans le system prompt → moins de tokens, meilleure précision
-- Le modèle d'embedding tourne localement via Ollama
-
----
-
-## Agent de code — workflow
-
-Quand une tâche de code est détectée, `run_coding_agent` lance un loop dédié :
-
-```
-1. dev_plan_create(steps=[...])        ← TOUJOURS en premier
-2. find_git_repos / local_read_file    ← Analyse du projet
-3. dev_explain(message=...)            ← Explication à l'utilisateur
-4. propose_file_change(path, content)  ← Proposition avec diff
-5. dev_plan_step_done(N)               ← Validation de l'étape
-6. Résumé final
-```
-
-Les fichiers ne sont **jamais écrits directement** — chaque modification passe par `propose_file_change` qui affiche un diff et demande approbation (`/mode ask`) ou applique automatiquement (`/mode auto`).
-
----
-
-## Interface — commandes
+## Commandes
 
 | Commande | Description |
 |----------|-------------|
 | `/attach` | Joindre un fichier (code, texte, PDF, image) |
-| `/paste` | Coller une image depuis le presse-papiers |
-| `/attachments` | Lister les pièces jointes en attente |
-| `/detach [fichier]` | Supprimer une ou toutes les pièces jointes |
-| `/letter` | Générer une lettre de motivation (attach CV + colle l'offre) |
+| `/paste` | Coller depuis le presse-papiers |
+| `/attachments` | Lister les pièces jointes |
+| `/detach [fichier]` | Supprimer une pièce jointe |
+| `/letter` | Générer une lettre de motivation |
 | `/upgrade` | Améliorer une lettre existante |
 | `/backend <b>` | Changer de backend : `groq` · `ollama` · `ollama_cloud` |
 | `/model <nom>` | Changer de modèle (picker interactif si sans argument) |
-| `/temp <val>` | Changer la température (ex: `0.7`) |
-| `/mode <ask\|auto>` | Mode édition fichiers |
-| `/lang <fr\|en>` | Forcer la langue de réponse |
-| `/new` | Nouveau thread de conversation |
+| `/temp <val>` | Changer la température |
+| `/mode <ask\|auto>` | Mode édition fichiers (demande / automatique) |
+| `/lang <fr\|en>` | Forcer la langue |
+| `/new` | Nouveau thread |
 | `/save` | Sauvegarder le transcript |
-| `/config` | Afficher la configuration courante |
-| `/debug` | Activer/désactiver le mode debug |
+| `/config` | Configuration courante |
+| `/debug` | Mode debug |
 | `/dump` | Afficher tous les messages du thread |
-| `q / exit` | Quitter |
+| `q` · `exit` | Quitter |
 
-**Raccourcis clavier :**
-- `Ctrl+O` → `/attach`
-- `Ctrl+P` → `/paste`
+**Raccourcis :** `Ctrl+O` → `/attach` · `Ctrl+P` → `/paste`
 
 ---
 
-## Structure du projet
+## Configuration
 
-```
-ai-agent/
-├── configs/
-│   └── base.yaml                  # Config principale (LLM, search, backends)
-├── .env                           # Clés API (non versionné)
-├── .env.sample                    # Template des variables d'environnement
-├── Makefile                       # Commandes build/run
-├── requirements.txt               # Dépendances Python
-│
-└── src/
-    ├── ui/
-    │   ├── app.py                 # Entrypoint CLI
-    │   ├── main.py                # Wrapper __main__
-    │   ├── streaming.py           # Stream LLM + gestion des commandes
-    │   ├── commands.py            # Handler des commandes /slash
-    │   ├── panels.py              # Composants Rich (bannière, panels)
-    │   ├── attachments.py         # Pièces jointes (fichiers, images, PDF)
-    │   ├── review.py              # UI de review des diffs
-    │   ├── picker.py              # Sélecteur interactif (flèches)
-    │   ├── edit_mode.py           # Mode ask / auto
-    │   ├── render.py              # Rendu Markdown
-    │   ├── config.py              # SessionConfig
-    │   ├── language.py            # Détection de langue
-    │   └── transcript.py          # Sauvegarde des conversations
-    │
-    ├── orchestrator/
-    │   ├── graph.py               # LangGraph (chatbot node + ToolNode)
-    │   ├── registry.py            # Enregistrement de tous les outils
-    │   ├── state.py               # GlobalState TypedDict
-    │   └── tool_retriever.py      # Sélection sémantique (Chroma)
-    │
-    ├── llm/
-    │   ├── models.py              # Factories LLM (Ollama, Groq, Cloud)
-    │   └── prompts.py             # System prompt Axon
-    │
-    ├── infra/
-    │   ├── settings.py            # Configuration Pydantic (YAML + .env)
-    │   ├── checkpoint.py          # Checkpointer LangGraph
-    │   └── google_auth.py         # OAuth Google
-    │
-    └── agents/
-        ├── search/tools.py
-        ├── weather/tools.py
-        ├── gmail/tools.py
-        ├── google_calendar/tools.py
-        ├── google_doc/tools.py
-        ├── google_drive/tools.py
-        ├── google_slide/tools.py
-        ├── slack/tools.py
-        ├── shell/tools.py
-        ├── git/tools.py
-        ├── filesystem/
-        │   ├── tools.py
-        │   └── letter.py          # Génération DOCX/PDF lettre de motivation
-        ├── system/tools.py
-        ├── arxiv/tools.py
-        ├── time/tools.py
-        └── coding/
-            ├── specialist.py      # Loop LLM spécialiste (150 itérations max)
-            ├── tools.py           # dev_plan, propose_file_change, dev_explain
-            └── pending.py         # File de changements en attente
-```
-
----
-
-## Installation
-
-```bash
-# Prérequis : Python 3.11+, Ollama installé et en cours d'exécution
-
-git clone <repo>
-cd ai-agent
-
-python -m venv venv
-source venv/bin/activate
-
-pip install -r requirements.txt
-
-cp .env.sample .env
-# Remplir les clés API dans .env
-
-# Lancer
-python -m src.ui.main
-```
-
-### Variables d'environnement (.env)
+### Variables d'environnement (`.env`)
 
 ```env
-GOOGLE_API_KEY=...        # Google Cloud (Calendar, Drive, Docs, Gmail, Slides)
-TAVILY_API_KEY=...        # Recherche web
-GROQ_API_KEY=...          # API Groq (si backend groq)
-OLLAMA_API_KEY=...        # Ollama Cloud (si backend ollama_cloud avec compte)
+# LLM
+GROQ_API_KEY=gsk_...
+OLLAMA_API_KEY=ollama_...          # Optionnel (Ollama Cloud)
 OLLAMA_HOST=http://127.0.0.1:11434
+
+# Recherche web
+TAVILY_API_KEY=tvly-...
+
+# Slack
+SLACK_BOT_TOKEN=xoxb-...
+
+# Divers
+PROJECTS_DIR=/home/user/projets    # Racine des projets (accélère find_git_repos)
 APP_ENV=dev
 ```
 
-### Modèles Ollama requis
+Google (Gmail · Calendar · Drive · Docs · Slides) utilise OAuth2 via `gcp-oauth.keys.json` — voir `bash setup.sh --config-only`.
 
-```bash
-ollama pull nomic-embed-text     # Obligatoire (ToolRetriever)
-ollama pull qwen2.5:7b           # Si backend ollama local
-```
-
-### Makefile
-
-```bash
-make agent      # Lancer l'interface Rich
-make install    # Installer les dépendances
-make test       # Lancer les tests
-make lint       # Vérifier le code
-make clean      # Nettoyer le cache
-```
-
----
-
-## Configuration (configs/base.yaml)
+### `configs/base.yaml`
 
 ```yaml
-llm_backend: "ollama_cloud"    # ollama | ollama_cloud | groq
+llm_backend: "ollama_cloud"        # ollama | ollama_cloud | groq
 
 ollama:
   model: "qwen2.5:7b"
@@ -317,4 +283,81 @@ search:
   max_results: 10
 ```
 
-Tous les paramètres sont modifiables à chaud via les commandes `/backend`, `/model`, `/temp`.
+### Modèles Ollama
+
+```bash
+ollama pull nomic-embed-text    # Obligatoire (ToolRetriever)
+ollama pull qwen2.5:7b          # Backend local (optionnel)
+```
+
+---
+
+## Structure du projet
+
+```
+ai-agent/
+├── install.sh                     # Installateur one-line (curl)
+├── setup.sh                       # Déploiement interactif
+├── Makefile                       # make agent | install | lint | clean
+├── requirements.txt
+├── .env.sample                    # Template des variables d'environnement
+├── configs/
+│   └── base.yaml                  # Config LLM, search, backends
+│
+└── src/
+    ├── ui/
+    │   ├── app.py                 # Entrypoint CLI
+    │   ├── streaming.py           # Stream LLM + commandes
+    │   ├── commands.py            # Handler /slash
+    │   ├── panels.py              # Composants Rich
+    │   ├── attachments.py         # Fichiers, images, PDF
+    │   ├── review.py              # UI review des diffs
+    │   ├── picker.py              # Sélecteur interactif
+    │   ├── edit_mode.py           # Mode ask / auto
+    │   └── transcript.py          # Sauvegarde conversations
+    │
+    ├── orchestrator/
+    │   ├── graph.py               # LangGraph (chatbot + ToolNode)
+    │   ├── registry.py            # Enregistrement de tous les outils
+    │   ├── state.py               # GlobalState TypedDict
+    │   └── tool_retriever.py      # Sélection sémantique (Chroma + anchors)
+    │
+    ├── llm/
+    │   ├── models.py              # Factories LLM
+    │   └── prompts.py             # System prompt Axon
+    │
+    ├── infra/
+    │   ├── settings.py            # Configuration Pydantic
+    │   ├── checkpoint.py          # Checkpointer LangGraph
+    │   └── google_auth.py         # OAuth Google
+    │
+    └── agents/
+        ├── coding/
+        │   ├── specialist.py      # Loop LLM spécialiste (150 itérations max)
+        │   ├── tools.py           # dev_plan · propose_file_change · dev_explain
+        │   └── pending.py         # File de changements en attente
+        ├── gmail/ · google_calendar/ · google_drive/
+        ├── google_doc/ · google_slide/
+        ├── slack/ · shell/ · git/ · filesystem/
+        ├── system/ · arxiv/ · time/ · weather/ · search/
+        └── image/
+```
+
+---
+
+## Makefile
+
+```bash
+make agent      # Lancer Axon
+make install    # Installer les dépendances
+make lint       # Vérifier le code
+make clean      # Nettoyer le cache
+```
+
+---
+
+<div align="center">
+
+Made with ♥ by [@kaiiine](https://github.com/kaiiine)
+
+</div>

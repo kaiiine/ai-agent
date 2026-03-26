@@ -4,9 +4,31 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List
 
-from langchain_core.messages import SystemMessage, trim_messages
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
+from rich.console import Console as RichConsole
+
+_console = RichConsole()
+
+_MAX_TOOL_MSG_CHARS = 3_000
+
+
+def _cap_tool_messages(messages: List) -> List:
+    out = []
+    for m in messages:
+        if isinstance(m, ToolMessage) and isinstance(m.content, str) and len(m.content) > _MAX_TOOL_MSG_CHARS:
+            truncated = m.content[:_MAX_TOOL_MSG_CHARS] + "\n…[tronqué]"
+            m = ToolMessage(content=truncated, tool_call_id=m.tool_call_id, name=getattr(m, "name", None))
+        out.append(m)
+    return out
+
+
+def _drop_oldest_non_system(messages: List) -> List | None:
+    """Drop the oldest non-system message. Returns None if nothing left to drop."""
+    for i in range(1, len(messages)):
+        return messages[:i] + messages[i + 1:]
+    return None
 
 from src.orchestrator.state import GlobalState
 from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq
@@ -23,7 +45,7 @@ def _ensure_system_prompt(messages: List, tools_names: str, today: str) -> List:
     first = messages[0]
     role0 = first.get("type") if isinstance(first, dict) else getattr(first, "type", None)
     if role0 == "system":
-        # Remplace le system prompt existant avec les tools sélectionnés à jour
+        # rempace le system prompt existant avec les tools sélectionnés à jour
         return [system_msg] + messages[1:]
     return [system_msg] + messages
 
@@ -42,8 +64,9 @@ def _chat_node_factory():
         from src.infra.settings import settings
         factory = _factories.get(settings.llm_backend, make_llm_ollama_cloud)
 
+        last_human = next((m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), None)
         last_message = state["messages"][-1]
-        query = last_message.content if hasattr(last_message, "content") else str(last_message)
+        query = last_human.content if last_human else (last_message.content if hasattr(last_message, "content") else str(last_message))
         selected_tools = retriever.get(query)
 
         llm_with_tools = factory().bind_tools(selected_tools)
@@ -52,15 +75,28 @@ def _chat_node_factory():
         today = datetime.now().strftime("%Y-%m-%d")
         tools_names = ", ".join(t.name for t in selected_tools)
         messages = _ensure_system_prompt(messages, tools_names, today)
-        messages = trim_messages(
-            messages,
-            max_tokens=100_000,
-            strategy="last",
-            token_counter=lambda msgs: sum(len(str(getattr(m, "content", m))) // 4 for m in msgs),
-            include_system=True,
-            allow_partial=False,
-        )
-        response = llm_with_tools.invoke(messages)
+        working = messages
+        capped = False
+        while True:
+            try:
+                response = llm_with_tools.invoke(working)
+                break
+            except Exception as e:
+                if "context" not in str(e).lower() and "length" not in str(e).lower():
+                    raise
+                if not capped:
+                    # étape 1 : tronquer les ToolMessages trop volumineux
+                    capped = True
+                    working = _cap_tool_messages(messages)
+                    _console.print("[dim]  ↩  contexte trop long — tronquage des résultats tools et retry…[/dim]")
+                else:
+                    # étape 2 : sliding window — supprimer le message le plus ancien (hors system)
+                    reduced = _drop_oldest_non_system(working)
+                    if reduced is None or len(reduced) <= 1:
+                        raise
+                    working = reduced
+                    _console.print(f"[dim]  ↩  toujours trop long — suppression d'un ancien message ({len(working)} restants)…[/dim]")
+
         return {"messages": [response]}
 
     return chatbot, tools

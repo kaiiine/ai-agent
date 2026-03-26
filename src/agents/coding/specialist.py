@@ -49,7 +49,18 @@ Workflow strict :
    Explique en markdown : ce que tu as trouvé, les bugs et leur cause, ce que tu vas changer et pourquoi.
 4. dev_plan_step_done(N) — immédiatement après chaque étape terminée.
 5. propose_file_change(path, content, description) — pour chaque fichier à modifier/créer.
-6. Retourne un résumé concis (2-3 lignes) de ce qui a été fait et proposé.
+6. Vérification automatique après toutes les modifications (max 3 cycles) :
+   a. Lance la commande de vérification adaptée au projet :
+      - Next.js/React : `npm run build` ou `npx tsc --noEmit`
+      - Python : `python -m py_compile fichier.py` ou `pytest`
+      - Autre : adapte selon le contexte
+   b. Si erreur détectée :
+      - dev_explain("🔍 Problème détecté dans `fichier` : <erreur>.\n\nCause : <explication>.\n\nCorrection : je remplace `X` par `Y` parce que <raison>.")
+      - propose_file_change(...) pour corriger
+      - Relance la vérification
+   c. Si tout est propre :
+      - dev_explain("✅ Vérification OK — aucune erreur détectée.")
+7. Retourne un résumé concis (2-3 lignes) de ce qui a été fait.
 
 Pour modifier ou créer un fichier : UNIQUEMENT propose_file_change. Jamais shell_run ou redirection.
 """

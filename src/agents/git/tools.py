@@ -25,7 +25,8 @@ def _find_repo(path_hint: Optional[str]) -> Optional[Path]:
         if p.exists():
             return p
     # Cherche dans les dossiers projets courants
-    for candidate in [Path.cwd(), _HOME / "Documents" / "projets-perso"]:
+    from src.utils.paths import get_projects_dir
+    for candidate in [Path.cwd(), get_projects_dir()]:
         code, _, _ = _git(["rev-parse", "--show-toplevel"], candidate)
         if code == 0:
             return candidate

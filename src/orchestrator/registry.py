@@ -37,8 +37,23 @@ def run_coding_agent(task: str) -> str:
     - corriger des bugs dans son code
     - analyser l'architecture ou la structure d'un projet
     - ajouter des tests, améliorer la documentation d'un projet
+    - travailler sur des fichiers de code (lire, modifier, créer) dans n'importe quel langage
+    - faire des changements visuels ou structurels dans un projet (UI, design, layout, style)
 
-    Mots-clés : coder, développer, projet, code, bug, feature, refactoriser, modifier fichier, créer, programmer
+    Exemples de requêtes utilisateur qui déclenchent ce tool :
+    - "va dans mon projet X et modifie le fichier Y"
+    - "corrige l'erreur dans mon code"
+    - "ajoute une nouvelle fonctionnalité à mon application"
+    - "refactoriser ce module pour le rendre plus propre"
+    - "analyse la structure de mon projet et dis-moi ce qui ne va pas"
+    - "crée un nouveau composant / fichier / classe dans mon projet"
+    - "améliore le design et rends-le plus moderne"
+    - "regarde mon repo et fais des modifications"
+    - "il y a un bug dans mon application, peux-tu le trouver et le corriger"
+    - "lis le fichier X et modifie-le pour faire Y"
+
+    Mots-clés : code, projet, fichier, repo, bug, modifier, créer, refactoriser, développer, programmer,
+    application, composant, fonction, classe, module, design, style, interface, front, backend
 
     Args:
         task: description détaillée de la tâche (inclure le nom du projet si connu)

@@ -9,8 +9,7 @@ from langchain_core.tools import tool
 
 from src.agents.coding.pending import FileChange, pending_changes, dev_plan
 
-_HOME = Path.home()
-_PROJECTS_DIR = _HOME / "Documents" / "projets-perso"
+from src.utils.paths import get_projects_dir
 
 
 @tool("dev_plan_create")
@@ -88,7 +87,7 @@ def find_git_repos(root: str = "") -> Dict[str, Any]:
             "error": "Appelle d'abord dev_plan_create() pour créer un plan avant de commencer.",
         }
 
-    default_base = _PROJECTS_DIR if _PROJECTS_DIR.exists() else _HOME
+    default_base = get_projects_dir()
     base = Path(root) if root else default_base
     if not base.exists():
         return {"status": "error", "error": f"Dossier introuvable : {root}"}

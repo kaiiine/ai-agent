@@ -1,3 +1,4 @@
+import re
 import threading
 from time import perf_counter
 
@@ -22,6 +23,24 @@ from .attachments import AttachmentStore, open_file_picker, get_clipboard_image,
 
 console = Console()
 _attachments = AttachmentStore()
+
+_DEBOUNCE = 0.03
+_REFRESH_RATE = 20
+_THINKING_WAIT = 0.4
+
+
+def _make_thinking_loop(stop_event: threading.Event, live: "Live"):
+    """Retourne une fonction de loop d'animation 'thinking' pour un thread daemon."""
+    def _loop():
+        i = 0
+        while not stop_event.is_set():
+            try:
+                live.update(live_panel_initial(i % 4))
+            except Exception:
+                pass
+            i += 1
+            stop_event.wait(_THINKING_WAIT)
+    return _loop
 
 _pt_style = Style.from_dict({
     "axon": "bold ansiyellow",
@@ -296,21 +315,14 @@ def _run_letter_stream(graph, prompt_text: str, attachments, cfg: SessionConfig)
     llm = factory()
     stop_thinking = threading.Event()
 
-    def _thinking_loop(live):
-        i = 0
-        while not stop_thinking.is_set():
-            live.update(live_panel_initial(i % 4))
-            i += 1
-            stop_thinking.wait(0.4)
-
     response_content = ""
     try:
-        with Live(live_panel_initial(), console=console, refresh_per_second=20, vertical_overflow="visible") as live:
+        with Live(live_panel_initial(), console=console, refresh_per_second=_REFRESH_RATE, vertical_overflow="crop") as live:
             saw_any_token = False
-            deb = {"DEBOUNCE": 0.03, "last_update": 0.0}
+            deb = {"DEBOUNCE": _DEBOUNCE, "last_update": 0.0}
             t0 = perf_counter()
 
-            t = threading.Thread(target=_thinking_loop, args=(live,), daemon=True)
+            t = threading.Thread(target=_make_thinking_loop(stop_thinking, live), daemon=True)
             t.start()
 
             for chunk in llm.stream([human_msg]):
@@ -337,7 +349,6 @@ def _export_letter(response_content: str) -> None:
     if not response_content:
         return
     try:
-        import re
         from src.agents.filesystem.letter import generate_docx, docx_to_pdf
 
         company = ""
@@ -345,7 +356,8 @@ def _export_letter(response_content: str) -> None:
             if line.strip().lower().startswith("objet"):
                 m = re.search(r"chez\s+(.+)", line, re.IGNORECASE)
                 if m:
-                    company = m.group(1).strip().split()[0]
+                    parts = m.group(1).strip().split()
+                    company = parts[0] if parts else ""
                 break
 
         candidate = "Quentin Dufour"
@@ -422,25 +434,15 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
 
     stop_thinking = threading.Event()
 
-    def _thinking_loop(live):
-        i = 0
-        while not stop_thinking.is_set():
-            try:
-                live.update(live_panel_initial(i % 4))
-            except Exception:
-                pass
-            i += 1
-            stop_thinking.wait(0.4)
-
     try:
-        with Live(live_panel_initial(), console=console, refresh_per_second=20, vertical_overflow="visible") as live:
+        with Live(live_panel_initial(), console=console, refresh_per_second=_REFRESH_RATE, vertical_overflow="crop") as live:
             response_content = ""
             saw_any_token = False
             last_node = ""
-            deb = {"DEBOUNCE": 0.03, "last_update": 0.0}
+            deb = {"DEBOUNCE": _DEBOUNCE, "last_update": 0.0}
             t0 = perf_counter()
 
-            t = threading.Thread(target=_thinking_loop, args=(live,), daemon=True)
+            t = threading.Thread(target=_make_thinking_loop(stop_thinking, live), daemon=True)
             t.start()
 
             for msg, meta in graph.stream(current_state, config=config, stream_mode="messages"):
@@ -604,17 +606,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     pending_refinements: list[str] = []
     stop_thinking = threading.Event()
 
-    def _thinking_loop(live):
-        i = 0
-        while not stop_thinking.is_set():
-            try:
-                live.update(live_panel_initial(i % 4))
-            except Exception:
-                pass
-            i += 1
-            stop_thinking.wait(0.4)
-
-    live = Live(live_panel_initial(), console=console, refresh_per_second=20, vertical_overflow="visible")
+    live = Live(live_panel_initial(), console=console, refresh_per_second=_REFRESH_RATE, vertical_overflow="crop")
 
     def _coding_progress(tool_name: str, args: dict) -> None:
         """Called by the coding specialist for plan/file events — updates the terminal in real time."""
@@ -662,7 +654,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         deb = {"DEBOUNCE": 0.03, "last_update": 0.0}
         t0 = perf_counter()
 
-        t = threading.Thread(target=_thinking_loop, args=(live,), daemon=True)
+        t = threading.Thread(target=_make_thinking_loop(stop_thinking, live), daemon=True)
         t.start()
 
         for msg, meta in graph.stream(current_state, config=config, stream_mode="messages"):
