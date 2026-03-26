@@ -2,9 +2,15 @@ ollama:
   model: "qwen2.5:7b"
   temperature: 0.0
 
+llm_backend: "ollama_cloud"   # "groq" | "ollama" | "ollama_cloud"
+
 search:
-  backend: "tavily"   # (placeholder pour switcher plus tard)
-  max_results: 2
+  backend: "tavily"
+  max_results: 10
 
 cli:
   thread_id: "1"
+
+groq:
+  model: "openai/gpt-oss-20b"
+  api_key: ${GROQ_API_KEY}

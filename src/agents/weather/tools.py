@@ -1,7 +1,7 @@
 """
 Weather tools for agents.
 """
-from src.config.config import GEOCODE_CONFIG
+from configs.config import GEOCODE_CONFIG
 import requests
 from langchain.tools import tool
 
@@ -33,7 +33,17 @@ def get_coordinates(city: str) -> dict:
 
 @tool
 def get_weather_by_city(city: str) -> dict:
-    """Retourne la météo actuelle pour une ville (lookup coords interne)."""
+    """
+    Retourne la météo actuelle (température, vent) pour n'importe quelle ville.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - connaître la météo d'une ville aujourd'hui
+    - savoir s'il va pleuvoir, faire chaud ou froid quelque part
+    - consulter la température actuelle d'un lieu
+    - planifier une sortie ou un voyage selon la météo
+
+    Mots-clés : météo, temps, température, pluie, soleil, vent, ville, climat, aujourd'hui
+    """
     coords = get_coordinates(city)
     lat, lon = coords["latitude"], coords["longitude"]
     r = requests.get(

@@ -1,0 +1,145 @@
+# src/orchestrator/tool_retriever.py
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_core.documents import Document
+
+# ── Groupes de tools ──────────────────────────────────────────
+TOOL_GROUPS: dict[str, list[str]] = {
+    "coding": [
+        "run_coding_agent",
+    ],
+    "git": [
+        "git_status", "git_log", "git_diff", "git_suggest_commit", "url_fetch",
+    ],
+    "filesystem": [
+        "local_find_file", "local_read_file", "local_list_directory",
+    ],
+    "shell": [
+        "shell_run", "shell_cd", "shell_pwd", "shell_ls",
+        "notify", "clipboard_read", "clipboard_write",
+    ],
+    "system": [
+        "screenshot_take", "process_list", "process_kill", "wifi_info",
+    ],
+    "gmail": [
+        "gmail_search", "gmail_summarize", "gmail_send_email",
+        "gmail_edit_draft", "gmail_confirm_send",
+    ],
+    "calendar": [
+        "calendar_list_events", "calendar_create_event", "calendar_update_event",
+        "calendar_delete_event", "calendar_list_calendars", "calendar_search_events",
+    ],
+    "drive": [
+        "drive_list_files", "drive_find_file_id", "drive_read_file",
+        "drive_delete_file", "drive_get_file_metadata",
+    ],
+    "docs": [
+        "google_docs_create", "google_docs_update", "google_docs_read",
+    ],
+    "slides": [
+        "create_presentation", "add_slide",
+    ],
+    "slack": [
+        "slack_find_user", "slack_list_channels", "slack_read_channel",
+        "slack_get_mentions", "slack_list_dms", "slack_send_message",
+        "slack_search_messages",
+    ],
+    "search": [
+        "web_research_report",
+    ],
+    "arxiv": [
+        "arxiv_search", "arxiv_get_paper",
+    ],
+    "time": [
+        "get_current_time",
+    ],
+    "weather": [
+        "get_weather_by_city",
+    ],
+}
+
+# Index inverse : tool_name → group_name
+_TOOL_TO_GROUP: dict[str, str] = {
+    tool: group
+    for group, tools in TOOL_GROUPS.items()
+    for tool in tools
+}
+
+# Tools toujours inclus
+_ALWAYS_INCLUDED = {"get_current_time"}
+
+# ── Multi-vector anchors ───────────────────────────────────────
+# Pour les méta-outils dont la description parle de "déléguer" plutôt
+# que du travail concret, on indexe N phrases sémantiques supplémentaires
+# couvrant les différentes façons dont un utilisateur peut formuler sa demande.
+# Chaque anchor est un document séparé dans Chroma → N chances d'être trouvé.
+_TOOL_ANCHORS: dict[str, list[str]] = {
+    "run_coding_agent": [
+        "modifier du code dans un projet local",
+        "refaire l'interface utilisateur d'une application web",
+        "corriger un bug dans mon application",
+        "ajouter une nouvelle fonctionnalité à un projet",
+        "refactoriser un module, une classe ou une fonction",
+        "aller dans mon repo et faire des changements",
+        "améliorer le design ou le style d'un projet",
+        "créer un nouveau composant, fichier ou page",
+        "analyser la structure du code et proposer des améliorations",
+        "lire et modifier les fichiers d'un projet",
+    ],
+}
+
+
+class ToolRetriever:
+    def __init__(self, tools: list, k: int = 7):
+        """
+        k : nombre de documents récupérés par similarité.
+        Les méta-outils sont indexés avec plusieurs vecteurs sémantiques
+        (multi-vector anchors) pour améliorer leur rappel sans les forcer.
+        """
+        embeddings = OllamaEmbeddings(model="nomic-embed-text")
+
+        docs = []
+        for t in tools:
+            # Document principal
+            docs.append(Document(
+                page_content=f"{t.name}: {t.description}",
+                metadata={"tool_name": t.name},
+            ))
+            # Ancres sémantiques supplémentaires (un doc par intention)
+            for anchor in _TOOL_ANCHORS.get(t.name, []):
+                docs.append(Document(
+                    page_content=anchor,
+                    metadata={"tool_name": t.name},
+                ))
+
+        self._tools = tools
+        self._store = Chroma.from_documents(docs, embeddings)
+        self._k = k
+
+    def get(self, query: str) -> list:
+        # 1. Récupère les k documents les plus similaires (dédupliqués par tool_name)
+        results = self._store.as_retriever(search_kwargs={"k": self._k}).invoke(query)
+        seed_names = {r.metadata["tool_name"] for r in results}
+
+        # 2. Étend aux groupes complets
+        groups_needed: set[str] = set()
+        for name in seed_names:
+            group = _TOOL_TO_GROUP.get(name)
+            if group:
+                groups_needed.add(group)
+
+        # 3. Construit la liste finale
+        selected_names: set[str] = set(_ALWAYS_INCLUDED)
+        for group in groups_needed:
+            selected_names.update(TOOL_GROUPS[group])
+
+        # 4. Si coding détecté → retirer git/shell/filesystem de l'orchestrateur
+        #    Le specialist a ses propres tools — l'orchestrateur ne doit pas
+        #    pouvoir faire le travail lui-même.
+        if "coding" in groups_needed:
+            for group in ("git", "filesystem", "shell"):
+                for tool_name in TOOL_GROUPS.get(group, []):
+                    selected_names.discard(tool_name)
+
+        # 5. Retourner les objets tools dans l'ordre original
+        return [t for t in self._tools if t.name in selected_names]
