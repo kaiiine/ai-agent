@@ -39,8 +39,8 @@ def make_llm_ollama_cloud():
 def make_coding_llm():
     """Coding specialist — en local réutilise le même modèle que l'orchestrateur."""
     if settings.llm_backend == "ollama":
-        # Même modèle que l'orchestrateur → pas de double chargement en RAM
-        return ChatOllama(model=settings.ollama_model, temperature=0.0)
+        # Même modèle que l'orchestrateur (évite les problèmes de VRAM)
+        return ChatOllama(model=settings.ollama_model, temperature=0.0, num_ctx=131_072)
     elif settings.llm_backend == "groq":
         return ChatGroq(
             api_key=settings.groq_api_key,
