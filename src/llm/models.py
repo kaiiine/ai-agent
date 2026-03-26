@@ -15,9 +15,9 @@ def make_llm():
 def make_llm_ollama_cloud():
     """
     Ollama Cloud — deux modes :
-    - Si OLLAMA_API_KEY est défini dans .env → API distante sur https://ollama.com
-    - Sinon → modèle cloud local (nécessite `ollama signin`)
-      Le modèle doit se terminer par `-cloud` (ex: gpt-oss:120b-cloud)
+    - si OLLAMA_API_KEY est défini dans .env
+    - sinon → modèle cloud local 
+      le modèle doit se terminer par `-cloud` 
     """
     if settings.ollama_api_key:
         # API distante ollama.com — modèle sans suffixe -cloud
@@ -29,7 +29,6 @@ def make_llm_ollama_cloud():
             temperature=settings.temperature,
         )
     else:
-        # Ollama local avec offload cloud (après `ollama signin`)
         cloud_model = settings.ollama_cloud_model
         return ChatOllama(
             model=cloud_model,

@@ -111,7 +111,7 @@ class EmailAgent:
                                     "status": "📤 Envoyé"
                                 } for mail in emails
                             ], ensure_ascii=False)
-                except:
+                except Exception:
                     continue
             
             return f"❌ Impossible d'accéder aux emails envoyés. Dossier introuvable. Erreur: {str(e)}"
@@ -151,7 +151,7 @@ class EmailAgent:
 {mail.text or mail.html or 'Contenu non disponible'}
 """
                         return content.strip()
-            except:
+            except Exception:
                 continue
         
         return f"❌ Aucun email envoyé trouvé pour l'UID {uid}."
@@ -270,7 +270,7 @@ Réponds UNIQUEMENT au format JSON suivant :
                         for mail in recent_emails:
                             if mail.subject == subject and recipient in str(mail.to):
                                 return f"✅ Email confirmé dans le dossier '{folder_name}'"
-                except:
+                except Exception:
                     continue
             
             return "⚠️ Email envoyé mais non trouvé dans les dossiers d'envoi (peut prendre quelques minutes)"

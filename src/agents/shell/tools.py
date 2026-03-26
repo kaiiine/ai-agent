@@ -15,6 +15,14 @@ _DESTRUCTIVE_PREFIXES = (
     "pip uninstall", "pacman -R", "yay -R",
 )
 
+# Écriture de fichiers — doit passer par propose_file_change dans le coding specialist
+_WRITE_PATTERNS = ("sed -i", "cat >", "cat >>", "tee /", "echo > /", "echo >> /")
+
+
+def _is_file_write(cmd: str) -> bool:
+    c = cmd.strip()
+    return any(p in c for p in _WRITE_PATTERNS)
+
 
 def _is_destructive(cmd: str) -> bool:
     c = cmd.strip().lower()
@@ -56,6 +64,13 @@ def shell_run(
             "status": "requires_confirmation",
             "command": command,
             "message": "Commande destructive détectée. Demander confirmation explicite à l'utilisateur avant d'exécuter.",
+        }
+
+    if _is_file_write(command):
+        return {
+            "status": "blocked",
+            "command": command,
+            "message": "Écriture de fichier via shell bloquée. Utilise propose_file_change(path, content, description) pour toute modification de fichier.",
         }
 
     work_dir = Path(cwd) if cwd else None
