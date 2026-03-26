@@ -66,7 +66,14 @@ def _chat_node_factory():
 
         last_human = next((m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), None)
         last_message = state["messages"][-1]
-        query = last_human.content if last_human else (last_message.content if hasattr(last_message, "content") else str(last_message))
+        if last_human:
+            query = last_human.content
+            # Si le message est trop court on enrichit avec les HumanMessages précédents pour que le ToolRetriever garde le contexte de la conversation.
+            if len(query.split()) < 8:
+                human_msgs = [m.content for m in state["messages"] if isinstance(m, HumanMessage)]
+                query = " ".join(human_msgs[-3:])  # 3 derniers messages humains
+        else:
+            query = last_message.content if hasattr(last_message, "content") else str(last_message)
         selected_tools = retriever.get(query)
 
         llm_with_tools = factory().bind_tools(selected_tools)
@@ -85,12 +92,12 @@ def _chat_node_factory():
                 if "context" not in str(e).lower() and "length" not in str(e).lower():
                     raise
                 if not capped:
-                    # étape 1 : tronquer les ToolMessages trop volumineux
+                    # on tronque les ToolsMessages trop volumineux
                     capped = True
                     working = _cap_tool_messages(messages)
                     _console.print("[dim]  ↩  contexte trop long — tronquage des résultats tools et retry…[/dim]")
                 else:
-                    # étape 2 : sliding window — supprimer le message le plus ancien (hors system)
+                    # supprime le message le plus ancien (hors system)
                     reduced = _drop_oldest_non_system(working)
                     if reduced is None or len(reduced) <= 1:
                         raise

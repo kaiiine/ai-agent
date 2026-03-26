@@ -75,16 +75,81 @@ _ALWAYS_INCLUDED = {"get_current_time"}
 # Chaque anchor est un document séparé dans Chroma → N chances d'être trouvé.
 _TOOL_ANCHORS: dict[str, list[str]] = {
     "run_coding_agent": [
+        # ── Modifications & corrections ───────────────────────
         "modifier du code dans un projet local",
-        "refaire l'interface utilisateur d'une application web",
         "corriger un bug dans mon application",
+        "corriger une erreur ou un comportement inattendu",
+        "fixer un problème dans mon code",
+        "déboguer un crash ou une exception",
+        "trouver pourquoi mon code ne fonctionne pas",
+        "réparer une régression introduite récemment",
+        "résoudre un conflit de dépendances dans le projet",
+
+        # ── Nouvelles fonctionnalités ─────────────────────────
         "ajouter une nouvelle fonctionnalité à un projet",
-        "refactoriser un module, une classe ou une fonction",
-        "aller dans mon repo et faire des changements",
-        "améliorer le design ou le style d'un projet",
+        "implémenter une nouvelle route dans mon API",
         "créer un nouveau composant, fichier ou page",
+        "ajouter un bouton, un formulaire ou un élément UI",
+        "intégrer une librairie externe dans le projet",
+        "brancher une API tierce dans mon application",
+        "mettre en place un système d'authentification",
+        "ajouter des tests unitaires ou d'intégration",
+        "écrire des tests pour couvrir mon code",
+
+        # ── Refactoring & architecture ────────────────────────
+        "refactoriser un module, une classe ou une fonction",
+        "réorganiser la structure des fichiers du projet",
+        "découper un fichier trop long en plusieurs modules",
+        "renommer des variables, fonctions ou fichiers",
+        "supprimer du code mort ou des imports inutilisés",
+        "migrer vers une nouvelle version d'un framework",
+        "convertir du code JavaScript en TypeScript",
+        "remplacer une dépendance obsolète par une alternative",
+
+        # ── UI / Frontend ─────────────────────────────────────
+        "refaire l'interface utilisateur d'une application web",
+        "améliorer le design ou le style d'un projet",
+        "rendre l'application responsive ou mobile-friendly",
+        "changer le thème, les couleurs ou la typographie",
+        "corriger un problème d'affichage ou de layout",
+        "animer un composant ou ajouter des transitions",
+        "améliorer l'accessibilité de l'interface",
+
+        # ── Analyse & compréhension ───────────────────────────
+        "expliquer comment fonctionne le code d'un repo",
         "analyser la structure du code et proposer des améliorations",
+        "faire un code review d'un projet et dire ce qui peut être amélioré",
+        "lire les fichiers du projet et résumer l'architecture",
+        "identifier les parties les plus complexes du code",
+        "comprendre ce que fait un fichier ou une fonction",
+        "documenter le code avec des commentaires ou un README",
+        "générer la documentation d'une fonction ou d'une classe",
+
+        # ── Performance & qualité ─────────────────────────────
+        "optimiser les performances d'un projet existant",
+        "réduire le temps de chargement ou la consommation mémoire",
+        "identifier et corriger des fuites mémoire",
+        "améliorer la sécurité du code",
+        "mettre en place du linting ou du formatage automatique",
+        "configurer ESLint, Prettier, Black ou un autre linter",
+        "améliorer le score Lighthouse d'une application web",
+
+        # ── DevOps / config ───────────────────────────────────
+        "modifier la configuration du projet",
+        "mettre à jour le fichier de configuration webpack, vite ou autre",
+        "configurer les variables d'environnement",
+        "créer ou modifier un Dockerfile ou docker-compose",
+        "mettre en place une CI/CD pipeline",
+        "configurer les scripts npm, yarn ou makefile",
+        "initialiser un nouveau projet from scratch",
+
+        # ── Navigation dans le repo ───────────────────────────
+        "aller dans mon repo et faire des changements",
         "lire et modifier les fichiers d'un projet",
+        "parcourir les fichiers d'un dossier et m'en expliquer le contenu",
+        "chercher où est définie une fonction ou une classe dans le projet",
+        "trouver tous les endroits où une variable est utilisée",
+        "lister les dépendances du projet",
     ],
 }
 
