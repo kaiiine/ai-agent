@@ -13,6 +13,21 @@ _MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
          "gif": "image/gif", "webp": "image/webp"}
 
 
+def _fix_spaced_chars(text: str) -> str:
+    """Corrige l'artefact pypdf où les lettres sont séparées par des espaces.
+    """
+    import re
+    lines = []
+    for line in text.split('\n'):
+        words = line.split(' ')
+        single = sum(1 for w in words if len(w) <= 1)
+        # Si >60% des "mots" sont des lettres seules → ligne espacée
+        if len(words) > 4 and single / len(words) > 0.6:
+            line = re.sub(r'(?<=[A-Za-zÀ-ÿ0-9]) (?=[A-Za-zÀ-ÿ0-9])', '', line)
+        lines.append(line)
+    return '\n'.join(lines)
+
+
 def _extract_pdf(path: Path) -> str:
     try:
         from pypdf import PdfReader
@@ -20,6 +35,7 @@ def _extract_pdf(path: Path) -> str:
         pages = []
         for i, page in enumerate(reader.pages):
             text = page.extract_text() or ""
+            text = _fix_spaced_chars(text)
             if text.strip():
                 pages.append(f"[Page {i + 1}]\n{text}")
         return "\n\n".join(pages)[:MAX_TEXT_SIZE] or "[PDF sans texte extractible]"

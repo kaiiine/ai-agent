@@ -10,7 +10,7 @@ from src.ui.panels import banner, ACCENT
 from src.ui.streaming import stream_once
 
 load_dotenv()
-console = Console()
+console = Console(highlight=True, emoji=True)  
 
 
 def run_cli():

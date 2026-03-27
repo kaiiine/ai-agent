@@ -595,6 +595,11 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     attachments = _attachments.pop_all()
     message_dict = build_message_with_attachments(user_message, attachments)
     current_state = {"messages": [message_dict]}
+
+    # Forcer la langue si /lang a été défini (injecte un system message éphémère)
+    if cfg.lang_pref in {"fr", "en"}:
+        from .language import enforce_lang_ephemeral_system
+        enforce_lang_ephemeral_system(current_state, cfg.lang_pref)
     config = {"configurable": {"thread_id": cfg.thread_id}}
 
     if cfg.debug:

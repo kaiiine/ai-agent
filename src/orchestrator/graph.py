@@ -39,7 +39,9 @@ from src.orchestrator.tool_retriever import ToolRetriever
 
 
 def _ensure_system_prompt(messages: List, tools_names: str, today: str) -> List:
-    system_msg = SystemMessage(content=SYSTEM_PROMPT.format(tools_available=tools_names, today=today))
+    import os
+    user_name = os.getenv("USER_NAME", "l'utilisateur")
+    system_msg = SystemMessage(content=SYSTEM_PROMPT.format(tools_available=tools_names, today=today, user_name=user_name))
     if not messages:
         return [system_msg]
     first = messages[0]
