@@ -66,6 +66,7 @@ fi
 
 # ── Lancement du setup ────────────────────────────────────────
 cd "$INSTALL_DIR"
+exec < /dev/tty
 bash setup.sh
 
 # ── Alias global (optionnel) ──────────────────────────────────
