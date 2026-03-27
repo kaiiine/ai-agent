@@ -118,8 +118,11 @@ config_slack() {
     echo -e "  ${DIM}1. Aller sur https://api.slack.com/apps${NC}"
     echo -e "  ${DIM}2. Créer une nouvelle app → From scratch${NC}"
     echo -e "  ${DIM}3. OAuth & Permissions → User Token Scopes, ajouter :${NC}"
-    echo -e "  ${DIM}   channels:read  channels:history  users:read  users:read.email${NC}"
-    echo -e "  ${DIM}   im:read  im:history  chat:write  search:read  groups:read${NC}"
+    echo -e "  ${DIM}   channels:read    channels:history${NC}"
+    echo -e "  ${DIM}   groups:read      groups:history${NC}"
+    echo -e "  ${DIM}   im:read          im:history       im:write${NC}"
+    echo -e "  ${DIM}   mpim:read        mpim:history     mpim:write${NC}"
+    echo -e "  ${DIM}   users:read       search:read      chat:write${NC}"
     echo -e "  ${DIM}4. Install to Workspace → Copy User OAuth Token${NC}"
     prompt_key "SLACK_USER_TOKEN" "User Token Slack" "Format : xoxp-xxxxxxxxxxxx-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx"
 }
