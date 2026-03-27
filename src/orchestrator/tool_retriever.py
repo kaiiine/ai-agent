@@ -1,6 +1,6 @@
 # src/orchestrator/tool_retriever.py
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import OllamaEmbeddings
+from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 
 # ── Groupes de tools ──────────────────────────────────────────

@@ -51,7 +51,7 @@ install-torch: ## Installe PyTorch avec support CUDA
 	@echo -e "$(GREEN)  ✓  $(NC)PyTorch installé"
 
 agent: ## Lance Axon (interface Rich)
-	@$(PYTHON) -m src.ui.main
+	@PYTHONIOENCODING=utf-8 LANG=fr_FR.UTF-8 $(PYTHON) -m src.ui.main
 
 ui: agent ## Alias pour agent
 

@@ -79,7 +79,7 @@ elif [[ -f "$HOME/.bashrc" ]]; then
     SHELL_RC="$HOME/.bashrc"
 fi
 
-ALIAS_LINE="alias axon='cd $INSTALL_DIR && source venv/bin/activate && python -m src.ui.main'"
+ALIAS_LINE="alias axon='cd $INSTALL_DIR && source venv/bin/activate && PYTHONIOENCODING=utf-8 LANG=fr_FR.UTF-8 python -m src.ui.main'"
 
 if [[ -n "$SHELL_RC" ]]; then
     if grep -q "alias axon=" "$SHELL_RC" 2>/dev/null; then

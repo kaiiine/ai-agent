@@ -117,11 +117,11 @@ config_slack() {
     echo -e "  ${ORANGE}Étapes :${NC}"
     echo -e "  ${DIM}1. Aller sur https://api.slack.com/apps${NC}"
     echo -e "  ${DIM}2. Créer une nouvelle app → From scratch${NC}"
-    echo -e "  ${DIM}3. OAuth & Permissions → Bot Token Scopes, ajouter :${NC}"
+    echo -e "  ${DIM}3. OAuth & Permissions → User Token Scopes, ajouter :${NC}"
     echo -e "  ${DIM}   channels:read  channels:history  users:read  users:read.email${NC}"
     echo -e "  ${DIM}   im:read  im:history  chat:write  search:read  groups:read${NC}"
-    echo -e "  ${DIM}4. Install to Workspace → Copy Bot User OAuth Token${NC}"
-    prompt_key "SLACK_BOT_TOKEN" "Bot Token Slack" "Format : xoxb-xxxxxxxxxxxx-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx"
+    echo -e "  ${DIM}4. Install to Workspace → Copy User OAuth Token${NC}"
+    prompt_key "SLACK_USER_TOKEN" "User Token Slack" "Format : xoxp-xxxxxxxxxxxx-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx"
 }
 
 config_google() {
@@ -152,6 +152,28 @@ config_google() {
             ok "gcp-oauth.keys.json copié"
         else
             warn "Google Services non configurés — à faire manuellement"
+        fi
+    fi
+}
+
+config_user_name() {
+    step "Ton identité"
+    echo -e "  ${DIM}Ton prénom ou alias sera utilisé par Axon pour te répondre personnellement.${NC}"
+    local current
+    current=$(env_get "USER_NAME")
+    echo ""
+    if [[ -n "$current" && "$current" != "Ton Prénom Nom" ]]; then
+        echo -e "  ${DIM}Valeur actuelle : ${current}  (Entrée pour conserver)${NC}"
+    fi
+    read -rp "  $(echo -e "${ORANGE}>  Ton prénom / alias :${NC} ")" input
+    if [[ -n "$input" ]]; then
+        env_set "USER_NAME" "$input"
+        ok "Bonjour, ${input} !"
+    else
+        if [[ -n "$current" && "$current" != "Ton Prénom Nom" ]]; then
+            ok "Conservé : ${current}"
+        else
+            warn "USER_NAME ignoré — modifiable dans .env"
         fi
     fi
 }
@@ -200,6 +222,13 @@ show_status() {
     echo ""
     echo -e "  ${WHITE}Statut des intégrations :${NC}"
     echo ""
+    local uname
+    uname=$(env_get "USER_NAME")
+    if [[ -n "$uname" && "$uname" != "Ton Prénom Nom" ]]; then
+        ok "Identité  ${DIM}→ ${uname}${NC}"
+    else
+        warn "Identité  ${DIM}(USER_NAME non configuré)${NC}"
+    fi
     env_status "TAVILY_API_KEY"  "Tavily    (recherche web)"
     env_status "GROQ_API_KEY"    "Groq      (LLM cloud)"
     env_status "OLLAMA_API_KEY"  "Ollama Cloud (optionnel)"
@@ -326,6 +355,7 @@ deploy() {
     else
         ok ".env déjà présent"
     fi
+    config_user_name
 
     # ── 5. Modèles Ollama ─────────────────────────────────────
     step "Modèles Ollama"
@@ -373,6 +403,7 @@ if [[ "${1:-}" == "--config-only" ]]; then
         cp .env.sample .env
         ok ".env créé depuis .env.sample"
     fi
+    config_user_name
     config_menu
 else
     deploy
