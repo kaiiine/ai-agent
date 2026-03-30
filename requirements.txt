@@ -29,6 +29,10 @@ prompt_toolkit
 
 # Slack
 slack_sdk
+emoji
+
+# PDF
+pypdf
 
 # mcp
 mcp[cli]
@@ -52,3 +56,5 @@ huggingface-hub
 
 
 click
+python-docx
+psutil
