@@ -34,6 +34,12 @@ _CHOICES: List[Tuple[str, str]] = [
     ("refine", "~  Préciser"),
 ]
 
+_EMAIL_CHOICES: List[Tuple[str, str]] = [
+    ("send",   "✉  Envoyer"),
+    ("cancel", "✗  Annuler"),
+    ("modify", "~  Modifier"),
+]
+
 _MAX_DIFF_LINES = 60
 
 
@@ -242,6 +248,139 @@ def auto_write_all(console_override=None) -> None:
             _console.print(Text(f"     {path}", style="dim"))
     for err in errors:
         _console.print(Text(f"  ✗  {err}", style="red"))
+
+
+# ── Email review (HITL) ───────────────────────────────────────────────────────
+
+def review_email() -> Tuple[str, str | None]:
+    """
+    Displays the pending email draft in Axon's visual style and asks for confirmation.
+
+    Returns:
+        ("send",   None)        — user approved, caller should call _do_send()
+        ("cancel", None)        — user cancelled, draft cleared
+        ("modify", "<text>")    — user wants changes, refinement text returned
+    """
+    from src.agents.gmail.tools import _draft
+
+    if not _draft.get("has_draft"):
+        return ("cancel", None)
+
+    from rich.panel import Panel as _Panel
+    from rich.table import Table
+    from rich import box as rbox
+    from rich.console import Group as _Group
+
+    console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+
+    # Header
+    t = Text()
+    t.append("  ✉  ", style=f"bold {ACCENT}")
+    t.append("email en attente d'envoi", style=f"bold {ACCENT}")
+    console.print(t)
+    console.print()
+
+    # Meta fields (To / Subject)
+    tbl = Table(box=rbox.SIMPLE_HEAD, show_header=False, padding=(0, 1))
+    tbl.add_column("", style=f"bold {ACCENT}", no_wrap=True, width=7)
+    tbl.add_column("", style="white")
+    tbl.add_row("À", _draft["to"] or "")
+    tbl.add_row("Objet", _draft["subject"] or "")
+
+    body_text = Text(_draft["body"] or "", style="white")
+
+    console.print(_Panel(
+        _Group(tbl, Text(""), body_text),
+        box=_BOX,
+        border_style=f"dim {ACCENT}",
+        title="[dim]brouillon[/dim]",
+        title_align="left",
+        padding=(1, 2),
+    ))
+    console.print()
+    console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+
+    # Selector
+    idx = [0]
+    choices = _EMAIL_CHOICES
+
+    def get_tokens():
+        parts: list = []
+        for i, (key, label) in enumerate(choices):
+            if i == idx[0]:
+                parts.append(("class:selected", f"  ▶  {label}\n"))
+            else:
+                parts.append(("class:normal",   f"     {label}\n"))
+        parts.append(("class:hint", "  ↑↓ · Entrée"))
+        return parts
+
+    kb = KeyBindings()
+
+    @kb.add("down")
+    @kb.add("tab")
+    def _fwd(event):
+        idx[0] = (idx[0] + 1) % len(choices)
+
+    @kb.add("up")
+    @kb.add("s-tab")
+    def _bwd(event):
+        idx[0] = (idx[0] - 1) % len(choices)
+
+    @kb.add("enter")
+    def _ok(event):
+        event.app.exit(result=choices[idx[0]][0])
+
+    @kb.add("escape")
+    @kb.add("c-c")
+    def _esc(event):
+        event.app.exit(result="cancel")
+
+    app = Application(
+        layout=Layout(
+            Window(
+                FormattedTextControl(get_tokens, focusable=True),
+                height=len(choices) + 1,
+            )
+        ),
+        key_bindings=kb,
+        style=_PT_STYLE,
+        full_screen=False,
+        mouse_support=False,
+    )
+    choice = app.run()
+    console.print()
+
+    if choice not in ("send", "cancel", "modify"):
+        # app.run() returned None ou valeur inattendue → annulation safe
+        choice = "cancel"
+
+    if choice == "send":
+        from src.agents.gmail.tools import _do_send
+        result = _do_send()
+        t = Text()
+        t.append("  ✉  ", style="bold green")
+        t.append(result, style="dim")
+        console.print(t)
+        return ("send", None)
+
+    if choice == "cancel":
+        from src.agents.gmail.tools import _draft as d
+        d.update({"to": None, "subject": None, "body": None, "has_draft": False})
+        t = Text()
+        t.append("  ✗  ", style="bold red")
+        t.append("envoi annulé", style="dim")
+        console.print(t)
+        return ("cancel", None)
+
+    # modify
+    refinement = _ask_refinement()
+    if not refinement:
+        t = Text()
+        t.append("  ✗  ", style="bold red")
+        t.append("annulé", style="dim")
+        console.print(t)
+        return ("cancel", None)
+    return ("modify", refinement)
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
