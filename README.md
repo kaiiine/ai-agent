@@ -86,7 +86,8 @@ cd ai-agent && source venv/bin/activate && python -m src.ui.main
    │ Agents  │   │  Shell / Git │   │  Coding Specialist   │
    │ Google  │   │  Filesystem  │   │  LLM dédié + HITL   │
    │ Slack   │   │  System      │   │  propose_file_change │
-   │ Arxiv…  │   └──────────────┘   └─────────────────────┘
+   │ Jira    │   └──────────────┘   └─────────────────────┘
+   │ Arxiv…  │
    └─────────┘
 ```
 
@@ -146,6 +147,26 @@ cd ai-agent && source venv/bin/activate && python -m src.ui.main
 
 ### Slack
 `slack_find_user` · `slack_list_channels` · `slack_read_channel` · `slack_get_mentions` · `slack_list_dms` · `slack_send_message` · `slack_search_messages`
+
+### Jira
+| Outil | Description |
+|-------|-------------|
+| `jira_get_my_issues` | Tickets assignés à l'utilisateur |
+| `jira_get_issue` | Détails d'un ticket par clé (ex: KAN-42) |
+| `jira_search_issues` | Recherche JQL libre |
+| `jira_get_project_summary` | Avancement global : tickets par statut, story points |
+| `jira_get_sprint_issues` | Tickets du sprint actif (fallback Kanban) |
+| `jira_list_projects` | Projets accessibles |
+| `jira_create_issue` | Créer un ticket (Task, Story, Bug, Epic) |
+| `jira_create_issues_bulk` | Créer plusieurs tickets en masse avec hiérarchie Epic→Story→Task |
+| `jira_assign_issue` | Assigner à soi ou à quelqu'un |
+| `jira_update_issue` | Modifier titre, description, priorité |
+| `jira_transition_issue` | Changer le statut (To Do → In Progress → Done) |
+| `jira_add_comment` | Commenter un ticket |
+| `jira_get_issue_comments` | Lire les commentaires |
+| `jira_get_workload` | Répartition des tickets par membre |
+| `jira_search_users` | Trouver un utilisateur par nom |
+| `jira_move_issue` | Déplacer un ticket vers un autre projet |
 
 ### Agent de code (HITL)
 | Outil | Description |
@@ -257,7 +278,12 @@ OLLAMA_HOST=http://127.0.0.1:11434
 TAVILY_API_KEY=tvly-...
 
 # Slack
-SLACK_BOT_TOKEN=xoxb-...
+SLACK_USER_TOKEN=xoxp-...          # User Token (OAuth & Permissions → User Token Scopes)
+
+# Jira
+JIRA_URL=https://ton-domaine.atlassian.net
+JIRA_EMAIL=ton@email.com
+JIRA_API_KEY=ATATT3x...            # https://id.atlassian.com/manage-profile/security/api-tokens
 
 # Divers
 PROJECTS_DIR=/home/user/projets    # Racine des projets (accélère find_git_repos)
@@ -338,6 +364,7 @@ ai-agent/
         │   └── pending.py         # File de changements en attente
         ├── gmail/ · google_calendar/ · google_drive/
         ├── google_doc/ · google_slide/
+        ├── jira/                  # Tickets, Epics, sprints, workload
         ├── slack/ · shell/ · git/ · filesystem/
         ├── system/ · arxiv/ · time/ · weather/ · search/
         └── image/

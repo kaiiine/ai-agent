@@ -23,6 +23,14 @@ from src.agents.system.tools import (
     screenshot_take, process_list, process_kill, wifi_info,
 )
 from src.agents.arxiv.tools import arxiv_search, arxiv_get_paper
+from src.agents.jira.tools import (
+    jira_get_my_issues, jira_get_issue, jira_search_issues,
+    jira_get_project_summary, jira_get_sprint_issues,
+    jira_list_projects, jira_add_comment, jira_transition_issue, jira_get_workload,
+    jira_create_issue, jira_create_issues_bulk, jira_assign_issue, jira_update_issue,
+    jira_get_issue_comments, jira_search_users, jira_move_issue,
+    jira_delete_issue, jira_link_to_epic,
+)
 from langchain_core.tools import tool as lc_tool
 
 
@@ -131,6 +139,25 @@ def build_all_tools() -> List[BaseTool]:
         # === ARXIV ===
         arxiv_search,
         arxiv_get_paper,
+        # === JIRA ===
+        jira_get_my_issues,
+        jira_get_issue,
+        jira_search_issues,
+        jira_get_project_summary,
+        jira_get_sprint_issues,
+        jira_list_projects,
+        jira_add_comment,
+        jira_transition_issue,
+        jira_get_workload,
+        jira_create_issue,
+        jira_create_issues_bulk,
+        jira_assign_issue,
+        jira_update_issue,
+        jira_get_issue_comments,
+        jira_search_users,
+        jira_move_issue,
+        jira_delete_issue,
+        jira_link_to_epic,
         # === CODING / PROJETS ===
         run_coding_agent,
     ]

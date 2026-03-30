@@ -89,7 +89,9 @@ def _debug_prompt(state: dict, graph, cfg: SessionConfig):
         messages = snapshot.values.get("messages", []) if snapshot.values else state.get("messages", [])
 
         from datetime import date
-        parts = [f"[dim]system:[/dim] {SYSTEM_PROMPT.format(tools_available=get_tool_names(), today=date.today())[:300]}..."]
+        import os
+        _user_name = os.getenv("USER_NAME", "l'utilisateur")
+        parts = [f"[dim]system:[/dim] {SYSTEM_PROMPT.format(tools_available=get_tool_names(), today=date.today(), user_name=_user_name)[:300]}..."]
         for m in messages:
             content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
             role = m.get("role", "?") if isinstance(m, dict) else getattr(m, "type", "?")

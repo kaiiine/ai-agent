@@ -181,6 +181,20 @@ config_user_name() {
     fi
 }
 
+config_jira() {
+    step "Jira — Gestion de projet"
+    echo -e "  ${DIM}Permet de lire, créer et gérer les tickets de tes projets Jira.${NC}"
+    echo ""
+    echo -e "  ${ORANGE}Étapes :${NC}"
+    echo -e "  ${DIM}1. Aller sur https://id.atlassian.com/manage-profile/security/api-tokens${NC}"
+    echo -e "  ${DIM}2. Create API token → copier la clé${NC}"
+    echo -e "  ${DIM}3. Ton URL Jira = https://ton-domaine.atlassian.net${NC}"
+    echo -e "  ${DIM}   (visible dans la barre d'adresse quand tu ouvres Jira)${NC}"
+    prompt_key "JIRA_URL"     "URL Jira"       "Format : https://ton-domaine.atlassian.net"
+    prompt_key "JIRA_EMAIL"   "Email Atlassian" "Email de ton compte Atlassian"
+    prompt_key "JIRA_API_KEY" "Clé API Jira"   "Format : ATATT3x..."
+}
+
 config_projects_dir() {
     step "Dossier de projets"
     echo -e "  ${DIM}Indiquer ton dossier racine de projets permet à l'IA de trouver tes repos git plus vite.${NC}"
@@ -235,7 +249,8 @@ show_status() {
     env_status "TAVILY_API_KEY"  "Tavily    (recherche web)"
     env_status "GROQ_API_KEY"    "Groq      (LLM cloud)"
     env_status "OLLAMA_API_KEY"  "Ollama Cloud (optionnel)"
-    env_status "SLACK_BOT_TOKEN" "Slack"
+    env_status "SLACK_USER_TOKEN" "Slack"
+    env_status "JIRA_API_KEY"    "Jira      (gestion de projet)"
     if [[ -f "gcp-oauth.keys.json" ]]; then
         ok "Google    (Gmail · Calendar · Drive · Docs · Slides)"
     else
@@ -262,7 +277,8 @@ config_menu() {
     echo -e "  ${ORANGE}3${NC}  Ollama Cloud ${DIM}(optionnel)${NC}"
     echo -e "  ${ORANGE}4${NC}  Slack"
     echo -e "  ${ORANGE}5${NC}  Google       ${DIM}(Gmail · Calendar · Drive · Docs · Slides)${NC}"
-    echo -e "  ${ORANGE}6${NC}  Dossier de projets  ${DIM}(pour que l'IA trouve tes repos plus vite)${NC}"
+    echo -e "  ${ORANGE}6${NC}  Jira         ${DIM}(gestion de tickets et projets)${NC}"
+    echo -e "  ${ORANGE}7${NC}  Dossier de projets  ${DIM}(pour que l'IA trouve tes repos plus vite)${NC}"
     echo -e "  ${ORANGE}a${NC}  Tout configurer"
     echo -e "  ${ORANGE}q${NC}  Ignorer"
     echo ""
@@ -275,13 +291,15 @@ config_menu() {
         3) config_ollama_cloud ;;
         4) config_slack ;;
         5) config_google ;;
-        6) config_projects_dir ;;
+        6) config_jira ;;
+        7) config_projects_dir ;;
         a|A)
             config_tavily
             config_groq
             config_ollama_cloud
             config_slack
             config_google
+            config_jira
             config_projects_dir
             ;;
         *) info "Configuration ignorée — tu pourras la faire plus tard dans .env" ;;
