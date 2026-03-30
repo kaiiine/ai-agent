@@ -435,6 +435,7 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
     config = {"configurable": {"thread_id": cfg.thread_id}}
 
     stop_thinking = threading.Event()
+    pending_refinements_inner: list[str] = []
 
     try:
         with Live(live_panel_initial(), console=console, refresh_per_second=_REFRESH_RATE, vertical_overflow="crop") as live:
@@ -450,8 +451,20 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
             for msg, meta in graph.stream(current_state, config=config, stream_mode="messages"):
                 node = meta.get("langgraph_node") or "unknown"
                 if isinstance(msg, ToolMessage):
-                    tool_name = getattr(msg, "tool_name", None) or meta.get("tool", "tool")
-                    if tool_name in ("dev_plan_create", "dev_plan_step_done"):
+                    tool_name = getattr(msg, "name", None) or getattr(msg, "tool_name", None) or meta.get("tool", "tool")
+                    if tool_name == "gmail_send_email":
+                        stop_thinking.set()
+                        live.stop()
+                        from .review import review_email
+                        action, refinement = review_email()
+                        if action == "send":
+                            pending_refinements_inner.append("Email envoyé avec succès.")
+                        elif action == "cancel":
+                            pending_refinements_inner.append("Envoi annulé par l'utilisateur.")
+                        elif action == "modify" and refinement:
+                            pending_refinements_inner.append(f"L'utilisateur veut modifier le mail : {refinement}")
+                        live.start(refresh=False)
+                    elif tool_name in ("dev_plan_create", "dev_plan_step_done"):
                         stop_thinking.set()
                         live.update(Text(""))
                         live.stop()
@@ -493,6 +506,9 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
                 finalize_live(live, response_content, footer)
     except Exception as e:
         console.print(command_panel(f"erreur : {e}", error=True))
+
+    for refinement in pending_refinements_inner:
+        _stream_message(graph, refinement, cfg)
 
 
 def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
@@ -672,8 +688,20 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 last_debug_node = node
 
             if isinstance(msg, ToolMessage):
-                tool_name = getattr(msg, "tool_name", None) or meta.get("tool", "tool")
-                if tool_name == "propose_file_change" and get_mode() == "ask":
+                tool_name = getattr(msg, "name", None) or getattr(msg, "tool_name", None) or meta.get("tool", "tool")
+                if tool_name == "gmail_send_email":
+                    stop_thinking.set()
+                    live.stop()
+                    from .review import review_email
+                    action, refinement = review_email()
+                    if action == "send":
+                        pending_refinements.append("Email envoyé avec succès.")
+                    elif action == "cancel":
+                        pending_refinements.append("Envoi annulé par l'utilisateur.")
+                    elif action == "modify" and refinement:
+                        pending_refinements.append(f"L'utilisateur veut modifier le mail : {refinement}")
+                    live.start(refresh=False)
+                elif tool_name == "propose_file_change" and get_mode() == "ask":
                     stop_thinking.set()
                     live.stop()
                     from .review import review_single_latest

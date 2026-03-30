@@ -55,6 +55,7 @@ pillow
 huggingface-hub
 
 
+markdown
 click
 python-docx
 psutil
