@@ -87,7 +87,12 @@ def _post(path: str, body: dict) -> dict:
         json=body,
         timeout=15,
     )
-    r.raise_for_status()
+    if not r.ok:
+        try:
+            detail = r.json()
+        except Exception:
+            detail = r.text
+        raise RuntimeError(f"Jira API error {r.status_code}: {detail}")
     return r.json() if r.content else {}
 
 
@@ -222,6 +227,9 @@ _FIELDS = (
     "summary,status,assignee,reporter,priority,issuetype,"
     "created,updated,duedate,customfield_10016,customfield_10020,description"
 )
+
+# Noms possibles pour le type "sous-tâche" selon la langue du projet Jira
+_SUBTASK_ALIASES = ("Sous-tâche", "Sub-task", "Subtask", "subtask", "sous-tâche")
 
 
 @tool("jira_get_my_issues")
@@ -430,6 +438,7 @@ def jira_create_issue(
     description: Optional[str] = None,
     assignee_account_id: Optional[str] = None,
     priority: Optional[str] = None,
+    parent_key: Optional[str] = None,
 ) -> dict:
     """
     Crée un nouveau ticket Jira dans un projet.
@@ -438,21 +447,28 @@ def jira_create_issue(
     - créer un ticket, une tâche, un bug ou une story Jira
     - ajouter une issue dans un projet
     - ouvrir un nouveau ticket
+    - créer une sous-tâche sous un ticket existant
 
-    Mots-clés : créer ticket jira, nouvelle tâche jira, ouvrir une issue, ajouter un ticket
+    Mots-clés : créer ticket jira, nouvelle tâche jira, ouvrir une issue, ajouter un ticket, sous-tâche, subtask
 
     Args:
         project_key: clé du projet (ex: "KAN")
         summary: titre du ticket
-        issue_type: type de ticket ("Task", "Bug", "Story", "Epic") — défaut "Task"
+        issue_type: type de ticket ("Tâche", "Bug", "Story", "Epic", "Spike", "Sous-tâche") — défaut "Task". Pour une sous-tâche, utilise "Sous-tâche" ou "Subtask" (le code gère la traduction automatiquement)
         description: description optionnelle
         assignee_account_id: account ID Jira de l'assigné (optionnel)
         priority: priorité ("Highest", "High", "Medium", "Low", "Lowest") — optionnel
+        parent_key: clé du ticket parent (obligatoire si issue_type="Subtask", ex: "KAN-27")
+
+    IMPORTANT — règles sur les sous-tâches :
+    - Une Sous-tâche peut être créée sous N'IMPORTE quel type de ticket (Task, Story, Bug…).
+    - Ne jamais créer une Task indépendante à la place d'une Sous-tâche demandée.
+    - Ne jamais refuser sous prétexte que le parent n'est pas une Story.
     Returns:
         {"status": "ok", "key": "KAN-42", "url": "..."}
     """
     try:
-        item = {"summary": summary, "issue_type": issue_type, "description": description, "priority": priority}
+        item = {"summary": summary, "issue_type": issue_type, "description": description, "priority": priority, "parent_key": parent_key}
         result = _create_single(project_key, item)
         if assignee_account_id:
             key_tmp = result.get("key", "")
@@ -499,8 +515,21 @@ def _create_single(project_key: str, item: dict, epic_key: str | None = None) ->
     if item.get("priority"):
         fields["priority"] = {"name": item["priority"]}
 
-
-    if epic_key and issue_type != "Epic":
+    # Les sous-tâches nécessitent un champ "parent" obligatoire
+    if issue_type in _SUBTASK_ALIASES:
+        parent_key = item.get("parent_key") or epic_key
+        if not parent_key:
+            raise ValueError("Une sous-tâche nécessite un 'parent_key' (ex: 'KAN-42')")
+        fields["parent"] = {"key": parent_key}
+        # Essaie les noms possibles selon la langue du projet Jira
+        for type_name in ("Sous-tâche", "Sub-task", "Subtask"):
+            fields["issuetype"] = {"name": type_name}
+            try:
+                return _post("issue", {"fields": fields})
+            except RuntimeError:
+                continue
+        raise RuntimeError("Impossible de créer la sous-tâche : aucun type 'Sous-tâche'/'Sub-task'/'Subtask' trouvé dans ce projet.")
+    elif epic_key:
         fields["customfield_10014"] = epic_key
 
     return _post("issue", {"fields": fields})
@@ -509,7 +538,7 @@ def _create_single(project_key: str, item: dict, epic_key: str | None = None) ->
 @tool("jira_create_issues_bulk")
 def jira_create_issues_bulk(project_key: str, issues: list) -> dict:
     """
-    Crée plusieurs tickets Jira en une seule fois, en respectant la hiérarchie Epic → Story → Task.
+    Crée plusieurs tickets Jira en une seule fois, en respectant la hiérarchie Epic → Story → Task → Subtask.
 
     Utilise ce tool quand l'utilisateur veut :
     - importer une liste de tickets dans un projet
@@ -529,11 +558,12 @@ def jira_create_issues_bulk(project_key: str, issues: list) -> dict:
         project_key: clé du projet (ex: "KAN")
         issues: liste de dicts avec les champs suivants :
             - summary (str, obligatoire) : titre du ticket
-            - issue_type (str) : "Epic", "Story", "Task", "Bug" (défaut: "Story")
+            - issue_type (str) : "Epic", "Story", "Task", "Bug", "Subtask" (défaut: "Story")
             - description (str, optionnel) : description complète
             - priority (str, optionnel) : "Highest", "High", "Medium", "Low", "Lowest"
             - epic_name (str, optionnel) : nom court de l'epic (pour les Epics uniquement)
             - epic_key (str, optionnel) : clé de l'epic parent (ex: "KAN-1") pour lier une Story à un Epic
+            - parent_key (str, obligatoire si Subtask) : clé du ticket parent (ex: "KAN-42") pour les sous-tâches
     Returns:
         {"status": "ok", "created": [{"key", "summary", "type", "url"}, ...], "errors": [...]}
     """
