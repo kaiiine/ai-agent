@@ -16,7 +16,7 @@ from prompt_toolkit.key_binding import KeyBindings
 
 from .config import fmt_ms, SessionConfig
 from .language import detect_lang, enforce_lang_output
-from .panels import live_panel_initial, tool_call_panel, command_panel, ACCENT
+from .panels import live_panel_initial, tool_call_panel, command_panel, plan_panel, compile_panel, ACCENT
 from .render import update_live_markdown, finalize_live
 from .commands import debug_state
 from .attachments import AttachmentStore, open_file_picker, get_clipboard_image, build_message_with_attachments
@@ -511,15 +511,28 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
         _stream_message(graph, refinement, cfg)
 
 
+def _separator_rule() -> Rule:
+    """Build the separator rule with optional attachment hint + token gauge."""
+    from src.ui.token_gauge import gauge_markup, has_tokens
+    from src.infra.settings import settings
+
+    hint = _attachment_hint().strip()
+    gauge = gauge_markup(settings.llm_backend) if has_tokens() else ""
+
+    if hint or gauge:
+        title = Text()
+        if hint:
+            title.append(hint, style=f"dim {ACCENT}")
+        if hint and gauge:
+            title.append("  ·  ", style="dim")
+        if gauge:
+            title.append_text(Text.from_markup(gauge))
+        return Rule(title, characters="·", style=f"dim {ACCENT}")
+    return Rule(characters="·", style=f"dim {ACCENT}")
+
+
 def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
-    # Séparateur — avec indicateur de pièces jointes si présentes
-    hint = _attachment_hint()
-    if hint:
-        t = Text()
-        t.append(hint, style=f"dim {ACCENT}")
-        console.print(Rule(hint, characters="·", style=f"dim {ACCENT}"))
-    else:
-        console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+    console.print(_separator_rule())
 
     try:
         user_message = _session.prompt("› ").strip()
@@ -606,6 +619,12 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             console.print(result)
         return
 
+    # ── Guard : détection tentative d'extraction du prompt ────────────────────
+    from .prompt_guard import is_prompt_request, sanitize as _guard_sanitize
+    if is_prompt_request(user_message):
+        console.print(command_panel("Ces informations sont confidentielles."))
+        return
+
     cfg.debug = debug_state["enabled"]
     user_lang = cfg.lang_pref if cfg.lang_pref in {"fr", "en"} else detect_lang(user_message)
 
@@ -625,11 +644,17 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
 
     from src.ui.edit_mode import get_mode
     from src.agents.coding.specialist import set_progress_callback
+    from src.orchestrator.graph import set_compile_callback
 
     pending_refinements: list[str] = []
     stop_thinking = threading.Event()
 
     live = Live(live_panel_initial(), console=console, refresh_per_second=_REFRESH_RATE, vertical_overflow="crop")
+
+    def _on_compile() -> None:
+        """Called by graph.py when context compression starts."""
+        stop_thinking.set()
+        live.update(compile_panel())
 
     def _coding_progress(tool_name: str, args: dict) -> None:
         """Called by the coding specialist for plan/file events — updates the terminal in real time."""
@@ -667,11 +692,13 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             pass
 
     set_progress_callback(_coding_progress)
+    set_compile_callback(_on_compile)
 
     try:
         live.start(refresh=False)
         response_content = ""
         saw_any_token = False
+        plan_rendered = False          # have we already rendered an <axon:plan> block?
         last_node = ""
         last_debug_node = ""
         deb = {"DEBOUNCE": 0.03, "last_update": 0.0}
@@ -736,17 +763,45 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 if last_node == "tools":
                     response_content = ""
                     saw_any_token = False
+                    plan_rendered = False
                     last_node = "chatbot"
                 stop_thinking.set()
                 saw_any_token = True
                 response_content += chunk_text
-                update_live_markdown(live, response_content, deb, cursor=True)
+
+                _PLAN_OPEN  = "<axon:plan>"
+                _PLAN_CLOSE = "</axon:plan>"
+
+                if not plan_rendered:
+                    if _PLAN_OPEN in response_content and _PLAN_CLOSE in response_content:
+                        # Complete plan block — extract, render, strip from content
+                        pre, rest = response_content.split(_PLAN_OPEN, 1)
+                        steps, post = rest.split(_PLAN_CLOSE, 1)
+                        plan_rendered = True
+                        live.update(Text(""))
+                        live.stop()
+                        console.print(plan_panel(steps.strip()))
+                        live.start(refresh=False)
+                        response_content = (pre + post).strip()
+                        if response_content:
+                            update_live_markdown(live, response_content, deb, cursor=True)
+                    elif _PLAN_OPEN in response_content:
+                        # Partial plan still streaming — show any text before the tag
+                        pre = response_content.split(_PLAN_OPEN, 1)[0].strip()
+                        if pre:
+                            update_live_markdown(live, pre, deb, cursor=False)
+                    else:
+                        update_live_markdown(live, response_content, deb, cursor=True)
+                else:
+                    update_live_markdown(live, response_content, deb, cursor=True)
+
             elif isinstance(msg, AIMessage) and not saw_any_token:
                 chunk_text = msg.content or ""
                 if not chunk_text:
                     continue
                 if last_node == "tools":
                     response_content = ""
+                    plan_rendered = False
                     last_node = "chatbot"
                 stop_thinking.set()
                 saw_any_token = True
@@ -755,12 +810,14 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
 
         footer = fmt_ms(perf_counter() - t0)
         if saw_any_token:
-            finalize_live(live, enforce_lang_output(response_content, user_lang), footer)
+            safe = _guard_sanitize(enforce_lang_output(response_content, user_lang))
+            finalize_live(live, safe, footer)
         else:
             final_state = graph.invoke(current_state, config=config)
             last = final_state["messages"][-1]
             text = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
-            finalize_live(live, enforce_lang_output(text, user_lang), footer)
+            safe = _guard_sanitize(enforce_lang_output(text, user_lang))
+            finalize_live(live, safe, footer)
         live.stop()
 
     except Exception as e:
@@ -771,6 +828,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         console.print(command_panel(f"erreur : {e}", error=True))
     finally:
         set_progress_callback(None)
+        set_compile_callback(None)
 
     # ── Post-stream: write files or ask ───────────────────────────────────────
     from src.agents.coding.pending import pending_changes

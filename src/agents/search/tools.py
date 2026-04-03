@@ -1,197 +1,281 @@
 from __future__ import annotations
-from langchain_core.tools import tool
-from langchain_tavily import TavilySearch
-from tavily import TavilyClient
-from ...infra.settings import settings
-from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
-import textwrap
+
 import re
+import textwrap
+from typing import Any, Dict, List, Literal, Optional
+from urllib.parse import urlparse
+
+from langchain_core.tools import tool
+
+from ...infra.settings import settings
 
 
-def build_search_tool():
-    return TavilySearch(max_results=settings.search_max_results)
-
-
-@tool("web_search")
-def web_search(query: str, max_results: int = 5) -> dict:
-    """Recherche web (Tavily). Utiliser pour collecter des infos/sources. Répond de manière complète sans rien inventer.
-    Args:
-      query: requête naturelle
-      max_results: optionnel, par défaut settings.search_max_results
-    Returns: JSON { query, results: [...] }
-    """
-    client = TavilyClient(api_key=settings.tavily_api_key)
-    k = max_results or settings.search_max_results
-    return {"query": query, "results": client.search(query=query, max_results=k)}
-
-
-
-# --- helpers -------------------------------------------------------------
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _domain_of(url: str) -> str:
     try:
-        netloc = urlparse(url).netloc
-        return netloc.lower()
+        return urlparse(url).netloc.lower()
     except Exception:
         return ""
 
-def _first_meaningful_text(d: Dict[str, Any]) -> str:
-    """
-    Essaie de trouver un contenu textuel dans un résultat Tavily, 
-    en tolérant différentes clés selon les versions/params.
-    """
-    for key in ("content", "snippet", "body", "text", "summary"):
+
+def _first_content(d: Dict[str, Any]) -> str:
+    """Retourne le meilleur contenu textuel d'un résultat, quelle que soit la clé."""
+    for key in ("raw_content", "content", "snippet", "body", "text", "summary"):
         v = d.get(key)
         if isinstance(v, str) and v.strip():
             return v.strip()
-    # parfois Tavily range dans 'raw_content' ou similaire
-    v = d.get("raw_content") or d.get("raw") or ""
-    return v.strip() if isinstance(v, str) else ""
+    return ""
 
-def _normalize_whitespace(s: str) -> str:
-    s = re.sub(r"\s+", " ", s, flags=re.UNICODE).strip()
-    return s
 
-def _clip_for_quote(s: str, max_chars: int = 500) -> str:
-    s = _normalize_whitespace(s)
+def _normalize(s: str) -> str:
+    return re.sub(r"\s+", " ", s, flags=re.UNICODE).strip()
+
+
+def _clip(s: str, max_chars: int = 600) -> str:
+    s = _normalize(s)
     if len(s) <= max_chars:
         return s
-    # coupe sur une limite de phrase si possible
     cut = s.rfind(". ", 0, max_chars)
-    if cut == -1:
-        cut = max_chars
-    return s[:cut].rstrip() + "…"
+    return s[: cut if cut > 0 else max_chars].rstrip() + "…"
 
-def _bullet_from_text(s: str, max_chars: int = 220) -> str:
-    s = _normalize_whitespace(s)
-    if len(s) > max_chars:
-        s = s[:max_chars].rstrip() + "…"
-    return s
+
+def _score(d: Dict[str, Any]) -> float:
+    try:
+        return float(d.get("score", 0))
+    except Exception:
+        return 0.0
+
 
 def _ensure_list(obj: Any) -> List[Dict[str, Any]]:
     if isinstance(obj, list):
-        return obj  # déjà une liste de résultats
-    if isinstance(obj, dict) and "results" in obj:
-        r = obj["results"]
+        return obj
+    if isinstance(obj, dict):
+        r = obj.get("results", [])
         return r if isinstance(r, list) else []
     return []
 
-# --- TOOL ----------------------------------------------------------------
+
+def _ddg_period(days: int) -> str:
+    """Convertit un nombre de jours en timelimit DuckDuckGo."""
+    if days <= 1:
+        return "d"
+    if days <= 7:
+        return "w"
+    return "m"
+
+
+# ── Tool 1 : recherche web approfondie (Tavily) ───────────────────────────────
 
 @tool("web_research_report")
 def web_research_report(
     query: str,
     max_results: int = 10,
-    quote_only: bool = True,
+    days: int = 0,
+    topic: str = "general",
     include_answer: bool = False,
-    search_depth: str = "advanced",
 ) -> str:
     """
-    Effectue une recherche web approfondie et retourne un rapport Markdown structuré avec sources et citations.
+    Effectue une recherche web approfondie et retourne un rapport Markdown avec sources et citations.
 
     Utilise ce tool quand l'utilisateur veut :
-    - rechercher des informations sur internet ou le web
-    - connaître l'actualité sur un sujet, une personne, une entreprise
-    - trouver de la documentation, des articles, des tutoriels en ligne
-    - vérifier des faits, des prix, des dates récentes
-    - faire une veille sur un sujet
+    - rechercher des informations sur internet / le web
+    - connaître des faits, de la documentation, des articles en ligne
+    - faire une veille ou vérifier des données récentes sur un sujet
 
-    Mots-clés : recherche, internet, web, actualité, information, documentation, article, news, veille, google
+    Pour les ÉVÉNEMENTS RÉCENTS (< 30 jours) → préférer web_search_news qui est plus rapide et précis.
+    Pour les recherches approfondies avec contexte → utiliser ce tool avec days= et topic="news".
+
+    Mots-clés : recherche web, internet, documentation, article, wikipedia, faits, vérifier
 
     Args:
-        query: Requête utilisateur.
-        max_results: Nombre de résultats à agréger.
-        quote_only: Si True, uniquement des extraits cités (zéro invention).
-        include_answer: Si True, tente d'inclure le champ 'answer' de Tavily (quand disponible), étiqueté comme synthèse Tavily.
-        search_depth: "basic" | "advanced" (si supporté par ta version Tavily).
+        query:          requête de recherche
+        max_results:    nombre de sources (défaut 10)
+        days:           filtrer aux derniers N jours (0 = pas de filtre).
+                        Ex: days=3 pour les 3 derniers jours, days=7 pour la semaine.
+        topic:          "general" (défaut) | "news" (actualités) | "finance" (marchés)
+                        Utiliser "news" quand la requête concerne l'actualité récente.
+        include_answer: inclure le résumé synthétique de Tavily si disponible
     Returns:
-        Markdown (str) commençant par "# Réponse".
+        Rapport Markdown avec sources, citations et dates.
     """
-    client = TavilyClient()  # la clé est lue depuis TAVILY_API_KEY env var, sinon passe api_key="<...>"
+    from tavily import TavilyClient
 
-    # Appel Tavily (tolérant aux kwargs selon version)
-    kwargs = {"query": query, "max_results": max_results}
-    # Ces kwargs peuvent ne pas exister selon la version : on essaie et on degrade gracieusement
-    try:
-        kwargs["search_depth"] = search_depth
-    except Exception:
-        pass
-    try:
-        kwargs["include_answer"] = include_answer
-    except Exception:
-        pass
-    try:
-        kwargs["include_raw_content"] = True
-    except Exception:
-        pass
+    client = TavilyClient()
 
-    data: Dict[str, Any] = client.search(**kwargs)  # type: ignore[arg-type]
+    kwargs: Dict[str, Any] = {
+        "query":              query,
+        "max_results":        max_results,
+        "include_raw_content": "markdown",   # contenu complet en markdown (bien mieux que les snippets)
+        "include_answer":     include_answer,
+    }
+
+    # Recency filtering — paramètres clés manquants dans l'ancienne version
+    if days > 0:
+        kwargs["days"]  = days
+        kwargs["topic"] = "news"             # days= n'est supporté qu'avec topic="news"
+    elif topic != "general":
+        kwargs["topic"] = topic
+
+    data: Dict[str, Any] = client.search(**kwargs)
     results: List[Dict[str, Any]] = _ensure_list(data)
-
-    # Tri léger: score décroissant si dispo
-    def _score(d: Dict[str, Any]) -> float:
-        s = d.get("score")
-        try:
-            return float(s)
-        except Exception:
-            return 0.0
-
     results = sorted(results, key=_score, reverse=True)[:max_results]
 
-    # Prépare sections
+    # ── Fallback DuckDuckGo si Tavily renvoie trop peu de résultats ───────────
+    if len(results) < 3:
+        try:
+            tl = _ddg_period(days) if days > 0 else None
+            ddg_raw = DDGS().text(query, max_results=max_results, timelimit=tl)
+            for r in ddg_raw:
+                results.append({
+                    "title": r.get("title", ""),
+                    "url":   r.get("href", r.get("url", "")),
+                    "content": r.get("body", ""),
+                    "score": 0.0,
+                    "_source": "duckduckgo",
+                })
+        except Exception:
+            pass   # DuckDuckGo indisponible — on continue avec ce qu'on a
+
+    # ── Construction du rapport Markdown ──────────────────────────────────────
     sources_lines: List[str] = []
-    quotes_blocks: List[str] = []
-    bullets: List[str] = []
+    quote_blocks: List[str] = []
 
-    for idx, r in enumerate(results, start=1):
-        title = r.get("title") or r.get("name") or "Sans titre"
-        url = r.get("url") or r.get("link") or ""
-        dom = _domain_of(url) or "source"
-        text = _first_meaningful_text(r)
+    for idx, r in enumerate(results, 1):
+        title = r.get("title") or "Sans titre"
+        url   = r.get("url") or r.get("link") or ""
+        dom   = _domain_of(url) or "source"
+        text  = _first_content(r)
+        date  = r.get("published_date") or r.get("date") or ""
+        src   = " _(DDG)_" if r.get("_source") == "duckduckgo" else ""
 
-        # Lignes sources
-        sources_lines.append(f"{idx}. **{title}** — _{dom}_  \n   {url}")
+        date_str = f" · {date}" if date else ""
+        sources_lines.append(f"{idx}. **{title}** — _{dom}{date_str}_{src}  \n   {url}")
 
-        # Extrait cité
         if text:
-            quote = _clip_for_quote(text, max_chars=700)
-            quotes_blocks.append(
-                f"### [{idx}] {title} ({dom})\n\n> {quote}\n\nLien : {url}\n"
+            quote = _clip(text, max_chars=800)
+            quote_blocks.append(
+                f"### [{idx}] {title} ({dom}{date_str})\n\n> {quote}\n\n[{url}]({url})\n"
             )
 
-            # Points prudents (si autorisés)
-            if not quote_only:
-                bullets.append(f"- ({idx}) {_bullet_from_text(text)}  \n")
-
-    # Section "Résumé rapide" à partir de Tavily.answer si demandé et présent
     answer_md = ""
     if include_answer:
         ans = data.get("answer")
         if isinstance(ans, str) and ans.strip():
-            # On l'étiquette clairement comme synthèse Tavily (pas nous)
-            ans = _clip_for_quote(ans, max_chars=550)
-            answer_md = textwrap.dedent(f"""
-            ## Résumé rapide (synthèse Tavily)
-            > {ans}
-            """).strip()
+            answer_md = f"\n## Résumé Tavily\n> {_clip(ans, 600)}\n"
 
-    # Construit le Markdown final
-    md_parts: List[str] = []
-    md_parts.append(f"# Réponse\n\n**Requête :** _{query}_\n\n> Ce rapport compile **uniquement** des informations extraites des sources citées ci-dessous. Aucune information n’est inventée.")
+    parts: List[str] = [
+        f"# Recherche : {query}\n",
+    ]
+    if days > 0:
+        parts[0] += f"_Filtré aux {days} derniers jours · topic={kwargs.get('topic', 'general')}_\n"
+
     if answer_md:
-        md_parts.append(answer_md)
-
+        parts.append(answer_md)
     if sources_lines:
-        md_parts.append("## Sources consultées\n" + "\n".join(sources_lines))
+        parts.append("## Sources\n" + "\n".join(sources_lines))
+    if quote_blocks:
+        parts.append("## Extraits\n" + "\n\n".join(quote_blocks))
+    if not sources_lines:
+        parts.append("_Aucune source trouvée — essaie web_search_news pour les événements très récents._")
 
-    if quotes_blocks:
-        md_parts.append("## Extraits clés (citations)\n" + "\n\n".join(quotes_blocks))
+    return "\n\n".join(parts).strip()
 
-    if not quote_only and bullets:
-        md_parts.append("## Points à retenir (formulations prudentes)\n" + "\n".join(bullets))
 
-    if not sources_lines and not quotes_blocks:
-        md_parts.append("_Aucune source exploitable n’a été trouvée pour cette requête._")
+# ── Tool 2 : recherche d'actualités en temps réel (DuckDuckGo) ───────────────
 
-    return "\n\n".join(md_parts).strip()
+@tool("web_search_news")
+def web_search_news(
+    query: str,
+    period: str = "week",
+    max_results: int = 12,
+    region: str = "fr-fr",
+) -> str:
+    """
+    Recherche des actualités récentes via DuckDuckGo News (gratuit, sans API key, temps réel).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - connaître des événements récents (dernières heures, jours ou semaine)
+    - trouver des news sur une personne, une entreprise, un pays, un sport, un produit
+    - vérifier ce qui s'est passé récemment sur un sujet
+    - obtenir de l'actualité fraîche non disponible dans les connaissances du modèle
+
+    Exemples de requêtes :
+    - "résultats match PSG hier"
+    - "news Apple aujourd'hui"
+    - "élections France cette semaine"
+    - "dernier rapport ChatGPT"
+
+    Mots-clés : news, actualité, récent, aujourd'hui, hier, cette semaine, événement, résultat,
+    dernières nouvelles, ce qui s'est passé, annonce, sortie, match, score, résultat sportif
+
+    Args:
+        query:       requête de recherche (en français ou en anglais)
+        period:      "day"   = dernières 24h
+                     "week"  = dernière semaine (défaut)
+                     "month" = dernier mois
+        max_results: nombre d'articles à retourner (défaut 12)
+        region:      région pour les résultats ("fr-fr" défaut, "us-en", "wt-wt" = mondial)
+    Returns:
+        Liste d'articles avec titre, date, source et extrait.
+    """
+    _PERIOD_MAP = {"day": "d", "week": "w", "month": "m"}
+    timelimit = _PERIOD_MAP.get(period, "w")
+
+    try:
+        from ddgs import DDGS  # noqa: F401  (vérifie que le package est dispo)
+    except ImportError:
+        return "❌ Package `ddgs` non installé. Lance : pip install ddgs"
+
+    try:
+        raw = DDGS().news(
+            query,
+            max_results=max_results,
+            timelimit=timelimit,
+            region=region,
+        )
+    except Exception as e:
+        # Fallback : recherche texte si news échoue (rate limit, etc.)
+        try:
+            raw_text = DDGS().text(
+                query,
+                max_results=max_results,
+                timelimit=timelimit,
+                region=region,
+            )
+            raw = [
+                {
+                    "title":  r.get("title", ""),
+                    "url":    r.get("href", ""),
+                    "body":   r.get("body", ""),
+                    "date":   "",
+                    "source": _domain_of(r.get("href", "")),
+                }
+                for r in raw_text
+            ]
+        except Exception as e2:
+            return f"❌ Erreur DuckDuckGo : {e} / {e2}"
+
+    if not raw:
+        return f"Aucun résultat pour « {query} » sur la période « {period} »."
+
+    _period_labels = {"day": "dernières 24h", "week": "dernière semaine", "month": "dernier mois"}
+    lines = [f"# Actualités : {query}", f"_Période : {_period_labels.get(period, period)} · {len(raw)} articles_\n"]
+
+    for i, r in enumerate(raw, 1):
+        title  = r.get("title", "Sans titre")
+        url    = r.get("url", r.get("href", ""))
+        body   = _clip(r.get("body", r.get("snippet", "")), max_chars=500)
+        date   = r.get("date", r.get("published", ""))
+        source = r.get("source", _domain_of(url))
+
+        date_str = f" · {date}" if date else ""
+        lines.append(f"### {i}. {title}")
+        lines.append(f"_{source}{date_str}_  ")
+        if url:
+            lines.append(f"[{url}]({url})  ")
+        if body:
+            lines.append(f"\n> {body}")
+        lines.append("")
+
+    return "\n".join(lines).strip()

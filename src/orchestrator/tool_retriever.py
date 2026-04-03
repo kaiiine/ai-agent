@@ -9,10 +9,13 @@ TOOL_GROUPS: dict[str, list[str]] = {
         "run_coding_agent",
     ],
     "git": [
-        "git_status", "git_log", "git_diff", "git_suggest_commit", "url_fetch",
+        "git_status", "git_log", "git_diff", "git_suggest_commit",
+        "git_add", "git_commit", "git_checkout", "git_stash",
+        "url_fetch",
     ],
     "filesystem": [
         "local_find_file", "local_read_file", "local_list_directory",
+        "local_grep", "local_glob",
     ],
     "shell": [
         "shell_run", "shell_cd", "shell_pwd", "shell_ls",
@@ -54,6 +57,7 @@ TOOL_GROUPS: dict[str, list[str]] = {
     ],
     "search": [
         "web_research_report",
+        "web_search_news",
     ],
     "arxiv": [
         "arxiv_search", "arxiv_get_paper",
@@ -216,6 +220,36 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "mets moi tous ces tickets dans jira",
         "importer des tâches en masse dans jira",
         "créer un backlog complet dans jira",
+    ],
+    "web_search_news": [
+        # ── Événements récents ────────────────────────────────────
+        "qu'est-ce qui s'est passé aujourd'hui",
+        "actualité du jour",
+        "dernières nouvelles sur un sujet",
+        "news récentes",
+        "événements de cette semaine",
+        "ce qui s'est passé hier",
+        "quoi de neuf sur ce sujet",
+        "dernières infos",
+        # ── Sport ─────────────────────────────────────────────────
+        "résultats des matchs hier",
+        "score du match de foot",
+        "résultat sportif récent",
+        "qui a gagné le match",
+        "classement actuel",
+        "résultats championnat",
+        # ── Tech & business ───────────────────────────────────────
+        "dernière annonce d'une entreprise",
+        "news sur Apple Google Microsoft OpenAI",
+        "sortie d'un nouveau produit",
+        "mise à jour récente d'une application",
+        "levée de fonds annoncée",
+        # ── Politique & monde ─────────────────────────────────────
+        "actualité politique récente",
+        "élections résultats",
+        "discours d'un dirigeant",
+        "crise ou conflit en cours",
+        "décision gouvernementale récente",
     ],
 }
 

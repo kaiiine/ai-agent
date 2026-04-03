@@ -1,11 +1,17 @@
 from __future__ import annotations
+
 import subprocess
+import time
+from collections import OrderedDict
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+
 from langchain_core.tools import tool
 
 _HOME = Path.home()
 
+
+# ── Git helpers ───────────────────────────────────────────────────────────────
 
 def _git(args: list[str], cwd: Path, timeout: int = 15) -> tuple[int, str, str]:
     result = subprocess.run(
@@ -19,12 +25,11 @@ def _git(args: list[str], cwd: Path, timeout: int = 15) -> tuple[int, str, str]:
 
 
 def _find_repo(path_hint: Optional[str]) -> Optional[Path]:
-    """Trouve le repo git depuis un hint ou depuis $HOME."""
+    """Trouve le repo git depuis un hint ou depuis le cwd courant."""
     if path_hint:
         p = Path(path_hint)
         if p.exists():
             return p
-    # Cherche dans les dossiers projets courants
     from src.utils.paths import get_projects_dir
     for candidate in [Path.cwd(), get_projects_dir()]:
         code, _, _ = _git(["rev-parse", "--show-toplevel"], candidate)
@@ -32,6 +37,80 @@ def _find_repo(path_hint: Optional[str]) -> Optional[Path]:
             return candidate
     return None
 
+
+# ── URL fetch cache (LRU, 15 min TTL) ────────────────────────────────────────
+
+_FETCH_CACHE: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+_CACHE_TTL = 900    # secondes
+_CACHE_MAX = 50
+
+
+def _cache_get(url: str) -> dict | None:
+    if url not in _FETCH_CACHE:
+        return None
+    ts, data = _FETCH_CACHE[url]
+    if time.time() - ts > _CACHE_TTL:
+        del _FETCH_CACHE[url]
+        return None
+    _FETCH_CACHE.move_to_end(url)
+    return data
+
+
+def _cache_set(url: str, data: dict) -> None:
+    _FETCH_CACHE[url] = (time.time(), data)
+    _FETCH_CACHE.move_to_end(url)
+    while len(_FETCH_CACHE) > _CACHE_MAX:
+        _FETCH_CACHE.popitem(last=False)
+
+
+def _html_to_markdown(html_bytes: bytes) -> str:
+    """Convertit du HTML en Markdown. Utilise html2text si dispo, sinon HTMLParser."""
+    html_str = html_bytes.decode("utf-8", errors="replace")
+    try:
+        import html2text
+        h = html2text.HTML2Text()
+        h.ignore_links       = False
+        h.ignore_images      = True
+        h.ignore_tables      = False
+        h.body_width         = 0       # pas de retour à la ligne forcé
+        h.protect_links      = True
+        h.wrap_links         = False
+        return h.handle(html_str)
+    except ImportError:
+        pass
+
+    # Fallback : HTMLParser stdlib — conserve la structure minimale
+    from html.parser import HTMLParser
+
+    class _TextExtractor(HTMLParser):
+        _SKIP_TAGS  = {"script", "style", "nav", "footer", "header", "noscript"}
+        _BLOCK_TAGS = {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.parts: list[str] = []
+            self._skip_depth: int = 0
+
+        def handle_starttag(self, tag: str, attrs) -> None:
+            if tag in self._SKIP_TAGS:
+                self._skip_depth += 1
+            elif tag in self._BLOCK_TAGS and self.parts and self.parts[-1] != "\n":
+                self.parts.append("\n")
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag in self._SKIP_TAGS:
+                self._skip_depth = max(0, self._skip_depth - 1)
+
+        def handle_data(self, data: str) -> None:
+            if self._skip_depth == 0 and data.strip():
+                self.parts.append(data.strip())
+
+    extractor = _TextExtractor()
+    extractor.feed(html_str)
+    return "\n".join(extractor.parts)
+
+
+# ── Read-only git tools ───────────────────────────────────────────────────────
 
 @tool("git_status")
 def git_status(repo_path: Optional[str] = None) -> Dict[str, Any]:
@@ -164,10 +243,181 @@ def git_suggest_commit(repo_path: Optional[str] = None) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
-@tool("url_fetch")
-def url_fetch(url: str, max_chars: int = 20_000) -> Dict[str, Any]:
+# ── Write git tools ───────────────────────────────────────────────────────────
+
+@tool("git_add")
+def git_add(
+    paths: List[str],
+    repo_path: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Récupère et retourne le contenu textuel d'une URL (page web, documentation, README).
+    Stage des fichiers pour le prochain commit (git add).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - ajouter des fichiers modifiés au staging area
+    - préparer un commit
+    - stager tous les changements avant de committer
+
+    Mots-clés : git add, stage, ajouter, préparer commit, staging
+
+    RÈGLE : toujours montrer git_status avant, et demander confirmation si paths = ["."]
+
+    Args:
+        paths:     liste de chemins à stager (ex: ["src/main.py", "README.md"] ou ["."] pour tout)
+        repo_path: chemin vers le repo (optionnel, détecté automatiquement)
+    Returns:
+        {"status": "ok", "staged": [...], "output": "..."}
+    """
+    cwd = _find_repo(repo_path) or Path.cwd()
+    try:
+        code, out, err = _git(["add", "--"] + paths, cwd)
+        if code != 0:
+            return {"status": "error", "error": err or out}
+        # Vérifier ce qui est staged
+        _, stat, _ = _git(["diff", "--cached", "--stat"], cwd)
+        return {"status": "ok", "paths": paths, "staged_summary": stat.strip()}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@tool("git_commit")
+def git_commit(
+    message: str,
+    repo_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Effectue un commit Git avec le message donné.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - committer ses changements staged
+    - enregistrer une version du code
+    - créer un commit après git add
+
+    Mots-clés : git commit, enregistrer, valider, sauvegarder version, commit
+
+    RÈGLE ABSOLUE : afficher le diff (git_diff staged=True) à l'utilisateur et
+    attendre sa confirmation avant d'appeler ce tool.
+
+    Args:
+        message:   message de commit (format recommandé: "type: description")
+        repo_path: chemin vers le repo (optionnel)
+    Returns:
+        {"status": "ok", "commit": "hash...", "message": "..."}
+    """
+    cwd = _find_repo(repo_path) or Path.cwd()
+    if not message.strip():
+        return {"status": "error", "error": "Message de commit vide"}
+    try:
+        code, out, err = _git(["commit", "-m", message.strip()], cwd)
+        if code != 0:
+            return {"status": "error", "error": err or out}
+        # Récupérer le hash du commit créé
+        _, hash_out, _ = _git(["rev-parse", "--short", "HEAD"], cwd)
+        return {
+            "status": "ok",
+            "commit": hash_out.strip(),
+            "message": message.strip(),
+            "output": out.strip(),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@tool("git_checkout")
+def git_checkout(
+    branch: str,
+    create: bool = False,
+    repo_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Crée ou bascule sur une branche Git.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - créer une nouvelle branche de travail
+    - basculer sur une branche existante
+    - démarrer un développement isolé sur une branche
+
+    Mots-clés : git branch, checkout, nouvelle branche, changer de branche, créer branche
+
+    Args:
+        branch:    nom de la branche (ex: "feat/my-feature", "main", "develop")
+        create:    True pour créer la branche (-b), False pour juste basculer
+        repo_path: chemin vers le repo (optionnel)
+    Returns:
+        {"status": "ok", "branch": "...", "created": True/False}
+    """
+    cwd = _find_repo(repo_path) or Path.cwd()
+    if not branch.strip():
+        return {"status": "error", "error": "Nom de branche vide"}
+    try:
+        args = ["checkout", "-b", branch] if create else ["checkout", branch]
+        code, out, err = _git(args, cwd)
+        if code != 0:
+            return {"status": "error", "error": err or out}
+        return {
+            "status": "ok",
+            "branch": branch,
+            "created": create,
+            "output": (out or err).strip(),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@tool("git_stash")
+def git_stash(
+    action: str = "push",
+    message: str = "",
+    repo_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Gère le stash Git (mise de côté temporaire de changements non commités).
+
+    Utilise ce tool quand l'utilisateur veut :
+    - mettre de côté des changements en cours pour travailler sur autre chose
+    - récupérer des changements mis en stash
+    - voir la liste des stashs existants
+
+    Mots-clés : git stash, mettre de côté, sauvegarder temporaire, pop stash, liste stash
+
+    Args:
+        action:    "push"  = mettre les changements en stash (défaut)
+                   "pop"   = récupérer le dernier stash
+                   "list"  = afficher la liste des stashs
+        message:   message descriptif pour le stash (uniquement pour action="push")
+        repo_path: chemin vers le repo (optionnel)
+    Returns:
+        {"status": "ok", "action": "...", "output": "..."}
+    """
+    cwd = _find_repo(repo_path) or Path.cwd()
+    action = action.lower().strip()
+    if action not in ("push", "pop", "list"):
+        return {"status": "error", "error": f"Action invalide '{action}' — utiliser push, pop ou list"}
+
+    try:
+        if action == "push":
+            args = ["stash", "push"]
+            if message.strip():
+                args += ["-m", message.strip()]
+        elif action == "pop":
+            args = ["stash", "pop"]
+        else:
+            args = ["stash", "list"]
+
+        code, out, err = _git(args, cwd)
+        if code != 0:
+            return {"status": "error", "error": err or out}
+        return {"status": "ok", "action": action, "output": (out or err).strip()}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# ── URL fetch ─────────────────────────────────────────────────────────────────
+
+@tool("url_fetch")
+def url_fetch(url: str, max_chars: int = 50_000) -> Dict[str, Any]:
+    """
+    Récupère et retourne le contenu d'une URL en Markdown (page web, documentation, README).
 
     Utilise ce tool quand l'utilisateur veut :
     - lire le contenu d'une URL précise
@@ -177,58 +427,54 @@ def url_fetch(url: str, max_chars: int = 20_000) -> Dict[str, Any]:
     Mots-clés : URL, page web, lire lien, documentation, readme, github, accéder
 
     NE PAS utiliser pour les recherches générales — utiliser web_research_report pour ça.
+    Le résultat est mis en cache 15 minutes.
 
     Args:
-        url: URL à fetcher
-        max_chars: nombre max de caractères retournés (défaut: 20000)
+        url:       URL à fetcher (http/https)
+        max_chars: nombre max de caractères retournés (défaut: 50000)
     Returns:
-        {"status": "ok", "url": "...", "title": "...", "content": "..."}
+        {"status": "ok", "url": "...", "content": "...", "cached": bool}
     """
+    # ── Cache ─────────────────────────────────────────────────────────────────
+    cached = _cache_get(url)
+    if cached:
+        return {**cached, "cached": True}
+
     try:
         import urllib.request
+
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; Axon-Agent/1.0)"},
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; Axon-Agent/1.0)",
+                "Accept": "text/markdown, text/html, */*",
+            },
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            raw = resp.read()
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw          = resp.read(10 * 1024 * 1024)   # max 10 MB
             content_type = resp.headers.get("Content-Type", "")
 
+        # ── Conversion selon le type MIME ─────────────────────────────────────
         if "html" in content_type:
-            try:
-                from html.parser import HTMLParser
-
-                class _TextExtractor(HTMLParser):
-                    def __init__(self):
-                        super().__init__()
-                        self.parts: list[str] = []
-                        self._skip = False
-
-                    def handle_starttag(self, tag, attrs):
-                        if tag in {"script", "style", "nav", "footer", "header"}:
-                            self._skip = True
-
-                    def handle_endtag(self, tag):
-                        if tag in {"script", "style", "nav", "footer", "header"}:
-                            self._skip = False
-
-                    def handle_data(self, data):
-                        if not self._skip and data.strip():
-                            self.parts.append(data.strip())
-
-                parser = _TextExtractor()
-                parser.feed(raw.decode("utf-8", errors="replace"))
-                text = "\n".join(parser.parts)
-            except Exception:
-                text = raw.decode("utf-8", errors="replace")
+            content = _html_to_markdown(raw)
         else:
-            text = raw.decode("utf-8", errors="replace")
+            content = raw.decode("utf-8", errors="replace")
 
-        return {
+        # Tronquer proprement sur une coupure de ligne
+        if len(content) > max_chars:
+            cut = content.rfind("\n", 0, max_chars)
+            content = content[:cut if cut > 0 else max_chars]
+            content += "\n\n…[contenu tronqué]"
+
+        result = {
             "status": "ok",
             "url": url,
-            "content": text[:max_chars],
-            "chars": len(text),
+            "content": content,
+            "chars": len(content),
+            "cached": False,
         }
+        _cache_set(url, result)
+        return result
+
     except Exception as e:
         return {"status": "error", "url": url, "error": str(e)}

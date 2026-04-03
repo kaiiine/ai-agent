@@ -22,6 +22,8 @@ langsmith
 
 # tools
 tavily-python
+html2text
+ddgs
 
 # Interface Rich
 rich
