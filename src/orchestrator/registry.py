@@ -1,13 +1,13 @@
 from langchain_core.tools import BaseTool
 from typing import List
 
-from src.agents.search.tools import web_research_report
+from src.agents.search.tools import web_research_report, web_search_news
 from src.agents.weather.tools import get_weather_by_city
 from src.agents.gmail.tools import gmail_search, gmail_edit_draft, gmail_confirm_send, gmail_send_email, gmail_summarize
 from src.agents.google_drive.tools import drive_find_file_id, drive_list_files, drive_delete_file, drive_get_file_metadata, drive_read_file
 from src.agents.google_doc.tools import google_docs_create, google_docs_update, google_docs_read
 from src.agents.google_slide.tools import create_presentation, add_slide
-from src.agents.filesystem.tools import local_find_file, local_read_file, local_list_directory
+from src.agents.filesystem.tools import local_find_file, local_read_file, local_list_directory, local_grep, local_glob
 from src.agents.google_calendar.tools import (
     calendar_list_events, calendar_create_event, calendar_update_event,
     calendar_delete_event, calendar_list_calendars, calendar_search_events,
@@ -18,7 +18,11 @@ from src.agents.slack.tools import (
     slack_list_dms, slack_send_message, slack_search_messages, slack_find_user,
 )
 from src.agents.shell.tools import shell_run, shell_cd, shell_pwd, shell_ls, notify, clipboard_read, clipboard_write
-from src.agents.git.tools import git_status, git_log, git_diff, git_suggest_commit, url_fetch
+from src.agents.git.tools import (
+    git_status, git_log, git_diff, git_suggest_commit,
+    git_add, git_commit, git_checkout, git_stash,
+    url_fetch,
+)
 from src.agents.system.tools import (
     screenshot_take, process_list, process_kill, wifi_info,
 )
@@ -76,6 +80,7 @@ def build_all_tools() -> List[BaseTool]:
     return [
         # === WEB SEARCH ===
         web_research_report,
+        web_search_news,
         # === TIME/DATE ===
         get_current_time,
         get_weather_by_city,
@@ -102,6 +107,8 @@ def build_all_tools() -> List[BaseTool]:
         local_find_file,
         local_list_directory,
         local_read_file,
+        local_grep,
+        local_glob,
         # === GOOGLE CALENDAR ===
         calendar_list_events,
         calendar_create_event,
@@ -130,6 +137,10 @@ def build_all_tools() -> List[BaseTool]:
         git_log,
         git_diff,
         git_suggest_commit,
+        git_add,
+        git_commit,
+        git_checkout,
+        git_stash,
         url_fetch,
         # === SYSTÈME ===
         screenshot_take,

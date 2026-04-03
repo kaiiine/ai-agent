@@ -1,3 +1,5 @@
+import re
+
 from rich.panel import Panel
 from rich.text import Text
 from rich.align import Align
@@ -81,6 +83,40 @@ def final_panel(md_text: str):
         border_style=_BORDER,
         padding=(1, 2),
     )
+
+
+def plan_panel(steps_text: str) -> Panel:
+    """Renders a structured plan block emitted by the LLM (<axon:plan> tag)."""
+    lines = [l.strip() for l in steps_text.splitlines() if l.strip()]
+    body = Text()
+    for i, line in enumerate(lines):
+        clean = re.sub(r"^[-*•]\s*", "", line).strip()
+        clean = re.sub(r"^\d+\.\s*", "", clean).strip()
+        if not clean:
+            continue
+        body.append(f"  {i + 1}.  ", style=f"bold {ACCENT}")
+        body.append(clean, style="white")
+        if i < len(lines) - 1:
+            body.append("\n")
+    return Panel(
+        body,
+        box=_BOX,
+        border_style=f"dim {ACCENT}",
+        title="[dim]plan[/dim]",
+        title_align="left",
+        padding=(0, 2),
+    )
+
+
+def compile_panel(dots: int = 0) -> Panel:
+    """Shown while the LLM compresses the context window."""
+    dot_str = ("." * (dots % 4)).ljust(3)
+    t = Text()
+    t.append("  compiling", style=_BORDER)
+    t.append(dot_str, style=f"bold {ACCENT}")
+    t.append("  ", style="dim")
+    t.append("résumé du contexte", style="dim")
+    return Panel(t, box=_BOX, border_style=_BORDER, padding=(0, 1))
 
 
 def command_panel(text: str, error: bool = False):

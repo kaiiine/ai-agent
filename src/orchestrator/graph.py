@@ -13,6 +13,21 @@ _console = RichConsole()
 
 _MAX_TOOL_MSG_CHARS = 3_000
 
+# ── Compile callback (set by streaming.py) ─────────────────────────────────────
+_compile_callback = None
+
+
+def set_compile_callback(fn) -> None:
+    global _compile_callback
+    _compile_callback = fn
+
+
+def _on_compress() -> None:
+    if _compile_callback:
+        _compile_callback()
+
+
+# ── Context helpers ────────────────────────────────────────────────────────────
 
 def _cap_tool_messages(messages: List) -> List:
     out = []
@@ -29,6 +44,52 @@ def _drop_oldest_non_system(messages: List) -> List | None:
     for i in range(1, len(messages)):
         return messages[:i] + messages[i + 1:]
     return None
+
+
+def _compress_context(messages: List, llm) -> List:
+    """
+    Smart compression: summarise older messages with the LLM instead of blindly
+    dropping them.  Keeps the system prompt + the 4 most recent messages intact.
+    """
+    system_msg = messages[0] if messages and isinstance(messages[0], SystemMessage) else None
+    conversation = messages[1:] if system_msg else messages
+
+    keep_recent = 4
+    to_summarize = conversation[:-keep_recent] if len(conversation) > keep_recent else conversation
+    recent = conversation[-keep_recent:] if len(conversation) > keep_recent else []
+
+    if not to_summarize:
+        # Nothing old enough to summarise — fall back to plain drop
+        return _drop_oldest_non_system(messages) or messages
+
+    excerpt = "\n".join(
+        f"{type(m).__name__}: {(m.content if isinstance(m.content, str) else str(m.content))[:400]}"
+        for m in to_summarize
+        if hasattr(m, "content")
+    )
+
+    summary_prompt = [
+        HumanMessage(content=(
+            "Résume ces échanges de conversation en préservant :\n"
+            "- Toutes les informations factuelles importantes\n"
+            "- Les décisions prises et actions effectuées\n"
+            "- Les fichiers, ressources et chemins mentionnés\n"
+            "- L'état des tâches en cours\n\n"
+            f"Échanges à résumer :\n{excerpt}\n\n"
+            "Réponds UNIQUEMENT avec le résumé condensé, sans intro ni commentaire."
+        ))
+    ]
+
+    try:
+        summary_response = llm.invoke(summary_prompt)
+        summary_msg = HumanMessage(
+            content=f"[Résumé de la conversation précédente]\n{summary_response.content}"
+        )
+        return ([system_msg] if system_msg else []) + [summary_msg] + recent
+    except Exception:
+        # Summarisation failed — fall back to dropping the oldest message
+        return _drop_oldest_non_system(messages) or messages
+
 
 from src.orchestrator.state import GlobalState
 from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq
@@ -47,7 +108,6 @@ def _ensure_system_prompt(messages: List, tools_names: str, today: str) -> List:
     first = messages[0]
     role0 = first.get("type") if isinstance(first, dict) else getattr(first, "type", None)
     if role0 == "system":
-        # rempace le system prompt existant avec les tools sélectionnés à jour
         return [system_msg] + messages[1:]
     return [system_msg] + messages
 
@@ -62,7 +122,6 @@ def _chat_node_factory():
     retriever = ToolRetriever(tools)
 
     def chatbot(state: GlobalState):
-        # Re-read settings on every call so /model, /temp, /backend take effect immediately
         from src.infra.settings import settings
         factory = _factories.get(settings.llm_backend, make_llm_ollama_cloud)
 
@@ -70,10 +129,9 @@ def _chat_node_factory():
         last_message = state["messages"][-1]
         if last_human:
             query = last_human.content
-            # Si le message est trop court on enrichit avec les HumanMessages précédents pour que le ToolRetriever garde le contexte de la conversation.
             if len(query.split()) < 8:
                 human_msgs = [m.content for m in state["messages"] if isinstance(m, HumanMessage)]
-                query = " ".join(human_msgs[-3:])  # 3 derniers messages humains
+                query = " ".join(human_msgs[-3:])
         else:
             query = last_message.content if hasattr(last_message, "content") else str(last_message)
         selected_tools = retriever.get(query)
@@ -84,27 +142,45 @@ def _chat_node_factory():
         today = datetime.now().strftime("%Y-%m-%d")
         tools_names = ", ".join(t.name for t in selected_tools)
         messages = _ensure_system_prompt(messages, tools_names, today)
+
         working = messages
         capped = False
+        compressed = False
+
         while True:
             try:
                 response = llm_with_tools.invoke(working)
+
+                # ── Token tracking ─────────────────────────────────────────
+                usage = getattr(response, "usage_metadata", None)
+                if usage:
+                    from src.ui.token_gauge import update_usage
+                    update_usage(usage)
+
                 break
+
             except Exception as e:
                 if "context" not in str(e).lower() and "length" not in str(e).lower():
                     raise
+
                 if not capped:
-                    # on tronque les ToolsMessages trop volumineux
                     capped = True
                     working = _cap_tool_messages(messages)
-                    _console.print("[dim]  ↩  contexte trop long — tronquage des résultats tools et retry…[/dim]")
+                    _console.print("[dim]  ↩  contexte trop long — tronquage des résultats tools…[/dim]")
+
+                elif not compressed:
+                    compressed = True
+                    _on_compress()  # notify UI → shows compile_panel
+                    plain_llm = factory()   # no tools — lighter call
+                    working = _compress_context(working, plain_llm)
+                    _console.print("[dim]  ↩  contexte compressé — reprise…[/dim]")
+
                 else:
-                    # supprime le message le plus ancien (hors system)
                     reduced = _drop_oldest_non_system(working)
                     if reduced is None or len(reduced) <= 1:
                         raise
                     working = reduced
-                    _console.print(f"[dim]  ↩  toujours trop long — suppression d'un ancien message ({len(working)} restants)…[/dim]")
+                    _console.print(f"[dim]  ↩  drop ancien message ({len(working)} restants)…[/dim]")
 
         return {"messages": [response]}
 

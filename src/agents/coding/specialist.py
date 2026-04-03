@@ -24,15 +24,25 @@ def _get_coding_tools():
     from src.agents.coding.tools import (
         dev_plan_create, dev_plan_step_done, dev_explain, find_git_repos, propose_file_change,  # noqa: F401
     )
-    from src.agents.filesystem.tools import local_find_file, local_read_file, local_list_directory
+    from src.agents.filesystem.tools import (
+        local_find_file, local_read_file, local_list_directory,
+        local_grep, local_glob,
+    )
     from src.agents.shell.tools import shell_run, shell_cd, shell_pwd, shell_ls
-    from src.agents.git.tools import git_status, git_log, git_diff, git_suggest_commit, url_fetch
+    from src.agents.git.tools import (
+        git_status, git_log, git_diff, git_suggest_commit,
+        git_add, git_commit, git_checkout, git_stash,
+        url_fetch,
+    )
     return [
         dev_plan_create, dev_plan_step_done, dev_explain,
         find_git_repos, propose_file_change,
         local_find_file, local_read_file, local_list_directory,
+        local_grep, local_glob,
         shell_run, shell_cd, shell_pwd, shell_ls,
-        git_status, git_log, git_diff, git_suggest_commit, url_fetch,
+        git_status, git_log, git_diff, git_suggest_commit,
+        git_add, git_commit, git_checkout, git_stash,
+        url_fetch,
     ]
 
 
