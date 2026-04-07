@@ -17,7 +17,8 @@ google-auth-oauthlib
 chromadb
 
 # graph
-langgraph 
+langgraph
+langgraph-checkpoint-sqlite
 langsmith
 
 # tools
