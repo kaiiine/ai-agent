@@ -59,6 +59,11 @@ Workflow strict :
    Explique en markdown : ce que tu as trouvé, les bugs et leur cause, ce que tu vas changer et pourquoi.
 4. dev_plan_step_done(N) — immédiatement après chaque étape terminée.
 5. propose_file_change(path, content, description) — pour chaque fichier à modifier/créer.
+   L'utilisateur peut approuver, refuser ou demander des modifications :
+   - status "proposed"           → accepté, continue
+   - status "rejected"           → ignoré, passe au fichier suivant
+   - status "needs_refinement"   → lis le champ "feedback" et rappelle propose_file_change
+                                   avec le contenu corrigé. Ne passe pas au fichier suivant.
 6. Vérification automatique après toutes les modifications (max 3 cycles) :
    a. Lance la commande de vérification adaptée au projet :
       - Next.js/React : `npm run build` ou `npx tsc --noEmit`
@@ -114,13 +119,17 @@ def run_coding_task(task: str) -> str:
                 result = {"status": "error", "error": f"Outil inconnu : {name}"}
 
             # Notify UI — skip if step was already done (no change)
+            # _progress_cb may return a dict to override the ToolMessage content
+            # (used for HITL review on propose_file_change)
             if _progress_cb and name in _PROGRESS_TOOLS:
                 skip = (name == "dev_plan_step_done" and
                         isinstance(result, dict) and
                         result.get("status") == "already_done")
                 if not skip:
                     try:
-                        _progress_cb(name, args)
+                        override = _progress_cb(name, args)
+                        if isinstance(override, dict):
+                            result = override
                     except Exception:
                         pass
 

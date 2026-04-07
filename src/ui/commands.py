@@ -17,6 +17,7 @@ _COMMANDS = [
     ("/upgrade",           "améliore une lettre existante — attach ton CV, colle la lettre puis l'offre"),
     ("/clear",             "efface l'écran et réaffiche l'en-tête"),
     ("/new",               "démarre un nouveau thread de conversation"),
+    ("/history",           "liste les threads passés et permet d'en reprendre un (flèches ↑↓)"),
     ("/help",              "affiche cette liste de commandes"),
     ("/backend <b>",       "change le backend LLM — groq · ollama · ollama_cloud"),
     ("/model <nom>",       "change le modèle du backend actif (ex: llama3.1:8b, openai/gpt-oss-20b)"),
@@ -86,6 +87,141 @@ def _set_model(settings, model: str) -> None:
         settings.ollama_model = model
 
 
+def _handle_history(cfg: SessionConfig, state: dict, console) -> None:
+    """Picker flèches pour naviguer dans les threads passés."""
+    from src.infra.checkpoint import list_threads, save_last_thread, get_recent_messages
+    from prompt_toolkit import Application
+    from prompt_toolkit.layout import Layout
+    from prompt_toolkit.layout.containers import Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.styles import Style
+    from rich.rule import Rule
+
+    _PT_STYLE = Style.from_dict({
+        "title":    "bold ansiyellow",
+        "selected": "bold ansiyellow",
+        "normal":   "ansiwhite",
+        "meta":     "ansiyellow",
+        "preview":  "ansibrightblack",
+        "new":      "bold ansigreen",
+        "hint":     "ansiyellow",
+    })
+
+    threads = list_threads()
+
+    # Entrée spéciale "nouveau thread" en tête de liste
+    _NEW = "__new__"
+    entries = [_NEW] + [t["thread_id"] for t in threads]
+    thread_map = {t["thread_id"]: t for t in threads}
+
+    idx = [0]
+    # Pré-sélectionne le thread actif
+    try:
+        idx[0] = entries.index(cfg.thread_id)
+    except ValueError:
+        idx[0] = 0
+
+    def _label(tid: str, selected: bool) -> list:
+        arrow = "  ▶  " if selected else "     "
+        cls_a = "class:selected" if selected else "class:normal"
+        cls_m = "class:meta"
+        cls_p = "class:preview"
+
+        if tid == _NEW:
+            return [(cls_a if selected else "class:new", f"{arrow}+ nouveau thread\n")]
+
+        t = thread_map.get(tid, {})
+        updated  = t.get("updated_at", "")
+        preview  = t.get("preview", "")
+        active   = " ★" if tid == cfg.thread_id else ""
+        short_id = tid[:8] if len(tid) > 8 else tid
+
+        parts = []
+        parts.append((cls_a, f"{arrow}{short_id}{active}"))
+        if updated:
+            parts.append((cls_m, f"  {updated}"))
+        parts.append(("", "\n"))
+        if preview:
+            parts.append((cls_p, f"       {preview}\n"))
+        return parts
+
+    def get_tokens():
+        parts: list = [("class:title", "  historique des conversations\n\n")]
+        for i, tid in enumerate(entries):
+            parts.extend(_label(tid, i == idx[0]))
+        parts.append(("class:hint", "\n  ↑↓ · Entrée pour reprendre · Échap pour annuler"))
+        return parts
+
+    kb = KeyBindings()
+
+    @kb.add("down")
+    @kb.add("tab")
+    def _fwd(event): idx[0] = (idx[0] + 1) % len(entries)
+
+    @kb.add("up")
+    @kb.add("s-tab")
+    def _bwd(event): idx[0] = (idx[0] - 1) % len(entries)
+
+    @kb.add("enter")
+    def _ok(event): event.app.exit(result=entries[idx[0]])
+
+    @kb.add("escape")
+    @kb.add("c-c")
+    def _cancel(event): event.app.exit(result=None)
+
+    height = min(len(entries) * 2 + 6, 30)
+    app = Application(
+        layout=Layout(Window(FormattedTextControl(get_tokens, focusable=True), height=height)),
+        key_bindings=kb,
+        style=_PT_STYLE,
+        full_screen=False,
+        mouse_support=False,
+    )
+    chosen = app.run()
+
+    if chosen is None:
+        return command_panel("annulé")
+
+    if chosen == _NEW:
+        cfg.thread_id = str(uuid.uuid4())[:8]
+        state["messages"] = []
+        save_last_thread(cfg.thread_id)
+        return command_panel(f"nouveau thread : {cfg.thread_id}")
+
+    # Reprendre un thread existant
+    if chosen != cfg.thread_id:
+        cfg.thread_id = chosen
+        state["messages"] = []
+        save_last_thread(chosen)
+
+        # Affiche les derniers messages du thread repris
+        if console:
+            console.print()
+            console.print(Rule("reprise de session", characters="·", style="dim color(214)"))
+            msgs = get_recent_messages(chosen, n=6)
+            _ROLE_STYLE = {
+                "human": ("bold color(214)", "›"),
+                "ai":    ("dim white",       "·"),
+                "tool":  ("dim",             "⚙"),
+            }
+            from rich.text import Text
+            for m in msgs:
+                role, content = m["role"], m["content"].strip()
+                if not content:
+                    continue
+                style, icon = _ROLE_STYLE.get(role, ("dim", "?"))
+                t = Text()
+                t.append(f"  {icon}  ", style="bold color(214)")
+                t.append(content, style=style)
+                console.print(t)
+            console.print()
+
+        return command_panel(f"thread repris : {chosen[:8]}")
+
+    return command_panel(f"déjà sur ce thread : {chosen[:8]}")
+
+
 def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=None):
     cmd = cmd.strip()
 
@@ -108,7 +244,12 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
     if cmd == "/new":
         cfg.thread_id = str(uuid.uuid4())[:8]
         state["messages"] = []
+        from src.infra.checkpoint import save_last_thread
+        save_last_thread(cfg.thread_id)
         return command_panel(f"nouveau thread : {cfg.thread_id}")
+
+    if cmd == "/history":
+        return _handle_history(cfg, state, console)
 
     if cmd.startswith("/backend"):
         from src.infra.settings import settings

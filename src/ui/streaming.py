@@ -656,8 +656,13 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         stop_thinking.set()
         live.update(compile_panel())
 
-    def _coding_progress(tool_name: str, args: dict) -> None:
-        """Called by the coding specialist for plan/file events — updates the terminal in real time."""
+    def _coding_progress(tool_name: str, args: dict):
+        """Called by the coding specialist for plan/file events — updates the terminal in real time.
+
+        Returns a dict to override the ToolMessage content sent back to the specialist LLM,
+        or None to keep the original tool result unchanged.
+        This is the mechanism for feeding HITL decisions back to the specialist.
+        """
         stop_thinking.set()
         try:
             live.update(Text(""))
@@ -667,6 +672,9 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         nonlocal response_content, saw_any_token
         response_content = ""
         saw_any_token = False
+
+        override = None
+
         if tool_name in ("dev_plan_create", "dev_plan_step_done"):
             from src.agents.coding.pending import render_plan
             render_plan(console)
@@ -684,12 +692,30 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         elif tool_name == "propose_file_change" and get_mode() == "ask":
             from .review import review_single_latest
             action, refinement = review_single_latest()
-            if action == "refine" and refinement:
-                pending_refinements.append(refinement)
+            if action == "reject":
+                override = {
+                    "status": "rejected",
+                    "path": args.get("path", ""),
+                    "message": "L'utilisateur a refusé ce changement. N'écris pas ce fichier en l'état.",
+                }
+            elif action == "refine" and refinement:
+                override = {
+                    "status": "needs_refinement",
+                    "path": args.get("path", ""),
+                    "feedback": refinement,
+                    "message": (
+                        f"L'utilisateur demande des modifications : {refinement}. "
+                        "Prends en compte ce feedback et rappelle propose_file_change avec le contenu corrigé."
+                    ),
+                }
+            # action == "apply" → override stays None, original result kept
+
         try:
             live.start(refresh=False)
         except Exception:
             pass
+
+        return override
 
     set_progress_callback(_coding_progress)
     set_compile_callback(_on_compile)
