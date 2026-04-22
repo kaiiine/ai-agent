@@ -92,6 +92,7 @@ def _drop_smartest(messages: List) -> List | None:
     return None
 
 
+
 def _compress_context(messages: List, llm, backend: str = "ollama_cloud") -> List:
     system_msg = messages[0] if messages and isinstance(messages[0], SystemMessage) else None
     conversation = messages[1:] if system_msg else messages
@@ -111,21 +112,40 @@ def _compress_context(messages: List, llm, backend: str = "ollama_cloud") -> Lis
     if not to_summarize:
         return _drop_smartest(messages) or messages
 
+    # Split: only summarize Human/AI exchanges — ToolMessages are ground truth, never paraphrase them
+    dialogue = [m for m in to_summarize if not isinstance(m, ToolMessage)]
+    tool_results = [m for m in to_summarize if isinstance(m, ToolMessage)]
+
     excerpt = "\n".join(
-        f"{type(m).__name__}: {(m.content if isinstance(m.content, str) else str(m.content))[:400]}"
-        for m in to_summarize
+        f"{type(m).__name__}: {(m.content if isinstance(m.content, str) else str(m.content))[:600]}"
+        for m in dialogue
         if hasattr(m, "content")
     )
 
+    # Tool results kept verbatim (truncated) — injected as literal facts, not summarized
+    tool_verbatim = ""
+    if tool_results:
+        snippets = []
+        for m in tool_results:
+            name = getattr(m, "name", "tool") or "tool"
+            content = m.content if isinstance(m.content, str) else str(m.content)
+            snippets.append(f"[{name}]: {content[:800]}")
+        tool_verbatim = (
+            "\n\nRÉSULTATS D'OUTILS (verbatim — ne pas paraphraser, reproduire exactement) :\n"
+            + "\n---\n".join(snippets)
+        )
+
     try:
-        summary_response = llm.invoke([HumanMessage(content=(
+        prompt = (
             "Résume ces échanges en préservant :\n"
-            "- Les informations factuelles, décisions, actions effectuées\n"
-            "- Les fichiers, chemins et ressources mentionnés\n"
-            "- L'état des tâches en cours\n\n"
-            f"Échanges :\n{excerpt}\n\n"
+            "- Les décisions prises et actions effectuées\n"
+            "- L'état des tâches en cours\n"
+            "- Les fichiers et chemins mentionnés dans la conversation\n"
+            f"\nÉchanges :\n{excerpt or '(aucun échange textuel)'}"
+            f"{tool_verbatim}\n\n"
             "Réponds UNIQUEMENT avec le résumé condensé."
-        ))])
+        )
+        summary_response = llm.invoke([HumanMessage(content=prompt)])
         summary_msg = HumanMessage(
             content=f"[Résumé de la conversation précédente]\n{summary_response.content}"
         )
@@ -169,7 +189,7 @@ class CachedToolNode:
             return {"messages": cached_msgs}
 
         # Execute and cache eligible results
-        result = self._inner(state) if config is None else self._inner(state, config)
+        result = self._inner.invoke(state, config or {})
         tc_by_id = {tc["id"]: tc for tc in tool_calls}
 
         for msg in result.get("messages", []):
