@@ -19,16 +19,22 @@ _COMMANDS = [
     ("/new",               "démarre un nouveau thread de conversation"),
     ("/history",           "liste les threads passés et permet d'en reprendre un (flèches ↑↓)"),
     ("/help",              "affiche cette liste de commandes"),
-    ("/backend <b>",       "change le backend LLM — groq · ollama · ollama_cloud"),
+    ("/backend <b>",       "change le backend LLM — groq · ollama · ollama_cloud · gemini"),
     ("/model <nom>",       "change le modèle du backend actif (ex: llama3.1:8b, openai/gpt-oss-20b)"),
     ("/temp <val>",        "change la température (ex: /temp 0.7)"),
     ("/lang <fr|en>",      "force la langue de réponse"),
     ("/save",              "sauvegarde le transcript de la session"),
     ("/config",            "affiche la configuration courante"),
+    ("/undo",              "annule les dernières modifications appliquées par le coding agent"),
     ("/mode <ask|auto>",   "mode d'édition — ask (valide fichier par fichier) ou auto (écrit sans confirmation)"),
+    ("/branch",            "fork le thread actuel pour explorer une autre piste"),
     ("/debug",             "active/désactive le mode debug"),
     ("/dump",              "affiche tous les messages du thread"),
     ("q / exit",           "quitte Axon"),
+    ("Ctrl+T",             "bascule le mode plan — l'IA planifie sans écrire"),
+    ("Ctrl+O",             "attacher un fichier  (= /attach)"),
+    ("Ctrl+P",             "coller une image     (= /paste)"),
+    ("@fichier",           "injecte un fichier dans ton message — autocomplété par Tab"),
 ]
 
 
@@ -50,6 +56,12 @@ _CLOUD_MODELS    = [
     "qwen3-next:80b-cloud",
     "kimi-k2:1t-cloud"
 ]
+_GEMINI_MODELS   = [
+    "gemini-2.0-flash",        # rapide, gratuit — recommandé
+    "gemini-2.5-flash",        # plus capable, gratuit
+    "gemini-2.5-pro",          # meilleur, quota limité
+    "gemini-1.5-flash",        # fallback stable
+]
 
 
 def _get_ollama_local_models() -> list[str]:
@@ -68,6 +80,8 @@ def _get_model_options(backend: str) -> list[str]:
         return _GROQ_MODELS
     if backend == "ollama_cloud":
         return _CLOUD_MODELS
+    if backend == "gemini":
+        return _GEMINI_MODELS
     return _get_ollama_local_models()
 
 
@@ -76,6 +90,8 @@ def _current_model(settings) -> str:
         return settings.groq_model
     if settings.llm_backend == "ollama_cloud":
         return settings.ollama_cloud_model
+    if settings.llm_backend == "gemini":
+        return settings.gemini_model
     return settings.ollama_model
 
 
@@ -84,6 +100,8 @@ def _set_model(settings, model: str) -> None:
         settings.groq_model = model
     elif settings.llm_backend == "ollama_cloud":
         settings.ollama_cloud_model = model
+    elif settings.llm_backend == "gemini":
+        settings.gemini_model = model
     else:
         settings.ollama_model = model
 
@@ -255,7 +273,7 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
     if cmd.startswith("/backend"):
         from src.infra.settings import settings
         from src.ui.picker import pick
-        _BACKENDS = ["groq", "ollama", "ollama_cloud"]
+        _BACKENDS = ["groq", "ollama", "ollama_cloud", "gemini"]
         parts = cmd.split(maxsplit=1)
         if len(parts) == 1:
             # Arrow-key picker
@@ -266,7 +284,7 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
             return command_panel(f"backend : {chosen}")
         b = parts[1].strip().lower()
         if b not in _BACKENDS:
-            return command_panel("backend invalide. options : groq · ollama · ollama_cloud", error=True)
+            return command_panel("backend invalide. options : groq · ollama · ollama_cloud · gemini", error=True)
         settings.llm_backend = b
         return command_panel(f"backend : {b}")
 
@@ -332,6 +350,47 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         if set_mode(m):
             return command_panel(f"mode édition : {m}")
         return command_panel("mode invalide. options : ask · auto", error=True)
+
+    if cmd == "/branch":
+        from src.infra.checkpoint import save_last_thread
+        old_thread = cfg.thread_id
+        new_thread = str(uuid.uuid4())[:8]
+
+        # Copy current checkpoint state to the new thread
+        if graph:
+            try:
+                old_config = {"configurable": {"thread_id": old_thread}}
+                snapshot = graph.get_state(old_config)
+                msgs = snapshot.values.get("messages", []) if snapshot.values else []
+                if msgs:
+                    new_config = {"configurable": {"thread_id": new_thread}}
+                    graph.update_state(new_config, {"messages": msgs})
+            except Exception:
+                pass  # branch with empty state is still useful
+
+        cfg.thread_id = new_thread
+        state["messages"] = []
+        save_last_thread(new_thread)
+        return command_panel(f"branche créée : {old_thread[:8]} → {new_thread}")
+
+    if cmd == "/undo":
+        from src.agents.coding.pending import snapshots
+        from rich.text import Text
+        from rich.rule import Rule
+        from .panels import ACCENT
+        if not snapshots:
+            return command_panel("rien à annuler — aucune modification récente")
+        paths = snapshots.paths
+        if console:
+            console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+            for p in paths:
+                t = Text()
+                t.append("  ↩  ", style=f"bold {ACCENT}")
+                t.append(p, style="dim")
+                console.print(t)
+        restored = snapshots.restore_all()
+        n = len(restored)
+        return command_panel(f"{n} fichier{'s' if n > 1 else ''} restauré{'s' if n > 1 else ''}")
 
     if cmd == "/debug":
         debug_state["enabled"] = not debug_state["enabled"]

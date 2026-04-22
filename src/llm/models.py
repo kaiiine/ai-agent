@@ -49,6 +49,14 @@ def make_coding_llm():
             max_tokens=8192,
             streaming=True,
         )
+    elif settings.llm_backend == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=settings.gemini_model,
+            google_api_key=settings.gemini_api_key,
+            temperature=0.0,
+            max_output_tokens=8192,
+        )
     else:
         return ChatOllama(model=settings.coding_model, temperature=0.0)
 
@@ -61,4 +69,15 @@ def make_llm_groq():
         temperature=settings.temperature,
         max_tokens=8192,
         streaming=True,
+    )
+
+
+def make_llm_gemini():
+    """Google Gemini — gratuit, 1M tokens de contexte."""
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    return ChatGoogleGenerativeAI(
+        model=settings.gemini_model,
+        google_api_key=settings.gemini_api_key,
+        temperature=settings.temperature,
+        max_output_tokens=8192,
     )

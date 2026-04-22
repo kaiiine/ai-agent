@@ -108,15 +108,21 @@ def run_coding_task(task: str) -> str:
             name = tc["name"]
             args = tc.get("args", {})
 
-            # Execute the tool
+            # Execute the tool (with session cache for read-only tools)
+            from src.infra.tools_cache import session_cache, CACHEABLE_TOOLS
             tool_fn = tool_map.get(name)
-            if tool_fn:
+            if not tool_fn:
+                result = {"status": "error", "error": f"Outil inconnu : {name}"}
+            elif name in CACHEABLE_TOOLS and (hit := session_cache.get(name, args)) is not None:
+                result = hit
+            else:
                 try:
                     result = tool_fn.invoke(args)
+                    if name in CACHEABLE_TOOLS:
+                        session_cache.set(name, args, result)
+                    session_cache.on_tool_executed(name)
                 except Exception as e:
                     result = {"status": "error", "error": str(e)}
-            else:
-                result = {"status": "error", "error": f"Outil inconnu : {name}"}
 
             # Notify UI — skip if step was already done (no change)
             # _progress_cb may return a dict to override the ToolMessage content
