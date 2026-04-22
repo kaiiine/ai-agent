@@ -44,6 +44,7 @@ _GROQ_MODELS     = [
 _CLOUD_MODELS    = [
     "minimax-m2.5:cloud",
     "glm-4.7:cloud",
+    "gemma4:31b-cloud",
     "qwen3-coder-next:cloud",
     "qwen3.5:cloud",
     "qwen3-next:80b-cloud",

@@ -93,16 +93,17 @@ def _compress_context(messages: List, llm) -> List:
 
 from src.orchestrator.state import GlobalState
 from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq
-from src.llm.prompts import SYSTEM_PROMPT
+from src.llm.prompts import build_system_prompt
 from src.orchestrator.registry import build_all_tools
 from src.infra.checkpoint import build_checkpointer
 from src.orchestrator.tool_retriever import ToolRetriever
 
 
-def _ensure_system_prompt(messages: List, tools_names: str, today: str) -> List:
+def _ensure_system_prompt(messages: List, selected_tools: List, today: str) -> List:
     import os
     user_name = os.getenv("USER_NAME", "l'utilisateur")
-    system_msg = SystemMessage(content=SYSTEM_PROMPT.format(tools_available=tools_names, today=today, user_name=user_name))
+    tool_names = [t.name for t in selected_tools]
+    system_msg = SystemMessage(content=build_system_prompt(tool_names, today, user_name))
     if not messages:
         return [system_msg]
     first = messages[0]
@@ -140,8 +141,7 @@ def _chat_node_factory():
 
         messages = state["messages"]
         today = datetime.now().strftime("%Y-%m-%d")
-        tools_names = ", ".join(t.name for t in selected_tools)
-        messages = _ensure_system_prompt(messages, tools_names, today)
+        messages = _ensure_system_prompt(messages, selected_tools, today)
 
         working = messages
         capped = False
