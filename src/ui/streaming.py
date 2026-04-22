@@ -81,7 +81,7 @@ def _attachment_hint() -> str:
 
 def _debug_prompt(state: dict, graph, cfg: SessionConfig):
     try:
-        from src.llm.prompts import SYSTEM_PROMPT
+        from src.llm.prompts import build_system_prompt
         from src.utils.tools import get_tool_names
 
         config = {"configurable": {"thread_id": cfg.thread_id}}
@@ -91,7 +91,9 @@ def _debug_prompt(state: dict, graph, cfg: SessionConfig):
         from datetime import date
         import os
         _user_name = os.getenv("USER_NAME", "l'utilisateur")
-        parts = [f"[dim]system:[/dim] {SYSTEM_PROMPT.format(tools_available=get_tool_names(), today=date.today(), user_name=_user_name)[:300]}..."]
+        _tool_list = [t.strip() for t in get_tool_names().split(",") if t.strip()]
+        _prompt_preview = build_system_prompt(_tool_list, str(date.today()), _user_name)[:300]
+        parts = [f"[dim]system:[/dim] {_prompt_preview}..."]
         for m in messages:
             content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
             role = m.get("role", "?") if isinstance(m, dict) else getattr(m, "type", "?")

@@ -35,16 +35,15 @@ _TRIGGER_PATTERNS: list[re.Pattern] = [re.compile(p, re.IGNORECASE) for p in [
 # ── Marqueurs structurels uniques au prompt système ───────────────────────────
 # Si 2+ de ces patterns apparaissent dans une réponse → fuite probable.
 _LEAK_MARKERS: list[re.Pattern] = [re.compile(p) for p in [
-    r"━━\s+[A-ZÀÉÈÊËÎÏÔÙÛÜ\s]{4,}\s+━━",   # ━━ SECTION ━━
-    r"RÈGLE ABSOLUE",
-    r"CONFIDENTIALITÉ",
-    r"Outils disponibles\s*:",
-    r"tools_available",
-    r"PLANIFICATION AUTOMATIQUE",
+    r"━━\s+[A-ZÀÉÈÊËÎÏÔÙÛÜ\s&]{4,}\s+━━",   # ━━ SECTION ━━
     r"<axon:plan>",
-    r"Workflow strict\s*:",
-    r"MOTS ET FORMULES INTERDITS",
-    r"FORMAT DE SORTIE EXACT",
+    r"run_coding_agent",
+    r"web_search_news",
+    r"slack_find_user",
+    r"jira_create_issues_bulk",
+    r"local_find_file",
+    r"CONFIDENTIALITÉ",
+    r"google_docs_create",
 ]]
 
 _LEAK_THRESHOLD = 2   # nb de marqueurs nécessaires pour déclencher le filtre

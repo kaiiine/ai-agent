@@ -4,7 +4,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.messages import SystemMessage
 from src.orchestrator.state import GlobalState
 from src.llm.models import make_llm, make_llm_groq
-from src.llm.prompts import SYSTEM_PROMPT
+from src.llm.prompts import build_system_prompt as SYSTEM_PROMPT  # type: ignore[assignment]
 from src.orchestrator.registry import build_all_tools
 from src.utils.tools import get_tool_names, get_tools_catalog
 from src.infra.checkpoint import build_checkpointer
