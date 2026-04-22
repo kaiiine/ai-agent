@@ -34,6 +34,7 @@ def _get_coding_tools():
         git_add, git_commit, git_checkout, git_stash,
         url_fetch,
     )
+    from src.agents.memory.tools import axon_note
     return [
         dev_plan_create, dev_plan_step_done, dev_explain,
         find_git_repos, propose_file_change,
@@ -43,6 +44,7 @@ def _get_coding_tools():
         git_status, git_log, git_diff, git_suggest_commit,
         git_add, git_commit, git_checkout, git_stash,
         url_fetch,
+        axon_note,
     ]
 
 
@@ -74,13 +76,15 @@ Workflow strict :
       - propose_file_change(...) pour corriger
       - Relance la vérification
    c. Si tout est propre :
-      - dev_explain("✅ Vérification OK — aucune erreur détectée.")
-7. Retourne un résumé concis (2-3 lignes) de ce qui a été fait.
+      - dev_explain("Vérification OK — aucune erreur détectée.")
+7. axon_note(fact="...") après toute modification significative : décision d'architecture, contrainte découverte,
+   comportement non-évident d'une API, refactoring majeur. Pas pour les changements triviaux.
+8. Retourne un résumé concis (2-3 lignes) de ce qui a été fait.
 
 Pour modifier ou créer un fichier : UNIQUEMENT propose_file_change. Jamais shell_run ou redirection.
 """
 
-_PROGRESS_TOOLS = {"dev_plan_create", "dev_plan_step_done", "dev_explain", "propose_file_change"}
+_PROGRESS_TOOLS = {"dev_plan_create", "dev_plan_step_done", "dev_explain", "propose_file_change", "axon_note"}
 _MAX_ITERATIONS = 150
 
 

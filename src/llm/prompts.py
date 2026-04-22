@@ -178,13 +178,16 @@ def build_system_prompt(
     if plan_mode:
         parts.append(_PLAN_MODE)
 
+    coding_mode = "run_coding_agent" in t
+
     if any(x in t for x in ("web_search_news", "web_research_report")):
         parts.append(_WEB)
-    if any(x.startswith("local_") for x in t):
+    # Skip FILES/SHELL when coding agent is present — the specialist handles them internally
+    if not coding_mode and any(x.startswith("local_") for x in t):
         parts.append(_FILES)
-    if any(x.startswith("shell_") or x.startswith("git_") for x in t):
+    if not coding_mode and any(x.startswith("shell_") or x.startswith("git_") for x in t):
         parts.append(_SHELL)
-    if "run_coding_agent" in t:
+    if coding_mode:
         parts.append(_CODING)
     if "axon_note" in t:
         parts.append(_MEMORY)
