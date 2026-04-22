@@ -47,6 +47,9 @@ imap-tools
 # GROQ
 groq
 
+# Gemini
+langchain-google-genai
+
 # PyTorch & ML (install separately with CUDA support)
 # torch (install with: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121)
 # torchvision

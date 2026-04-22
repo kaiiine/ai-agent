@@ -110,6 +110,23 @@ config_ollama_cloud() {
     prompt_key "OLLAMA_API_KEY" "Clé API Ollama Cloud" "Format : ollama_xxxx  (optionnel)"
 }
 
+config_gemini() {
+    step "Google Gemini — Backend LLM gratuit (1M tokens de contexte)"
+    echo -e "  ${DIM}Gemini 2.0 Flash est gratuit avec 15 req/min et 1 500 req/jour.${NC}"
+    echo -e "  ${DIM}C'est le backend recommandé si tu veux éviter les quotas Groq/Ollama.${NC}"
+    echo ""
+    echo -e "  ${ORANGE}Étapes :${NC}"
+    echo -e "  ${DIM}1. Aller sur https://aistudio.google.com/apikey${NC}"
+    echo -e "  ${DIM}2. Cliquer sur 'Create API key'${NC}"
+    echo -e "  ${DIM}3. Copier la clé générée${NC}"
+    echo ""
+    echo -e "  ${DIM}Modèles disponibles :${NC}"
+    echo -e "  ${DIM}  gemini-2.0-flash   → recommandé (rapide, gratuit)${NC}"
+    echo -e "  ${DIM}  gemini-2.5-flash   → plus capable, gratuit${NC}"
+    echo -e "  ${DIM}  gemini-2.5-pro     → meilleur, quota limité${NC}"
+    prompt_key "GEMINI_API_KEY" "Clé API Gemini" "Format : AIzaSy..."
+}
+
 config_slack() {
     step "Slack — Intégration workspace"
     echo -e "  ${DIM}Permet de lire les canaux, DMs, mentions et d'envoyer des messages.${NC}"
@@ -248,6 +265,7 @@ show_status() {
     fi
     env_status "TAVILY_API_KEY"  "Tavily    (recherche web)"
     env_status "GROQ_API_KEY"    "Groq      (LLM cloud)"
+    env_status "GEMINI_API_KEY"  "Gemini    (LLM gratuit — recommandé)"
     env_status "OLLAMA_API_KEY"  "Ollama Cloud (optionnel)"
     env_status "SLACK_USER_TOKEN" "Slack"
     env_status "JIRA_API_KEY"    "Jira      (gestion de projet)"
@@ -273,12 +291,13 @@ config_menu() {
     echo -e "  ${WHITE}Que veux-tu configurer ?${NC}"
     echo ""
     echo -e "  ${ORANGE}1${NC}  Tavily       ${DIM}(recherche web — recommandé)${NC}"
-    echo -e "  ${ORANGE}2${NC}  Groq         ${DIM}(LLM cloud rapide)${NC}"
-    echo -e "  ${ORANGE}3${NC}  Ollama Cloud ${DIM}(optionnel)${NC}"
-    echo -e "  ${ORANGE}4${NC}  Slack"
-    echo -e "  ${ORANGE}5${NC}  Google       ${DIM}(Gmail · Calendar · Drive · Docs · Slides)${NC}"
-    echo -e "  ${ORANGE}6${NC}  Jira         ${DIM}(gestion de tickets et projets)${NC}"
-    echo -e "  ${ORANGE}7${NC}  Dossier de projets  ${DIM}(pour que l'IA trouve tes repos plus vite)${NC}"
+    echo -e "  ${ORANGE}2${NC}  Gemini       ${DIM}(LLM gratuit — 1M tokens — recommandé)${NC}"
+    echo -e "  ${ORANGE}3${NC}  Groq         ${DIM}(LLM cloud rapide)${NC}"
+    echo -e "  ${ORANGE}4${NC}  Ollama Cloud ${DIM}(optionnel)${NC}"
+    echo -e "  ${ORANGE}5${NC}  Slack"
+    echo -e "  ${ORANGE}6${NC}  Google       ${DIM}(Gmail · Calendar · Drive · Docs · Slides)${NC}"
+    echo -e "  ${ORANGE}7${NC}  Jira         ${DIM}(gestion de tickets et projets)${NC}"
+    echo -e "  ${ORANGE}8${NC}  Dossier de projets  ${DIM}(pour que l'IA trouve tes repos plus vite)${NC}"
     echo -e "  ${ORANGE}a${NC}  Tout configurer"
     echo -e "  ${ORANGE}q${NC}  Ignorer"
     echo ""
@@ -287,14 +306,16 @@ config_menu() {
 
     case "$choice" in
         1) config_tavily ;;
-        2) config_groq ;;
-        3) config_ollama_cloud ;;
-        4) config_slack ;;
-        5) config_google ;;
-        6) config_jira ;;
-        7) config_projects_dir ;;
+        2) config_gemini ;;
+        3) config_groq ;;
+        4) config_ollama_cloud ;;
+        5) config_slack ;;
+        6) config_google ;;
+        7) config_jira ;;
+        8) config_projects_dir ;;
         a|A)
             config_tavily
+            config_gemini
             config_groq
             config_ollama_cloud
             config_slack

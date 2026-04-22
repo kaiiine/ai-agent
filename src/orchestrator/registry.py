@@ -27,6 +27,7 @@ from src.agents.system.tools import (
     screenshot_take, process_list, process_kill, wifi_info,
 )
 from src.agents.arxiv.tools import arxiv_search, arxiv_get_paper
+from src.agents.memory.tools import axon_note
 from src.agents.jira.tools import (
     jira_get_my_issues, jira_get_issue, jira_search_issues,
     jira_get_project_summary, jira_get_sprint_issues,
@@ -171,4 +172,6 @@ def build_all_tools() -> List[BaseTool]:
         jira_link_to_epic,
         # === CODING / PROJETS ===
         run_coding_agent,
+        # === MÉMOIRE PROJET ===
+        axon_note,
     ]

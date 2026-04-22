@@ -1,5 +1,7 @@
 import re
+import subprocess
 import threading
+from pathlib import Path
 from time import perf_counter
 
 from langchain_core.messages import AIMessageChunk, AIMessage, ToolMessage
@@ -14,12 +16,14 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.styles import Style
 from prompt_toolkit.key_binding import KeyBindings
 
+
 from .config import fmt_ms, SessionConfig
 from .language import detect_lang, enforce_lang_output
 from .panels import live_panel_initial, tool_call_panel, command_panel, plan_panel, compile_panel, ACCENT
 from .render import update_live_markdown, finalize_live
 from .commands import debug_state
 from .attachments import AttachmentStore, open_file_picker, get_clipboard_image, build_message_with_attachments
+from .completer import SlashCompleter
 
 console = Console()
 _attachments = AttachmentStore()
@@ -43,8 +47,18 @@ def _make_thinking_loop(stop_event: threading.Event, live: "Live"):
     return _loop
 
 _pt_style = Style.from_dict({
-    "axon": "bold ansiyellow",
-    "sep":  "ansiyellow",
+    "axon":       "bold ansiyellow",
+    "sep":        "ansiyellow",
+    # Plan mode badge in the prompt
+    "plan-badge": "bold bg:#1a0d00 #ff8700",
+    # Completion dropdown — dark, minimal, orange accent on selection
+    "completion-menu":                         "bg:#1a1a1a #606060",
+    "completion-menu.completion":              "bg:#1a1a1a #606060",
+    "completion-menu.completion.current":      "bg:#242424 bold #ff8700",
+    "completion-menu.meta.completion":         "bg:#141414 #404040",
+    "completion-menu.meta.completion.current": "bg:#1e1e1e #606060",
+    "scrollbar.background":                    "bg:#1a1a1a",
+    "scrollbar.button":                        "bg:#404040",
 })
 
 
@@ -61,7 +75,21 @@ def _make_keybindings() -> KeyBindings:
         event.current_buffer.text = "/paste"
         event.current_buffer.validate_and_handle()
 
+    @kb.add("c-t")
+    def _kb_plan(event):
+        from .plan_mode import toggle
+        toggle()
+        event.app.invalidate()
+
     return kb
+
+
+def _prompt_tokens():
+    """Dynamic prompt: shows PLAN badge when plan mode is active."""
+    from .plan_mode import is_active
+    if is_active():
+        return [("class:plan-badge", " PLAN "), ("", "  ")]
+    return [("class:sep", "› ")]
 
 
 _session: PromptSession = PromptSession(
@@ -69,6 +97,8 @@ _session: PromptSession = PromptSession(
     style=_pt_style,
     mouse_support=False,
     key_bindings=_make_keybindings(),
+    completer=SlashCompleter(),
+    complete_while_typing=True,
 )
 
 
@@ -513,16 +543,80 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
         _stream_message(graph, refinement, cfg)
 
 
+_AT_RE = re.compile(r'@([\w./\-]+)')
+_AT_MAX_CHARS = 6_000
+
+
+def _resolve_at_mentions(text: str) -> str:
+    """Replace @filepath tokens with the file's content in a fenced code block.
+
+    Tries exact path first, then fuzzy match on git-tracked files.
+    Files larger than _AT_MAX_CHARS are truncated with a notice.
+    """
+    mentions = _AT_RE.findall(text)
+    if not mentions:
+        return text
+
+    for mention in mentions:
+        p = Path(mention)
+        if not (p.exists() and p.is_file()):
+            # Fuzzy: find matching git-tracked files
+            try:
+                r = subprocess.run(
+                    ["git", "ls-files"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                files = r.stdout.strip().splitlines()
+                ml = mention.lower()
+                matches = [f for f in files if ml in f.lower()]
+                if matches:
+                    p = Path(matches[0])
+            except Exception:
+                continue
+
+        if not (p.exists() and p.is_file()):
+            continue
+
+        try:
+            content = p.read_text(encoding="utf-8", errors="replace")
+            truncated = len(content) > _AT_MAX_CHARS
+            if truncated:
+                content = content[:_AT_MAX_CHARS]
+            ext = p.suffix.lstrip(".")
+            block = (
+                f"\n\n```{ext}\n# {p}\n{content}"
+                f"{'…[tronqué]' if truncated else ''}\n```\n"
+            )
+            text = text.replace(f"@{mention}", block, 1)
+
+            label = Text()
+            label.append("  @  ", style=f"bold {ACCENT}")
+            label.append(str(p), style="dim")
+            if truncated:
+                label.append("  [tronqué]", style="dim red")
+            console.print(label)
+        except Exception:
+            pass
+
+    return text
+
+
 def _separator_rule() -> Rule:
-    """Build the separator rule with optional attachment hint + token gauge."""
+    """Build the separator rule with optional plan badge, attachment hint and token gauge."""
     from src.ui.token_gauge import gauge_markup, has_tokens
+    from src.ui.plan_mode import is_active as _is_plan_mode
     from src.infra.settings import settings
 
-    hint = _attachment_hint().strip()
+    hint  = _attachment_hint().strip()
     gauge = gauge_markup(settings.llm_backend) if has_tokens() else ""
+    plan  = _is_plan_mode()
 
-    if hint or gauge:
+    if plan or hint or gauge:
         title = Text()
+        if plan:
+            title.append_text(Text.from_markup(f"[bold {ACCENT}]◆ PLAN[/bold {ACCENT}]"))
+        if plan and (hint or gauge):
+            title.append("  ·  ", style="dim")
         if hint:
             title.append(hint, style=f"dim {ACCENT}")
         if hint and gauge:
@@ -537,7 +631,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     console.print(_separator_rule())
 
     try:
-        user_message = _session.prompt("› ").strip()
+        user_message = _session.prompt(_prompt_tokens).strip()
     except (EOFError, KeyboardInterrupt):
         raise KeyboardInterrupt
 
@@ -620,6 +714,9 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         if result:
             console.print(result)
         return
+
+    # ── Résolution des @mentions (injection fichiers) ─────────────────────────
+    user_message = _resolve_at_mentions(user_message)
 
     # ── Guard : détection tentative d'extraction du prompt ────────────────────
     from .prompt_guard import is_prompt_request, sanitize as _guard_sanitize

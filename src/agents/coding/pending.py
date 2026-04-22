@@ -8,7 +8,7 @@ from typing import List
 @dataclass
 class FileChange:
     path: str
-    original: str       # empty string if new file
+    original: str     
     proposed: str
     description: str
 
@@ -93,6 +93,49 @@ class DevPlanStore:
 
 
 dev_plan = DevPlanStore()
+
+
+# ── Snapshot store (undo support) ─────────────────────────────────────────────
+
+class SnapshotStore:
+    def __init__(self) -> None:
+        self._data: dict[str, str] = {}  # path → content before last write
+
+    def save(self, path: str, content: str) -> None:
+        if path not in self._data:  # keep the oldest snapshot (true original)
+            self._data[path] = content
+
+    def restore(self, path: str) -> bool:
+        if path not in self._data:
+            return False
+        from pathlib import Path
+        Path(path).write_text(self._data.pop(path), encoding="utf-8")
+        return True
+
+    def restore_all(self) -> list[str]:
+        restored = []
+        for path, content in list(self._data.items()):
+            try:
+                from pathlib import Path
+                Path(path).write_text(content, encoding="utf-8")
+                restored.append(path)
+            except Exception:
+                pass
+        self._data.clear()
+        return restored
+
+    def clear(self) -> None:
+        self._data.clear()
+
+    def __bool__(self) -> bool:
+        return bool(self._data)
+
+    @property
+    def paths(self) -> list[str]:
+        return list(self._data.keys())
+
+
+snapshots = SnapshotStore()
 
 
 def render_plan(console) -> None:

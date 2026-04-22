@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     groq_model: str = "openai/gpt-oss-20b"
     groq_api_key: str | None = None
 
+    # Gemini
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.0-flash"
+
     # Search
     search_backend: str = "tavily"
     search_max_results: int = 10

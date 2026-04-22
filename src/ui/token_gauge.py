@@ -1,10 +1,4 @@
 # src/ui/token_gauge.py
-"""
-Global token usage tracker + circular gauge rendering.
-
-Usage:
-    from src.ui.token_gauge import update_usage, gauge_markup, has_tokens, reset
-"""
 
 from __future__ import annotations
 
@@ -18,6 +12,7 @@ _CONTEXT_LIMITS: dict[str, int] = {
     "ollama":       131_072,
     "ollama_cloud": 128_000,
     "groq":         131_072,
+    "gemini":     1_000_000,
 }
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -69,7 +64,7 @@ def gauge_markup(backend: str = "ollama_cloud") -> str:
     elif ratio < 0.75:
         color = "yellow"
     elif ratio < 0.90:
-        color = "color(214)"   # orange (ACCENT colour)
+        color = "color(214)"  
     else:
         color = "red"
 

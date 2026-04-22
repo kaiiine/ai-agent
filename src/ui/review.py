@@ -190,9 +190,13 @@ def review_single_latest() -> Tuple[str, str | None]:
 
     if choice == "apply":
         try:
+            from src.agents.coding.pending import snapshots
+            from src.infra.tools_cache import session_cache
             p = Path(change.path)
             p.parent.mkdir(parents=True, exist_ok=True)
+            snapshots.save(change.path, change.original)  # save before overwriting
             p.write_text(change.proposed, encoding="utf-8")
+            session_cache.invalidate_filesystem()
             t = Text()
             t.append("  ✓  ", style="bold green")
             t.append(str(p), style="dim")
@@ -226,17 +230,21 @@ def auto_write_all(console_override=None) -> None:
     if not changes:
         return
 
+    from src.agents.coding.pending import snapshots
+    from src.infra.tools_cache import session_cache
     applied, errors = [], []
     for change in changes:
         try:
             p = Path(change.path)
             p.parent.mkdir(parents=True, exist_ok=True)
+            snapshots.save(change.path, change.original)
             p.write_text(change.proposed, encoding="utf-8")
             applied.append(change.path)
         except Exception as e:
             errors.append(f"{change.path}: {e}")
 
     if applied:
+        session_cache.invalidate_filesystem()
         t = Text()
         t.append("  ✓  ", style="bold green")
         t.append(
@@ -421,15 +429,20 @@ def review_pending() -> Tuple[str, str | None]:
     console.print()
 
     if choice == "apply":
+        from src.agents.coding.pending import snapshots
+        from src.infra.tools_cache import session_cache
         applied, errors = [], []
         for change in pending_changes.pop_all():
             try:
                 p = Path(change.path)
                 p.parent.mkdir(parents=True, exist_ok=True)
+                snapshots.save(change.path, change.original)
                 p.write_text(change.proposed, encoding="utf-8")
                 applied.append(change.path)
             except Exception as e:
                 errors.append(f"{change.path}: {e}")
+        if applied:
+            session_cache.invalidate_filesystem()
 
         t = Text()
         t.append("  ✓  ", style="bold green")

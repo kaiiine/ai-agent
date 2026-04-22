@@ -3,8 +3,12 @@
 build_system_prompt(tool_names, today, user_name) generates a minimal prompt
 that includes only the sections relevant to the tools actually selected for
 the current query. Typical reduction: 40–60% fewer tokens vs a flat prompt.
+
+AXON.md: if a file named AXON.md exists in the current git repo root (or cwd),
+its content is automatically appended as a "project context" section.
 """
 from __future__ import annotations
+from pathlib import Path
 
 # ── Sections always included ──────────────────────────────────────────────────
 
@@ -91,10 +95,73 @@ Corps en Markdown. Min. 3-4 paragraphes : salutation + accroche → corps détai
 Ton naturel, chaleureux, direct. Pas de "N'hésite pas". Développe chaque idée complètement.\
 """
 
+_MEMORY = """\
+━━ MÉMOIRE PROJET ━━
+Quand tu découvres un fait non-évident sur le projet ou fais un changement important : \
+appelle axon_note(fact="...") pour le persister. \
+Exemples : décision d'architecture, comportement surprenant d'une API, contrainte technique, \
+refactoring majeur effectué. Ne note pas les évidences — seulement ce qu'un futur thread \
+ne pourrait pas deviner en lisant le code.\
+"""
+
+_PLAN_MODE = """\
+━━ MODE PLAN (LECTURE SEULE) ━━
+Tu es en MODE PLAN. Interdiction absolue d'écrire des fichiers, envoyer des messages, \
+exécuter des commandes shell, créer des tickets ou effectuer toute action irréversible.
+Analyse la demande, réfléchis en profondeur, propose un plan détaillé et structuré. \
+Explique CE QUE tu ferais, POURQUOI, et dans quel ordre — mais n'agis pas. \
+Attends la validation explicite avant d'exécuter quoi que ce soit.\
+"""
+
+
+# ── AXON.md loader ────────────────────────────────────────────────────────────
+
+def _git_root(start: Path) -> Path | None:
+    for d in [start, *start.parents]:
+        if (d / ".git").exists():
+            return d
+    return None
+
+
+def _load_axon_context() -> str:
+    """Look for AXON.md from cwd upward to the git root. Return its content (≤3000 chars)."""
+    cwd = Path.cwd()
+    for directory in [cwd, *cwd.parents]:
+        candidate = directory / "AXON.md"
+        if candidate.is_file():
+            try:
+                content = candidate.read_text(encoding="utf-8", errors="replace").strip()
+                return content[:3000]
+            except Exception:
+                return ""
+        if (directory / ".git").exists():
+            break
+    return ""
+
+
+def _load_axon_memory() -> str:
+    """Load .axon/memory.md from the git root. Return its content (≤2000 chars)."""
+    root = _git_root(Path.cwd())
+    if root is None:
+        return ""
+    p = root / ".axon" / "memory.md"
+    if not p.is_file():
+        return ""
+    try:
+        content = p.read_text(encoding="utf-8", errors="replace").strip()
+        return content[:2000]
+    except Exception:
+        return ""
+
 
 # ── Builder ───────────────────────────────────────────────────────────────────
 
-def build_system_prompt(tool_names: list[str], today: str, user_name: str) -> str:
+def build_system_prompt(
+    tool_names: list[str],
+    today: str,
+    user_name: str,
+    plan_mode: bool = False,
+) -> str:
     """
     Returns a minimal system prompt including only sections relevant to the
     tools currently selected for this query.
@@ -103,9 +170,13 @@ def build_system_prompt(tool_names: list[str], today: str, user_name: str) -> st
         tool_names: list of tool names bound to the LLM for this call
         today:      date string (YYYY-MM-DD)
         user_name:  user's name from USER_NAME env var
+        plan_mode:  when True, inject the plan-mode instruction block
     """
     t = set(tool_names)
     parts = [_CORE.format(today=today, user_name=user_name)]
+
+    if plan_mode:
+        parts.append(_PLAN_MODE)
 
     if any(x in t for x in ("web_search_news", "web_research_report")):
         parts.append(_WEB)
@@ -115,6 +186,8 @@ def build_system_prompt(tool_names: list[str], today: str, user_name: str) -> st
         parts.append(_SHELL)
     if "run_coding_agent" in t:
         parts.append(_CODING)
+    if "axon_note" in t:
+        parts.append(_MEMORY)
     if any(x.startswith("slack_") for x in t):
         parts.append(_SLACK)
     if any(x.startswith("google_docs") or x.startswith("drive_") for x in t):
@@ -123,5 +196,13 @@ def build_system_prompt(tool_names: list[str], today: str, user_name: str) -> st
         parts.append(_JIRA)
     if any(x.startswith("gmail_") for x in t):
         parts.append(_EMAIL)
+
+    axon_ctx = _load_axon_context()
+    if axon_ctx:
+        parts.append(f"━━ CONTEXTE PROJET (AXON.md) ━━\n{axon_ctx}")
+
+    axon_mem = _load_axon_memory()
+    if axon_mem:
+        parts.append(f"━━ MÉMOIRE PROJET (sessions précédentes) ━━\n{axon_mem}")
 
     return "\n\n".join(parts)
