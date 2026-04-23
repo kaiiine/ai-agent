@@ -27,11 +27,12 @@ _FILESYSTEM_CACHES = (
 
 # Quand ces outils s'exécutent, invalider les groupes de cache correspondants
 _INVALIDATES: dict[str, tuple[str, ...]] = {
-    "git_add":    ("git_status", "git_diff"),
-    "git_commit": ("git_status", "git_log", "git_diff"),
-    "git_stash":  ("git_status", "git_diff"),
-    # shell_run peut créer/modifier/supprimer n'importe quel fichier
-    "shell_run":  _FILESYSTEM_CACHES,
+    "git_add":            ("git_status", "git_diff"),
+    "git_commit":         ("git_status", "git_log", "git_diff"),
+    "git_stash":          ("git_status", "git_diff"),
+    "shell_run":          _FILESYSTEM_CACHES,
+    # Writing a file via the coding specialist must bust the read cache immediately
+    "propose_file_change": _FILESYSTEM_CACHES,
 }
 
 

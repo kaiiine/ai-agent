@@ -36,11 +36,23 @@ def make_llm_ollama_cloud():
         )
 
 
+def _ollama_unload(model: str, base_url: str = "http://localhost:11434") -> None:
+    """Unload a model from VRAM by setting keep_alive=0."""
+    import requests
+    try:
+        requests.post(
+            f"{base_url}/api/generate",
+            json={"model": model, "keep_alive": 0},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
 def make_coding_llm():
-    """Coding specialist — en local réutilise le même modèle que l'orchestrateur."""
+    """Coding specialist — uses dedicated coding model with VRAM swap on local ollama."""
     if settings.llm_backend == "ollama":
-        # Même modèle que l'orchestrateur (évite les problèmes de VRAM)
-        return ChatOllama(model=settings.ollama_model, temperature=0.0, num_ctx=131_072)
+        return ChatOllama(model=settings.coding_model_local, temperature=0.0, num_ctx=131_072)
     elif settings.llm_backend == "groq":
         return ChatGroq(
             api_key=settings.groq_api_key,
