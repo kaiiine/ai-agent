@@ -88,12 +88,75 @@ _PROGRESS_TOOLS = {"dev_plan_create", "dev_plan_step_done", "dev_explain", "prop
 _MAX_ITERATIONS = 150
 
 
+def _vram_swap_in() -> None:
+    """On local ollama: unload the main agentic model to free VRAM for the coding specialist."""
+    from src.infra.settings import settings
+    if settings.llm_backend != "ollama":
+        return
+    from src.llm.models import _ollama_unload
+    _ollama_unload(settings.ollama_model)
+
+
+def _vram_swap_out() -> None:
+    """On local ollama: unload the coding model so the main model can reload on next use."""
+    from src.infra.settings import settings
+    if settings.llm_backend != "ollama":
+        return
+    from src.llm.models import _ollama_unload
+    _ollama_unload(settings.coding_model_local)
+
+
 def run_coding_task(task: str) -> str:
     """
     Runs a coding task using the specialized coding LLM.
     Calls the global progress callback on plan/file events so the UI can update in real time.
     Returns a summary string.
     """
+    _vram_swap_in()
+    try:
+        return _run(task)
+    finally:
+        _vram_swap_out()
+
+
+import re as _re
+
+_MSG_REPR_RE = _re.compile(
+    r'\[?\s*(?:Human|System|AI|Tool)Message\s*\(.*?\)\s*\]?',
+    _re.DOTALL,
+)
+
+
+def _clean_output(content: str) -> str:
+    """Remove Python LangChain message repr blocks from model output."""
+    # Remove entire [...Message(...)] blocks wherever they appear
+    cleaned = _MSG_REPR_RE.sub('', content)
+    # Collapse excessive blank lines left by removal
+    cleaned = _re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    return cleaned or content  # fallback to original if we wiped everything
+
+
+def _extract_json_tool_call(content: str) -> dict | None:
+    """Some small models output tool calls as JSON text instead of using the API.
+    Detect and parse them so we can execute them properly."""
+    import json
+    s = content.strip()
+    # Strip markdown code fences if present
+    if s.startswith("```"):
+        s = _re.sub(r'^```(?:json)?\s*', '', s)
+        s = _re.sub(r'\s*```$', '', s.strip())
+    try:
+        obj = json.loads(s)
+        name = obj.get("name") or obj.get("tool") or obj.get("function")
+        args = obj.get("arguments") or obj.get("args") or obj.get("parameters") or {}
+        if name and isinstance(name, str):
+            return {"name": name, "args": args}
+    except Exception:
+        pass
+    return None
+
+
+def _run(task: str) -> str:
     llm = _get_coding_llm()
     tools = _get_coding_tools()
     tool_map = {t.name: t for t in tools}
@@ -105,10 +168,18 @@ def run_coding_task(task: str) -> str:
         response = llm_with_tools.invoke(messages)
         messages.append(response)
 
-        if not response.tool_calls:
-            return response.content or "Tâche terminée."
+        tool_calls = response.tool_calls or []
 
-        for tc in response.tool_calls:
+        # Small models sometimes return tool calls as JSON text instead of using the API
+        if not tool_calls and response.content:
+            parsed = _extract_json_tool_call(response.content)
+            if parsed and parsed["name"] in tool_map:
+                import uuid
+                tool_calls = [{"name": parsed["name"], "args": parsed["args"], "id": str(uuid.uuid4())}]
+            else:
+                return _clean_output(response.content) or "Tâche terminée."
+
+        for tc in tool_calls:
             name = tc["name"]
             args = tc.get("args", {})
 
@@ -149,4 +220,4 @@ def run_coding_task(task: str) -> str:
                 name=name,
             ))
 
-    return "Tâche interrompue (limite d'itérations atteinte)."
+    return "Tâche interrompue (limite d'itérations atteinte)."  # end of _run

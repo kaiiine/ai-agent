@@ -106,8 +106,48 @@ config_ollama_cloud() {
     step "Ollama Cloud — Backend cloud (optionnel)"
     echo -e "  ${DIM}Permet d'utiliser des modèles cloud via Ollama (ex: kimi-k2, qwen3-next).${NC}"
     echo -e "  ${DIM}Compte Ollama → https://ollama.com/settings/api-keys${NC}"
-    echo -e "  ${DIM}Laisser vide pour utiliser ollama_cloud sans clé (connexion locale via 'ollama signin').${NC}"
-    prompt_key "OLLAMA_API_KEY" "Clé API Ollama Cloud" "Format : ollama_xxxx  (optionnel)"
+    echo ""
+    prompt_key "OLLAMA_API_KEY" "Clé API Ollama Cloud" "Format : ollama_xxxx  (laisser vide si tu utilises ollama signin)"
+
+    # Ask if the user wants to sign in via the Ollama CLI
+    echo ""
+    echo -e "  ${ORANGE}Veux-tu aussi te connecter via la CLI Ollama ? (ollama signin)${NC}"
+    echo -e "  ${DIM}Utile si tu utilises des modèles cloud sans clé API.${NC}"
+    read -rp "  $(echo -e "${ORANGE}>${NC}") [o/N] " signin_choice
+    if [[ "$signin_choice" =~ ^[oOyY]$ ]]; then
+        # Check ollama CLI is available
+        if ! command -v ollama &>/dev/null; then
+            warn "La CLI Ollama n'est pas installée."
+            echo -e "  ${DIM}Installe-la avec :${NC}"
+            echo -e "  ${ORANGE}  curl -fsSL https://ollama.com/install.sh | sh${NC}"
+            echo ""
+            read -rp "  $(echo -e "${ORANGE}>${NC}") Lancer l'installation maintenant ? [o/N] " install_choice
+            if [[ "$install_choice" =~ ^[oOyY]$ ]]; then
+                info "Installation de la CLI Ollama..."
+                curl -fsSL https://ollama.com/install.sh | sh
+                if ! command -v ollama &>/dev/null; then
+                    warn "Installation échouée. Relance le setup après avoir installé Ollama manuellement."
+                    return
+                fi
+                ok "Ollama CLI installée."
+            else
+                warn "Connexion ignorée. Installe Ollama puis relance le setup."
+                return
+            fi
+        fi
+
+        # Logout first to clean any stale session
+        info "Déconnexion préalable (ollama logout)..."
+        ollama logout 2>/dev/null || true
+
+        # Sign in
+        info "Connexion à Ollama (ollama signin)..."
+        if ollama signin; then
+            ok "Connecté à Ollama Cloud."
+        else
+            warn "Connexion échouée. Vérifie tes identifiants et réessaie."
+        fi
+    fi
 }
 
 config_gemini() {

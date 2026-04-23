@@ -73,6 +73,10 @@ def run_coding_agent(task: str) -> str:
     Returns:
         résumé de ce qui a été analysé et proposé
     """
+    # Guard: reject garbage task args (e.g. stringified message lists from weak models)
+    stripped = task.strip()
+    if len(stripped) < 10 or (stripped.startswith('[') and 'Message(' in stripped[:200]):
+        return "Erreur : le paramètre 'task' doit être une description textuelle de la tâche, pas une liste de messages."
     from src.agents.coding.specialist import run_coding_task
     return run_coding_task(task)
 
