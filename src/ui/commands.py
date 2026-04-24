@@ -317,6 +317,8 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         lp = cmd.split(" ", 1)[1].strip().lower()
         if lp in {"fr", "en", "auto"}:
             cfg.lang_pref = lp
+            from src.orchestrator.graph import set_lang_pref
+            set_lang_pref(lp)
             return command_panel(f"langue : {cfg.lang_pref}")
         return command_panel("langue invalide. options : fr · en · auto", error=True)
 

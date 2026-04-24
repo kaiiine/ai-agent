@@ -32,6 +32,19 @@ def set_compile_callback(fn) -> None:
     _compile_callback = fn
 
 
+# ── Language preference ────────────────────────────────────────────────────────
+_lang_pref: str = "fr"
+
+
+def set_lang_pref(lang: str) -> None:
+    global _lang_pref
+    _lang_pref = lang
+
+
+def get_lang_pref() -> str:
+    return _lang_pref
+
+
 def _on_compress() -> None:
     if _compile_callback:
         _compile_callback()
@@ -243,7 +256,7 @@ def _ensure_system_prompt(
     user_name = os.getenv("USER_NAME", "l'utilisateur")
     tool_names = [t.name for t in selected_tools]
     system_msg = SystemMessage(
-        content=build_system_prompt(tool_names, today, user_name, plan_mode=plan_mode)
+        content=build_system_prompt(tool_names, today, user_name, plan_mode=plan_mode, lang=_lang_pref)
     )
     if not messages:
         return [system_msg]
