@@ -27,6 +27,16 @@ def dev_plan_create(steps: List[str]) -> Dict[str, Any]:
     if not steps:
         return {"status": "error", "error": "steps cannot be empty"}
 
+    if dev_plan.steps:
+        done = sum(1 for s in dev_plan.steps if s.done)
+        return {
+            "status": "already_exists",
+            "message": "Un plan existe déjà. Continue avec les étapes existantes, n'en crée pas un nouveau.",
+            "steps": [s.label for s in dev_plan.steps],
+            "done": done,
+            "remaining": len(dev_plan.steps) - done,
+        }
+
     dev_plan.create(steps)
     return {"status": "ok", "count": len(steps)}
 
@@ -128,6 +138,37 @@ def find_git_repos(root: str = "") -> Dict[str, Any]:
 
     repos.sort(key=lambda r: r["path"])
     return {"status": "ok", "count": len(repos), "repos": repos}
+
+
+@tool("browser_screenshot")
+def browser_screenshot(
+    url: str,
+    width: int = 1280,
+    height: int = 900,
+    wait_ms: int = 2500,
+) -> dict:
+    """
+    Takes a headless screenshot of a running web application and returns its rendered page text.
+    Use this after starting the dev server to verify the UI visually matches expectations.
+
+    Workflow :
+      1. shell_run("npm run dev &") — lance le serveur en arrière-plan
+      2. shell_run("sleep 4")       — attends que le serveur soit prêt
+      3. browser_screenshot("http://localhost:3000") — capture + texte DOM
+      4. Analyse le texte retourné et corrige si nécessaire
+
+    Args:
+        url:      URL à capturer, ex. "http://localhost:3000"
+        width:    largeur du viewport en pixels (défaut 1280)
+        height:   hauteur du viewport en pixels (défaut 900)
+        wait_ms:  temps d'attente JS virtuel en ms (défaut 2500)
+    Returns:
+        {"status": "ok", "screenshot_path": str, "page_text": str, "url": str,
+         "audit": {"title": str, "h1s": list, "issueCount": int, "issues": list}}
+        {"status": "error", "error": str}
+    """
+    from src.infra.browser import screenshot_url
+    return screenshot_url(url, width=width, height=height, wait_ms=wait_ms)
 
 
 @tool("propose_file_change")

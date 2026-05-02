@@ -1,4 +1,5 @@
 from __future__ import annotations
+import shutil
 import subprocess
 import os
 from pathlib import Path
@@ -7,6 +8,35 @@ from langchain_core.tools import tool
 
 _HOME = Path.home()
 _cwd: Path = _HOME  # répertoire de travail courant de la session
+_bg_procs: dict[str, subprocess.Popen] = {}  # label → processus background actif
+
+
+def get_cwd() -> Path:
+    return _cwd
+
+# RTK — proxy CLI qui comprime les outputs pour économiser les tokens.
+# Détecté une fois au chargement. Si absent → commandes brutes.
+_RTK: str | None = shutil.which("rtk")
+
+
+_SHELL_OPS = ("&&", "||", " | ", ";", "2>&", ">&", "$(", "`")
+
+
+def _wrap_rtk(cmd: str) -> str:
+    """Préfixe la commande avec rtk si disponible.
+
+    RTK ne supporte pas les opérateurs shell (&&, |, redirections) — il essaie
+    d'exec la commande directement sans passer par un shell. On saute le wrapping
+    pour ces cas afin d'éviter les boucles infinies de exit 127.
+    """
+    if not _RTK:
+        return cmd
+    stripped = cmd.strip()
+    if stripped.endswith("&"):
+        return cmd  # background process — ne pas envelopper
+    if any(op in stripped for op in _SHELL_OPS):
+        return cmd  # commande composée — RTK ne sait pas gérer sans shell
+    return f"{_RTK} {stripped}"  # chemin absolu pour éviter les problèmes de PATH
 
 # Commandes qui modifient l'état système — nécessitent confirmation explicite de l'utilisateur
 _DESTRUCTIVE_PREFIXES = (
@@ -79,7 +109,37 @@ def shell_run(
 
     timeout = min(timeout, 300)
     work_dir = work_dir or _cwd
+    env = {**os.environ, "TERM": "xterm-256color"}
 
+    # Background process (command ends with &) — use Popen to track PID
+    stripped_cmd = command.strip()
+    if stripped_cmd.endswith("&"):
+        bare = stripped_cmd[:-1].strip()
+        label = bare.split()[0] if bare else bare
+        try:
+            proc = subprocess.Popen(
+                bare,
+                shell=True,
+                cwd=str(work_dir),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+            )
+            _bg_procs[label] = proc
+            return {
+                "status": "ok",
+                "stdout": f"Processus démarré en arrière-plan (PID {proc.pid})",
+                "stderr": "",
+                "exit_code": 0,
+                "pid": proc.pid,
+                "label": label,
+                "cwd": str(work_dir),
+                "note": f"Arrête-le avec shell_kill_bg(label='{label}') ou shell_kill_bg(port=<N>) après usage.",
+            }
+        except Exception as e:
+            return {"status": "error", "stdout": "", "stderr": str(e), "exit_code": -1, "cwd": str(work_dir)}
+
+    command = _wrap_rtk(command)
     try:
         result = subprocess.run(
             command,
@@ -88,12 +148,22 @@ def shell_run(
             capture_output=True,
             text=True,
             timeout=timeout,
-            env={**os.environ, "TERM": "xterm-256color"},
+            env=env,
         )
+        stderr = result.stderr[:5_000]
+        # exit 127 = command not found — enrich stderr so the model can diagnose
+        if result.returncode == 127 and not stderr.strip():
+            cmd_token = command.strip().split()[0] if command.strip() else command
+            stderr = (
+                f"exit 127: commande introuvable — '{cmd_token}' n'est pas dans le PATH "
+                f"ou le chemin est incorrect.\n"
+                f"Essaie : which {cmd_token.split('/')[-1]}  ou utilise le nom court (pnpm, npm, npx…) "
+                f"sans chemin absolu."
+            )
         return {
             "status": "ok" if result.returncode == 0 else "error",
             "stdout": result.stdout[:10_000],
-            "stderr": result.stderr[:5_000],
+            "stderr": stderr,
             "exit_code": result.returncode,
             "cwd": str(work_dir),
         }
@@ -107,6 +177,56 @@ def shell_run(
         }
     except Exception as e:
         return {"status": "error", "stdout": "", "stderr": str(e), "exit_code": -1, "cwd": str(work_dir)}
+
+
+@tool("shell_kill_bg")
+def shell_kill_bg(label: Optional[str] = None, port: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Arrête un processus background lancé avec shell_run("... &").
+    À appeler TOUJOURS après avoir utilisé un dev server pour vérification (pnpm run dev, npm run dev, etc.)
+    afin de libérer le port pour l'utilisateur.
+
+    Args:
+        label: nom du processus tel que retourné par shell_run (ex: "pnpm", "node")
+        port: numéro de port à libérer (ex: 3000, 8080) — tue tout process sur ce port
+    Returns:
+        {"status": "ok", "killed": [...]} ou {"status": "error"}
+    """
+    killed = []
+
+    if label and label in _bg_procs:
+        proc = _bg_procs.pop(label)
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        killed.append(f"{label} (PID {proc.pid})")
+
+    if port:
+        try:
+            result = subprocess.run(
+                ["fuser", "-k", f"{port}/tcp"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                killed.append(f"port {port}")
+        except Exception:
+            try:
+                subprocess.run(
+                    f"lsof -ti tcp:{port} | xargs kill -9",
+                    shell=True, timeout=5, capture_output=True,
+                )
+                killed.append(f"port {port}")
+            except Exception:
+                pass
+
+    if killed:
+        return {"status": "ok", "killed": killed}
+    return {"status": "error", "error": "Aucun processus trouvé pour ce label ou port."}
 
 
 @tool("notify")
@@ -225,6 +345,12 @@ def shell_cd(path: str) -> Dict[str, Any]:
         p = (_cwd / path).resolve()
     if p.exists() and p.is_dir():
         _cwd = p
+        # Invalidate the @-mention file cache so completions reflect the new project
+        try:
+            import src.ui.completer as _completer
+            _completer._file_cache_ts = 0.0
+        except Exception:
+            pass
         return {"status": "ok", "cwd": str(_cwd)}
 
     # 2. Recherche fuzzy depuis $HOME

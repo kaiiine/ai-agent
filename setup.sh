@@ -152,7 +152,7 @@ config_ollama_cloud() {
 
 config_gemini() {
     step "Google Gemini — Backend LLM gratuit (1M tokens de contexte)"
-    echo -e "  ${DIM}Gemini 2.0 Flash est gratuit avec 15 req/min et 1 500 req/jour.${NC}"
+    echo -e "  ${DIM}Gemini 2.5 Flash est gratuit avec 15 req/min et 1 500 req/jour.${NC}"
     echo -e "  ${DIM}C'est le backend recommandé si tu veux éviter les quotas Groq/Ollama.${NC}"
     echo ""
     echo -e "  ${ORANGE}Étapes :${NC}"
@@ -161,9 +161,9 @@ config_gemini() {
     echo -e "  ${DIM}3. Copier la clé générée${NC}"
     echo ""
     echo -e "  ${DIM}Modèles disponibles :${NC}"
-    echo -e "  ${DIM}  gemini-2.0-flash   → recommandé (rapide, gratuit)${NC}"
-    echo -e "  ${DIM}  gemini-2.5-flash   → plus capable, gratuit${NC}"
-    echo -e "  ${DIM}  gemini-2.5-pro     → meilleur, quota limité${NC}"
+    echo -e "  ${DIM}  gemini-2.5-flash           → recommandé (rapide, gratuit)${NC}"
+    echo -e "  ${DIM}  gemini-2.5-pro             → meilleur, quota limité${NC}"
+    echo -e "  ${DIM}  gemini-3.1-flash-lite-preview → économique, rapide${NC}"
     prompt_key "GEMINI_API_KEY" "Clé API Gemini" "Format : AIzaSy..."
 }
 
@@ -401,11 +401,12 @@ deploy() {
         warn "  sudo pacman -S libreoffice-still   ou   sudo apt install libreoffice"
     fi
 
-    if command -v xclip &>/dev/null || command -v xsel &>/dev/null; then
-        ok "Presse-papiers (xclip/xsel)"
+    if command -v wl-paste &>/dev/null || command -v xclip &>/dev/null || command -v xsel &>/dev/null; then
+        ok "Presse-papiers ($(command -v wl-paste &>/dev/null && echo 'wl-clipboard' || echo 'xclip/xsel'))"
     else
-        warn "xclip/xsel absent — commande /paste indisponible"
-        warn "  sudo pacman -S xclip   ou   sudo apt install xclip"
+        warn "Presse-papiers absent — commande /paste indisponible"
+        warn "  Wayland : sudo pacman -S wl-clipboard   ou   sudo apt install wl-clipboard"
+        warn "  X11     : sudo pacman -S xclip           ou   sudo apt install xclip"
     fi
 
     # ── 2. Environnement virtuel ──────────────────────────────
@@ -427,6 +428,34 @@ deploy() {
     pip install --upgrade pip --quiet
     pip install -r requirements.txt --quiet
     ok "requirements.txt installé"
+
+    # ── 3b. Playwright (browser headless) ────────────────────
+    echo ""
+    if venv/bin/python -c "from playwright.sync_api import sync_playwright; b = sync_playwright().start(); b.stop()" &>/dev/null 2>&1; then
+        ok "Playwright — navigateur déjà installé"
+    else
+        info "Installation des binaires Playwright (Chromium, ~200 MB)..."
+        venv/bin/python -m playwright install chromium --with-deps --quiet 2>/dev/null \
+            || venv/bin/python -m playwright install chromium 2>/dev/null \
+            || warn "Playwright install échoué — l'agent browser sera indisponible"
+        ok "Playwright — Chromium prêt"
+    fi
+
+    # ── 3c. RTK (proxy CLI token-efficient) ───────────────────
+    echo ""
+    if command -v rtk &>/dev/null; then
+        ok "rtk déjà installé ($(rtk --version 2>/dev/null || echo 'version inconnue'))"
+    else
+        echo -e "  ${DIM}rtk compresse les outputs shell pour économiser 60-90% de tokens LLM${NC}"
+        read -rp "  $(echo -e "${ORANGE}?${NC}") Installer rtk ? [o/N] " install_rtk
+        if [[ "$install_rtk" =~ ^[oOyY]$ ]]; then
+            info "Installation de rtk..."
+            curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh
+            ok "rtk installé"
+        else
+            info "rtk ignoré (optionnel)"
+        fi
+    fi
 
     # ── 4. .env ───────────────────────────────────────────────
     step "Fichier de configuration"

@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-MAX_TEXT_SIZE = 100_000
+MAX_TEXT_SIZE         = 100_000  # extraction brute complète
+_ORCHESTRATOR_INJECT  =  20_000  # seuil au-delà duquel on n'injecte pas le contenu dans la conversation
 
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 _MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
@@ -47,10 +48,11 @@ def _extract_pdf(path: Path) -> str:
 class Attachment:
     name: str
     is_image: bool
-    content: str = ""   # fichiers texte
-    b64: str = ""       # images
+    content: str = ""        # fichiers texte (extrait complet)
+    b64: str = ""            # images
     mime: str = ""
     size_hint: str = ""
+    source_path: str = ""    # chemin absolu d'origine (pour re-lecture par les tools)
 
 
 class AttachmentStore:
@@ -102,7 +104,8 @@ class AttachmentStore:
             except Exception as e:
                 content = f"[erreur: {e}]"
         a = Attachment(name=path.name, is_image=False,
-                       content=content, size_hint=size_hint)
+                       content=content, size_hint=size_hint,
+                       source_path=str(path.resolve()))
         self._items.append(a)
         return a
 
@@ -223,9 +226,18 @@ def build_message_with_attachments(text: str, attachments: List[Attachment]) -> 
             images.append(a)
         else:
             lang = Path(a.name).suffix.lstrip(".")
-            text_parts.append(
-                f"\n\n---\n**Fichier joint : {a.name}**\n```{lang}\n{a.content}\n```"
-            )
+            if len(a.content) > _ORCHESTRATOR_INJECT:
+                # Fichier trop grand pour être injecté : donne le chemin au LLM
+                text_parts.append(
+                    f"\n\n---\n**Fichier joint : {a.name}** (trop grand pour injection directe)\n"
+                    f"Chemin : `{a.source_path}`\n"
+                    f"Taille : {a.size_hint} — utilise save_study_file(pdf_path=\"{a.source_path}\") "
+                    f"pour générer une fiche ou des exercices, ou local_read_file pour lire par sections."
+                )
+            else:
+                text_parts.append(
+                    f"\n\n---\n**Fichier joint : {a.name}**\n```{lang}\n{a.content}\n```"
+                )
 
     full_text = "".join(text_parts)
 

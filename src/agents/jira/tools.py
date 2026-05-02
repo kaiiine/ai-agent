@@ -536,7 +536,7 @@ def _create_single(project_key: str, item: dict, epic_key: str | None = None) ->
 
 
 @tool("jira_create_issues_bulk")
-def jira_create_issues_bulk(project_key: str, issues: list) -> dict:
+def jira_create_issues_bulk(project_key: str, issues: list[dict]) -> dict:
     """
     Crée plusieurs tickets Jira en une seule fois, en respectant la hiérarchie Epic → Story → Task → Subtask.
 

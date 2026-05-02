@@ -28,6 +28,8 @@ from src.agents.system.tools import (
 )
 from src.agents.arxiv.tools import arxiv_search, arxiv_get_paper
 from src.agents.memory.tools import axon_note
+from src.agents.excalidraw.tools import excalidraw_create
+from src.agents.study.tools import save_study_file
 from src.agents.jira.tools import (
     jira_get_my_issues, jira_get_issue, jira_search_issues,
     jira_get_project_summary, jira_get_sprint_issues,
@@ -36,6 +38,7 @@ from src.agents.jira.tools import (
     jira_get_issue_comments, jira_search_users, jira_move_issue,
     jira_delete_issue, jira_link_to_epic,
 )
+
 from langchain_core.tools import tool as lc_tool
 
 
@@ -178,4 +181,8 @@ def build_all_tools() -> List[BaseTool]:
         run_coding_agent,
         # === MÉMOIRE PROJET ===
         axon_note,
+        # === DIAGRAMMES ===
+        excalidraw_create,
+        # === ÉTUDE ===
+        save_study_file,
     ]

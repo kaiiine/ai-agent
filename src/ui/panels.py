@@ -15,23 +15,31 @@ _BOX = box.SIMPLE_HEAD
 ACCENT = "color(214)"
 _BORDER = f"dim {ACCENT}"
 
+
 def _c(line: str, style: str) -> Align:
     return Align.center(Text(line, style=style))
 
 
-_ROBOT = [
-    "  ████████████  ",
-    "  █  ▪    ▪  █  ",
-    "  █          █  ",
-    "  ████████████  ",
-    "    ████  ████  ",
-    "    █        █  ",
-]
 
-_CLOUDS = [
-    ("*      ░░░ ░░░           ░░░░░░      *", "dim"),
-    ("     ░░░░░░░░░░        ░░░░░░░░░      ", "dim"),
-    ("  *    ░░░ ░░░    *      ░░░░░░    *  ", "dim"),
+_SCENE = [
+    # ciel — nuages pixel-art remplis ░ + étoiles
+    ("  *        ░░░░░░░                   *        *    ", "dim"),
+    ("      ░░   ░░░░░░░░░░░        *                    ", "dim"),
+    ("    ░░░░░░░░░░░░░░░░░░░     ░░░░░░░░░          *   ", "dim"),
+    ("  *                        ░░░░░░░░░░░░░░           ", "dim"),
+    ("              *            ░░░░░░░░░░░░░░░░    *    ", "dim"),
+    # axolotl — bold orange uniforme
+    ("⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠐⡄⠰⠤⠀⠀⠀⠀⠀⠀", f"bold {ACCENT}"),
+    ("⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢐⠹⣀⣆⠚⠂⢱⡀⠀⠀⠀⠀", f"bold {ACCENT}"),
+    ("⢀⢀⡄⡀⢄⠀⡠⠔⠊⠉⠉⠉⠉⢲⣷⡿⣠⣗⣡⠂⠀⠀", f"bold {ACCENT}"),
+    ("⡘⣈⢣⡰⣈⠎⠀⠀⠀⠀⠀⢿⣦⡀⢙⣟⣽⢁⡜⡠⡨⢤", f"bold {ACCENT}"),
+    ("⢱⠒⡏⢯⣿⢷⢀⠴⡶⠊⠁⠀⠀⠁⠀⢹⠛⢏⢫⠐⠁⠃", f"bold {ACCENT}"),
+    ("⠂⣁⠼⣾⣿⠉⠀⠀⠀⠀⠀⢎⠍⠒⠴⠧⠯⡈⠉⠀⠀⡄", f"bold {ACCENT}"),
+    ("⠀⠣⠕⡞⣹⡗⣤⠄⠀⠀⠀⠀⠁⠀⠀⠀⠀⠈⢉⡵⢠⠃", f"bold {ACCENT}"),
+    ("⠀⠀⠀⠈⠀⠀⠑⠀⠤⠤⠤⢄⠀⠀⠀⠀⠠⢞⡓⠈⣀⠄", f"bold {ACCENT}"),
+    ("⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠑⠒⠒⠈⠉⠁⠀⠀⠀", f"bold {ACCENT}"),
+    # sol
+    ("  ───────────────────────────────────────  ", "dim"),
 ]
 
 
@@ -42,24 +50,18 @@ def banner():
     return Group(
         Rule(characters="·", style=dim_o),
         Text(""),
-        _c(_CLOUDS[0][0], _CLOUDS[0][1]),
-        _c(_CLOUDS[1][0], _CLOUDS[1][1]),
-        _c(_CLOUDS[2][0], _CLOUDS[2][1]),
-        Text(""),
-        *[_c(line, bold_o) for line in _ROBOT],
-        Text(""),
-        _c(_CLOUDS[2][0], _CLOUDS[2][1]),
-        _c(_CLOUDS[1][0], _CLOUDS[1][1]),
-        _c(_CLOUDS[0][0], _CLOUDS[0][1]),
+        *[_c(line, style) for line, style in _SCENE],
         Text(""),
         Rule(Text("A  X  O  N", style=bold_o), characters="·", style=dim_o),
         Text(""),
-        _c("kaine's intelligent agent",                 dim_o),
+        _c("kaine's intelligent agent",              dim_o),
         Text(""),
-        _c("help · attach · clear · new · save · q",    "dim"),
+        _c("help · attach · clear · new · save · q", "dim"),
         Text(""),
     )
 
+
+# ── Panels ────────────────────────────────────────────────────────────────────
 
 def live_panel_initial(dots: int = 0):
     dot_str = ("." * dots).ljust(3)
@@ -132,7 +134,7 @@ def config_table(cfg: SessionConfig) -> Table:
     from src.infra.settings import settings
 
     def _active_model(s) -> str:
-        if s.llm_backend == "groq":        return s.groq_model
+        if s.llm_backend == "groq":         return s.groq_model
         if s.llm_backend == "ollama_cloud": return s.ollama_cloud_model
         return s.ollama_model
 

@@ -22,6 +22,8 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/paste",        "colle une image depuis le presse-papiers"),
     ("/attachments",  "liste les pièces jointes en attente"),
     ("/detach",       "supprime une pièce jointe (ou toutes)"),
+    ("/fiche",        "génère une fiche de révision depuis les PDF joints"),
+    ("/exo",          "génère des exercices interactifs depuis les PDF joints"),
     ("/letter",       "génère une lettre de motivation"),
     ("/upgrade",      "améliore une lettre existante"),
     ("/clear",        "efface l'écran"),
@@ -111,9 +113,12 @@ class SlashCompleter(Completer):
             return _file_cache
         try:
             import subprocess
+            from src.agents.shell.tools import get_cwd
+            cwd = str(get_cwd())
             r = subprocess.run(
                 ["git", "ls-files"],
                 capture_output=True, text=True, timeout=5,
+                cwd=cwd,
             )
             _file_cache = r.stdout.strip().splitlines()
             _file_cache_ts = now

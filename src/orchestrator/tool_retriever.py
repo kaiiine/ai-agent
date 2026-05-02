@@ -68,6 +68,12 @@ TOOL_GROUPS: dict[str, list[str]] = {
     "weather": [
         "get_weather_by_city",
     ],
+    "diagrams": [
+        "excalidraw_create",
+    ],
+    "memory": [
+        "axon_note",
+    ],
 }
 
 # Index inverse : tool_name → group_name
@@ -163,6 +169,7 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "trouver tous les endroits où une variable est utilisée",
         "lister les dépendances du projet",
     ],
+
     "jira_get_my_issues": [
         "quels tickets jira me sont assignés",
         "voir mes tâches jira",
@@ -220,6 +227,34 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "mets moi tous ces tickets dans jira",
         "importer des tâches en masse dans jira",
         "créer un backlog complet dans jira",
+    ],
+    "excalidraw_create": [
+        "schématise moi quelque chose",
+        "fais moi un schéma de ce concept",
+        "crée un diagramme de l'architecture",
+        "dessine un flowchart",
+        "génère un diagramme de flux",
+        "représente visuellement ce système",
+        "fais un mind map",
+        "crée un schéma d'architecture",
+        "représente l'architecture en schéma",
+        "diagramme de séquence",
+        "schéma de la base de données",
+        "visualise le pipeline",
+        "dessine le flux de données",
+        "fais un organigramme",
+        "schéma de l'infrastructure",
+        "diagramme de composants",
+        "représentation visuelle de ce processus",
+        "fais un diagramme entité-relation",
+        "illustre comment fonctionne ce système",
+        "montre moi l'architecture en schéma",
+        "fais un schéma du RAG",
+        "schématise le fonctionnement",
+        "dessine moi ça",
+        "crée un visuel pour expliquer",
+        "diagram this architecture",
+        "draw a flowchart",
     ],
     "web_search_news": [
         # ── Événements récents ────────────────────────────────────
@@ -298,11 +333,12 @@ class ToolRetriever:
         for group in groups_needed:
             selected_names.update(TOOL_GROUPS[group])
 
-        # 4. Si coding détecté → retirer git/shell/filesystem de l'orchestrateur
-        #    Le specialist a ses propres tools — l'orchestrateur ne doit pas
-        #    pouvoir faire le travail lui-même.
+        # 4. Si coding détecté → retirer git/filesystem de l'orchestrateur
+        #    Le specialist gère lui-même les fichiers et git.
+        #    Shell (shell_run, etc.) reste disponible pour les tâches système
+        #    pures (audit disque, monitoring…) qui ne nécessitent pas le specialist.
         if "coding" in groups_needed:
-            for group in ("git", "filesystem", "shell"):
+            for group in ("git", "filesystem"):
                 for tool_name in TOOL_GROUPS.get(group, []):
                     selected_names.discard(tool_name)
 

@@ -2,15 +2,19 @@
 from __future__ import annotations
 
 import json
+import re as _re
+import uuid
 from typing import Callable, Optional
 
-from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
+from src.agents.coding.prompts import build_system_prompt
+from src.agents.coding.prompts.detector import detect_stacks
 
 # Module-level progress callback set by the streaming UI
-_progress_cb: Optional[Callable[[str, dict], None]] = None
+_progress_cb: Optional[Callable[[str, dict, Optional[dict]], Optional[dict]]] = None
 
 
-def set_progress_callback(cb: Optional[Callable[[str, dict], None]]) -> None:
+def set_progress_callback(cb: Optional[Callable[[str, dict, Optional[dict]], Optional[dict]]]) -> None:
     global _progress_cb
     _progress_cb = cb
 
@@ -22,70 +26,113 @@ def _get_coding_llm():
 
 def _get_coding_tools():
     from src.agents.coding.tools import (
-        dev_plan_create, dev_plan_step_done, dev_explain, find_git_repos, propose_file_change,  # noqa: F401
+        dev_plan_create, dev_plan_step_done, dev_explain, find_git_repos,
+        propose_file_change, browser_screenshot,  # noqa: F401
     )
     from src.agents.filesystem.tools import (
         local_find_file, local_read_file, local_list_directory,
         local_grep, local_glob,
     )
-    from src.agents.shell.tools import shell_run, shell_cd, shell_pwd, shell_ls
+    from src.agents.shell.tools import shell_run, shell_cd, shell_pwd, shell_ls, shell_kill_bg
     from src.agents.git.tools import (
         git_status, git_log, git_diff, git_suggest_commit,
         git_add, git_commit, git_checkout, git_stash,
         url_fetch,
     )
     from src.agents.memory.tools import axon_note
+    from src.agents.search.tools import web_research_report, web_search_news
+    from src.agents.excalidraw.tools import excalidraw_create
+    from src.agents.coding.asset_downloader import download_asset
     return [
         dev_plan_create, dev_plan_step_done, dev_explain,
-        find_git_repos, propose_file_change,
+        find_git_repos, propose_file_change, browser_screenshot,
         local_find_file, local_read_file, local_list_directory,
         local_grep, local_glob,
-        shell_run, shell_cd, shell_pwd, shell_ls,
+        shell_run, shell_cd, shell_pwd, shell_ls, shell_kill_bg,
         git_status, git_log, git_diff, git_suggest_commit,
         git_add, git_commit, git_checkout, git_stash,
         url_fetch,
         axon_note,
+        web_research_report, web_search_news,
+        excalidraw_create,
+        download_asset,
     ]
 
 
-_CODING_SYSTEM_PROMPT = """\
-Tu es un agent de code expert. Tu reçois une tâche précise de l'orchestrateur et tu l'exécutes.
-Réponds en français. Exécute sans demander de confirmation supplémentaire.
+_PROGRESS_TOOLS = {
+    "dev_plan_create", "dev_plan_step_done", "dev_explain", "propose_file_change", "axon_note",
+    "local_read_file", "local_grep", "local_glob", "local_find_file", "local_list_directory",
+    "shell_ls", "shell_pwd", "url_fetch", "web_research_report", "web_search_news",
+    "git_status", "git_log", "git_diff",
+}
+_SHELL_PREVIEW_TOOLS = {"shell_run", "shell_cd"}
+_MAX_ITERATIONS = 75
+_CONTEXT_CHAR_BUDGET = 150_000  # ~50k tokens — conservative to leave room for tool descriptions
 
-⚠ RÈGLE ABSOLUE : dev_plan_create() doit être TON PREMIER appel, avant tout autre outil.
 
-Workflow strict :
-1. dev_plan_create(steps=[...]) — plan de 3 à 8 étapes concrètes. Toujours en premier.
-2. find_git_repos / local_read_file / shell_run — pour analyser le projet.
-3. dev_explain(message=...) — OBLIGATOIRE après analyse, avant toute modification.
-   Explique en markdown : ce que tu as trouvé, les bugs et leur cause, ce que tu vas changer et pourquoi.
-4. dev_plan_step_done(N) — immédiatement après chaque étape terminée.
-5. propose_file_change(path, content, description) — pour chaque fichier à modifier/créer.
-   L'utilisateur peut approuver, refuser ou demander des modifications :
-   - status "proposed"           → accepté, continue
-   - status "rejected"           → ignoré, passe au fichier suivant
-   - status "needs_refinement"   → lis le champ "feedback" et rappelle propose_file_change
-                                   avec le contenu corrigé. Ne passe pas au fichier suivant.
-6. Vérification automatique après toutes les modifications (max 3 cycles) :
-   a. Lance la commande de vérification adaptée au projet :
-      - Next.js/React : `npm run build` ou `npx tsc --noEmit`
-      - Python : `python -m py_compile fichier.py` ou `pytest`
-      - Autre : adapte selon le contexte
-   b. Si erreur détectée :
-      - dev_explain("🔍 Problème détecté dans `fichier` : <erreur>.\n\nCause : <explication>.\n\nCorrection : je remplace `X` par `Y` parce que <raison>.")
-      - propose_file_change(...) pour corriger
-      - Relance la vérification
-   c. Si tout est propre :
-      - dev_explain("Vérification OK — aucune erreur détectée.")
-7. axon_note(fact="...") après toute modification significative : décision d'architecture, contrainte découverte,
-   comportement non-évident d'une API, refactoring majeur. Pas pour les changements triviaux.
-8. Retourne un résumé concis (2-3 lignes) de ce qui a été fait.
+def _compress_specialist_messages(messages: list, llm) -> list:
+    """LLM-based context compression for the specialist — same philosophy as the orchestrator's
+    'compiling' mechanism: produce a dense technical summary instead of truncating."""
 
-Pour modifier ou créer un fichier : UNIQUEMENT propose_file_change. Jamais shell_run ou redirection.
-"""
+    # Notify UI → switch to compile animation
+    if _progress_cb:
+        try:
+            _progress_cb("specialist:compress", {}, None)
+        except Exception:
+            pass
 
-_PROGRESS_TOOLS = {"dev_plan_create", "dev_plan_step_done", "dev_explain", "propose_file_change", "axon_note"}
-_MAX_ITERATIONS = 150
+    system_msg = messages[0]   # SystemMessage (specialist prompt)
+    task_msg   = messages[1]   # HumanMessage  (original task)
+    history    = messages[2:]  # everything accumulated so far
+
+    transcript_parts: list[str] = []
+    for m in history:
+        if isinstance(m, AIMessage):
+            if isinstance(m.content, str) and m.content.strip():
+                transcript_parts.append(f"[ASSISTANT]: {m.content[:3_000]}")
+            for tc in getattr(m, "tool_calls", []) or []:
+                args_str = str(tc.get("args", {}))[:800]
+                transcript_parts.append(f"[TOOL CALL] {tc.get('name')}({args_str})")
+        elif isinstance(m, ToolMessage):
+            name = getattr(m, "name", "tool") or "tool"
+            content = m.content if isinstance(m.content, str) else str(m.content)
+            transcript_parts.append(f"[TOOL RESULT] {name}: {content[:2_500]}")
+
+    transcript = "\n".join(transcript_parts)
+    # Cap transcript so the compression call itself never exceeds model limits
+    if len(transcript) > 180_000:
+        transcript = "…[début omis pour cause de longueur]\n" + transcript[-180_000:]
+
+    prompt = (
+        "Tu es un assistant de mémoire pour un agent de code actif.\n"
+        "Voici la transcription COMPLÈTE des actions effectuées jusqu'ici par l'agent.\n\n"
+        "Génère un résumé DENSE et TECHNIQUE qui lui permettra de continuer sans perte d'information.\n"
+        "Préserve ABSOLUMENT :\n"
+        "1. Le plan — étapes complétées ✓ et restantes ○ avec leurs indices\n"
+        "2. Chaque fichier lu, modifié ou créé — chemin EXACT + contenu ou diff clé\n"
+        "3. Le répertoire de travail courant (dernier shell_cd)\n"
+        "4. Commandes exécutées et leur résultat (succès / erreur + cause)\n"
+        "5. Dépendances installées, variables d'env, configs importantes\n"
+        "6. Ce qui était exactement en cours au moment de la compression\n\n"
+        f"TRANSCRIPTION :\n{transcript}\n\n"
+        "Résumé dense (chemins exacts, noms de variables, valeurs de config — pas de généralités) :"
+    )
+
+    try:
+        resp = llm.invoke([HumanMessage(content=prompt)])
+        summary_content = resp.content
+        if isinstance(summary_content, list):
+            summary_content = " ".join(
+                p.get("text", "") if isinstance(p, dict) else str(p)
+                for p in summary_content
+            )
+        summary_msg = HumanMessage(
+            content=f"[CONTEXTE COMPRESSÉ — continue la tâche]\n{summary_content}"
+        )
+        return [system_msg, task_msg, summary_msg]
+    except Exception:
+        # Fallback: keep only the last 10 messages (best-effort, never truncate content)
+        return [system_msg, task_msg] + history[-10:]
 
 
 def _vram_swap_in() -> None:
@@ -119,8 +166,6 @@ def run_coding_task(task: str) -> str:
         _vram_swap_out()
 
 
-import re as _re
-
 _MSG_REPR_RE = _re.compile(
     r'\[?\s*(?:Human|System|AI|Tool)Message\s*\(.*?\)\s*\]?',
     _re.DOTALL,
@@ -139,7 +184,6 @@ def _clean_output(content: str) -> str:
 def _extract_json_tool_call(content: str) -> dict | None:
     """Some small models output tool calls as JSON text instead of using the API.
     Detect and parse them so we can execute them properly."""
-    import json
     s = content.strip()
     # Strip markdown code fences if present
     if s.startswith("```"):
@@ -162,10 +206,38 @@ def _run(task: str) -> str:
     tool_map = {t.name: t for t in tools}
     llm_with_tools = llm.bind_tools(tools)
 
-    messages = [SystemMessage(_CODING_SYSTEM_PROMPT), HumanMessage(task)]
+    from src.agents.coding.task_enricher import enrich_task
+    enriched_task = enrich_task(task)
+
+    stacks = detect_stacks()
+    system_prompt = build_system_prompt(stacks)
+    messages = [SystemMessage(system_prompt), HumanMessage(enriched_task)]
+    _plan_complete = False
 
     for _ in range(_MAX_ITERATIONS):
-        response = llm_with_tools.invoke(messages)
+        # Compress context if it exceeds budget — same as orchestrator's "compiling"
+        total_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
+        if total_chars > _CONTEXT_CHAR_BUDGET:
+            messages = _compress_specialist_messages(messages, llm)
+
+        invoker = llm if _plan_complete else llm_with_tools
+        response = None
+        for _ in range(3):
+            try:
+                response = invoker.invoke(messages)
+                break
+            except Exception as e:
+                err = str(e).lower()
+                if any(k in err for k in ("context", "length", "token", "400", "exceed")):
+                    if len(messages) > 3:
+                        messages = _compress_specialist_messages(messages, llm)
+                        invoker = llm if _plan_complete else llm_with_tools
+                    else:
+                        return "Erreur : le contexte initial est trop volumineux pour ce modèle."
+                else:
+                    raise
+        if response is None:
+            return "Erreur : impossible d'invoquer le modèle après compression (contexte trop volumineux)."
         messages.append(response)
 
         tool_calls = response.tool_calls or []
@@ -174,7 +246,6 @@ def _run(task: str) -> str:
         if not tool_calls and response.content:
             parsed = _extract_json_tool_call(response.content)
             if parsed and parsed["name"] in tool_map:
-                import uuid
                 tool_calls = [{"name": parsed["name"], "args": parsed["args"], "id": str(uuid.uuid4())}]
             else:
                 return _clean_output(response.content) or "Tâche terminée."
@@ -182,6 +253,13 @@ def _run(task: str) -> str:
         for tc in tool_calls:
             name = tc["name"]
             args = tc.get("args", {})
+
+            # Pre-execution hook: show shell commands BEFORE they run
+            if _progress_cb and name in _SHELL_PREVIEW_TOOLS:
+                try:
+                    _progress_cb(f"{name}:before", args)
+                except Exception:
+                    pass
 
             # Execute the tool (with session cache for read-only tools)
             from src.infra.tools_cache import session_cache, CACHEABLE_TOOLS
@@ -199,16 +277,16 @@ def _run(task: str) -> str:
                 except Exception as e:
                     result = {"status": "error", "error": str(e)}
 
-            # Notify UI — skip if step was already done (no change)
-            # _progress_cb may return a dict to override the ToolMessage content
-            # (used for HITL review on propose_file_change)
-            if _progress_cb and name in _PROGRESS_TOOLS:
+            # Post-execution hook: notify UI of result
+            # For shell tools: pass result so UI can show stdout/exit_code
+            # For plan/file tools: may return an override dict (HITL)
+            if _progress_cb and (name in _PROGRESS_TOOLS or name in _SHELL_PREVIEW_TOOLS):
                 skip = (name == "dev_plan_step_done" and
                         isinstance(result, dict) and
                         result.get("status") == "already_done")
                 if not skip:
                     try:
-                        override = _progress_cb(name, args)
+                        override = _progress_cb(name, args, result)
                         if isinstance(override, dict):
                             result = override
                     except Exception:
@@ -219,5 +297,8 @@ def _run(task: str) -> str:
                 tool_call_id=tc["id"],
                 name=name,
             ))
+
+            if name == "dev_plan_step_done" and isinstance(result, dict) and result.get("remaining") == 0:
+                _plan_complete = True
 
     return "Tâche interrompue (limite d'itérations atteinte)."  # end of _run

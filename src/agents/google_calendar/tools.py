@@ -78,7 +78,7 @@ def calendar_create_event(
     end: str,
     description: Optional[str] = None,
     location: Optional[str] = None,
-    attendees: Optional[list] = None,
+    attendees: Optional[list[str]] = None,
     calendar_id: str = "primary",
 ) -> Dict[str, Any]:
     """
