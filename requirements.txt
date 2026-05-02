@@ -40,6 +40,9 @@ pypdf
 # mcp
 mcp[cli]
 
+# Headless browser (visual audit + screenshot)
+playwright
+
 # Email
 imap-client
 imap-tools
@@ -65,3 +68,6 @@ markdown
 click
 python-docx
 psutil
+
+# Translator
+langbly

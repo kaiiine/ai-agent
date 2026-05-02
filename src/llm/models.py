@@ -92,4 +92,5 @@ def make_llm_gemini():
         google_api_key=settings.gemini_api_key,
         temperature=settings.temperature,
         max_output_tokens=8192,
+        streaming=True,
     )

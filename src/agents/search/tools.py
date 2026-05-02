@@ -124,6 +124,7 @@ def web_research_report(
     # ── Fallback DuckDuckGo si Tavily renvoie trop peu de résultats ───────────
     if len(results) < 3:
         try:
+            from ddgs import DDGS
             tl = _ddg_period(days) if days > 0 else None
             ddg_raw = DDGS().text(query, max_results=max_results, timelimit=tl)
             for r in ddg_raw:

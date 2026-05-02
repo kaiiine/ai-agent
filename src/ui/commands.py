@@ -15,6 +15,8 @@ _COMMANDS = [
     ("/detach [fichier]",  "supprime une pièce jointe (ou toutes si sans argument)"),
     ("/letter",            "génère une lettre de motivation — attach ton CV d'abord, puis colle l'offre"),
     ("/upgrade",           "améliore une lettre existante — attach ton CV, colle la lettre puis l'offre"),
+    ("/fiche",             "fiche de révision HTML/CSS depuis PDF(s) — /attach tes cours d'abord"),
+    ("/exo",               "exercices interactifs HTML/JS (QCM, ouvert…) depuis PDF(s) — /attach tes cours"),
     ("/clear",             "efface l'écran et réaffiche l'en-tête"),
     ("/new",               "démarre un nouveau thread de conversation"),
     ("/history",           "liste les threads passés et permet d'en reprendre un (flèches ↑↓)"),
@@ -25,6 +27,7 @@ _COMMANDS = [
     ("/lang <fr|en>",      "force la langue de réponse"),
     ("/save",              "sauvegarde le transcript de la session"),
     ("/config",            "affiche la configuration courante"),
+    ("/purge",             "supprime les blobs d'images bloqués dans l'état du thread courant"),
     ("/undo",              "annule les dernières modifications appliquées par le coding agent"),
     ("/mode <ask|auto>",   "mode d'édition — ask (valide fichier par fichier) ou auto (écrit sans confirmation)"),
     ("/branch",            "fork le thread actuel pour explorer une autre piste"),
@@ -34,6 +37,7 @@ _COMMANDS = [
     ("Ctrl+T",             "bascule le mode plan — l'IA planifie sans écrire"),
     ("Ctrl+O",             "attacher un fichier  (= /attach)"),
     ("Ctrl+P",             "coller une image     (= /paste)"),
+    ("Ctrl+D",             "supprimer toutes les pièces jointes"),
     ("@fichier",           "injecte un fichier dans ton message — autocomplété par Tab"),
 ]
 
@@ -57,7 +61,7 @@ _CLOUD_MODELS    = [
     "kimi-k2:1t-cloud"
 ]
 _GEMINI_MODELS   = [
-    "gemini-2.0-flash",        # rapide, gratuit — recommandé
+    "gemini-3.1-flash-lite-preview",  # rapide, gratuit — recommandé
     "gemini-2.5-flash",        # plus capable, gratuit
     "gemini-2.5-pro",          # meilleur, quota limité
     "gemini-1.5-flash",        # fallback stable

@@ -22,14 +22,17 @@ _COMPACTION_BUFFER = 20_000
 _PRUNE_PROTECT     = 40_000
 _PRUNE_MINIMUM     = 12_000
 _MAX_TOOL_MSG_CHARS = 3_000
+_MAX_TOOL_ROUNDS    = 12
 
 # ── Compile callback ───────────────────────────────────────────────────────────
 _compile_callback = None
+_compressed_this_turn: bool = False
 
 
 def set_compile_callback(fn) -> None:
-    global _compile_callback
+    global _compile_callback, _compressed_this_turn
     _compile_callback = fn
+    _compressed_this_turn = False  # reset at start of each user turn
 
 
 # ── Language preference ────────────────────────────────────────────────────────
@@ -45,9 +48,31 @@ def get_lang_pref() -> str:
     return _lang_pref
 
 
+# ── Last selected tools (for /debug) ──────────────────────────────────────────
+_last_selected_tools: list[str] = []
+
+
+def get_last_selected_tools() -> list[str]:
+    return _last_selected_tools
+
+
 def _on_compress() -> None:
     if _compile_callback:
         _compile_callback()
+
+
+# ── Tool-round counter ────────────────────────────────────────────────────────
+
+def _consecutive_tool_rounds(messages: List) -> int:
+    """Count total AI→Tool rounds since the last HumanMessage (not just consecutive).
+    This catches loops where the LLM interleaves text between tool calls to reset the counter."""
+    rounds = 0
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage):
+            break
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+            rounds += 1
+    return rounds
 
 
 # ── Token estimation ───────────────────────────────────────────────────────────
@@ -106,65 +131,73 @@ def _drop_smartest(messages: List) -> List | None:
 
 
 
-def _compress_context(messages: List, llm, backend: str = "ollama_cloud") -> List:
+def _compress_context(messages: List, llm, backend: str = "ollama_cloud") -> tuple[List, List]:
+    """Summarise ALL conversation messages into a single dense HumanMessage.
+
+    Returns (compressed_messages, replaced_messages) where replaced_messages
+    are the original messages that were summarised — the caller should issue
+    RemoveMessage for each to actually persist the compression in LangGraph.
+    """
     system_msg = messages[0] if messages and isinstance(messages[0], SystemMessage) else None
-    conversation = messages[1:] if system_msg else messages
+    conversation = [m for m in messages if not isinstance(m, SystemMessage)]
 
-    protect_budget = max(_PRUNE_MINIMUM, min(_PRUNE_PROTECT, _usable_budget(backend) // 4))
-    recent: list = []
-    used = 0
-    for m in reversed(conversation):
-        cost = _estimate_tokens([m])
-        if used + cost > protect_budget and len(recent) >= 2:
-            break
-        recent.insert(0, m)
-        used += cost
+    if not conversation:
+        return messages, []
 
-    to_summarize = conversation[:len(conversation) - len(recent)]
-
-    if not to_summarize:
-        return _drop_smartest(messages) or messages
-
-    # Split: only summarize Human/AI exchanges — ToolMessages are ground truth, never paraphrase them
-    dialogue = [m for m in to_summarize if not isinstance(m, ToolMessage)]
-    tool_results = [m for m in to_summarize if isinstance(m, ToolMessage)]
-
-    excerpt = "\n".join(
-        f"{type(m).__name__}: {(m.content if isinstance(m.content, str) else str(m.content))[:600]}"
-        for m in dialogue
-        if hasattr(m, "content")
-    )
-
-    # Tool results kept verbatim (truncated) — injected as literal facts, not summarized
-    tool_verbatim = ""
-    if tool_results:
-        snippets = []
-        for m in tool_results:
+    # Build full transcript of everything
+    transcript_parts = []
+    for m in conversation:
+        content = m.content if isinstance(m.content, str) else str(m.content)
+        if isinstance(m, HumanMessage):
+            transcript_parts.append(f"[USER]: {content[:4000]}")
+        elif isinstance(m, AIMessage):
+            if content.strip():
+                transcript_parts.append(f"[ASSISTANT]: {content[:4000]}")
+            for tc in getattr(m, "tool_calls", []) or []:
+                args_str = str(tc.get("args", {}))[:1500]
+                transcript_parts.append(f"[TOOL CALL] {tc.get('name', '?')}({args_str})")
+        elif isinstance(m, ToolMessage):
             name = getattr(m, "name", "tool") or "tool"
-            content = m.content if isinstance(m.content, str) else str(m.content)
-            snippets.append(f"[{name}]: {content[:800]}")
-        tool_verbatim = (
-            "\n\nRÉSULTATS D'OUTILS (verbatim — ne pas paraphraser, reproduire exactement) :\n"
-            + "\n---\n".join(snippets)
-        )
+            transcript_parts.append(f"[TOOL RESULT] {name}: {content[:3000]}")
+
+    transcript = "\n".join(transcript_parts)
 
     try:
         prompt = (
-            "Résume ces échanges en préservant :\n"
-            "- Les décisions prises et actions effectuées\n"
-            "- L'état des tâches en cours\n"
-            "- Les fichiers et chemins mentionnés dans la conversation\n"
-            f"\nÉchanges :\n{excerpt or '(aucun échange textuel)'}"
-            f"{tool_verbatim}\n\n"
-            "Réponds UNIQUEMENT avec le résumé condensé."
+            "Tu es un assistant de mémoire pour un agent de code. "
+            "Voici la transcription COMPLÈTE d'une session à compresser.\n\n"
+            "Génère un résumé DENSE et TECHNIQUE qui permettra à l'agent de continuer "
+            "comme si de rien n'était. Préserve ABSOLUMENT :\n"
+            "1. La tâche demandée par l'utilisateur (objectif global)\n"
+            "2. Le plan d'action — étapes complétées ✓ et restantes ○\n"
+            "3. Chaque fichier lu, modifié ou créé — chemin exact + contenu clé\n"
+            "4. Le répertoire de travail courant (dernier shell_cd)\n"
+            "5. Erreurs rencontrées et solutions appliquées (ou en suspens)\n"
+            "6. Dépendances installées, commandes exécutées et leurs résultats\n"
+            "7. Choix techniques et pourquoi\n"
+            "8. Ce qui était en cours exactement au moment de la coupure\n\n"
+            f"TRANSCRIPTION COMPLÈTE :\n{transcript}\n\n"
+            "Réponds avec le résumé structuré. Chemins exacts, noms de variables, "
+            "valeurs de config — pas de généralités."
         )
         summary_response = llm.invoke([HumanMessage(content=prompt)])
+        summary_content = summary_response.content
+        if isinstance(summary_content, list):
+            summary_content = " ".join(
+                p.get("text", "") if isinstance(p, dict) else str(p)
+                for p in summary_content
+            )
         summary_msg = HumanMessage(
-            content=f"[Résumé de la conversation précédente]\n{summary_response.content}"
+            content=f"[CONTEXTE COMPRESSÉ — continue la tâche à partir d'ici]\n{summary_content}"
         )
-        return ([system_msg] if system_msg else []) + [summary_msg] + recent
+        compressed = ([system_msg] if system_msg else []) + [summary_msg]
+        return compressed, conversation
     except Exception:
-        return _drop_smartest(messages) or messages
+        # Fallback: drop oldest tool round
+        dropped = _drop_smartest(messages) or messages
+        kept_ids = {id(m) for m in dropped}
+        removed = [m for m in messages if id(m) not in kept_ids]
+        return dropped, removed
 
 
 # ── Cached ToolNode ────────────────────────────────────────────────────────────
@@ -285,34 +318,63 @@ def _chat_node_factory():
 
         last_human = next((m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), None)
         last_message = state["messages"][-1]
+        def _content_to_str(content) -> str:
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                return " ".join(
+                    p.get("text", "") if isinstance(p, dict) else str(p)
+                    for p in content
+                )
+            return str(content)
+
         if last_human:
-            query = last_human.content
+            query = _content_to_str(last_human.content)
             if len(query.split()) < 8:
-                human_msgs = [m.content for m in state["messages"] if isinstance(m, HumanMessage)]
+                human_msgs = [_content_to_str(m.content) for m in state["messages"] if isinstance(m, HumanMessage)]
                 query = " ".join(human_msgs[-3:])
         else:
-            query = last_message.content if hasattr(last_message, "content") else str(last_message)
+            query = _content_to_str(last_message.content) if hasattr(last_message, "content") else str(last_message)
         selected_tools = retriever.get(query)
+        global _last_selected_tools
+        _last_selected_tools = [t.name for t in selected_tools]
 
         # Plan mode — strip all write-capable tools
         plan_mode = _is_plan_mode()
         if plan_mode:
             selected_tools = [t for t in selected_tools if t.name not in BLOCKED_TOOLS]
 
-        llm_with_tools = factory().bind_tools(selected_tools)
+        # Tool-round cap — force text response after _MAX_TOOL_ROUNDS consecutive rounds
+        force_text = _consecutive_tool_rounds(state["messages"]) >= _MAX_TOOL_ROUNDS
+        if force_text:
+            _console.print(f"[dim]  ↩  {_MAX_TOOL_ROUNDS} rounds atteints — synthèse forcée[/dim]")
+            llm_with_tools = factory()
+        else:
+            llm_with_tools = factory().bind_tools(selected_tools)
 
         messages = state["messages"]
         today = datetime.now().strftime("%Y-%m-%d")
         messages = _ensure_system_prompt(messages, selected_tools, today, plan_mode=plan_mode)
 
-        # Proactive compression before calling the LLM
+        # Proactive compression before calling the LLM (once per user turn max)
         working = messages
-        if _should_compress(working, backend):
+        global _compressed_this_turn
+        _state_removals: list = []   # original msgs replaced by summary → RemoveMessage
+        _summary_msg = None          # the summary HumanMessage to persist
+
+        if _should_compress(working, backend) and not _compressed_this_turn:
+            _compressed_this_turn = True
             _console.print("[dim]  ↩  contexte chargé — compression proactive…[/dim]")
             _on_compress()
             plain_llm = factory()
             working = _cap_tool_messages(working)
-            working = _compress_context(working, plain_llm, backend)
+            working, _state_removals = _compress_context(working, plain_llm, backend)
+            # The summary msg is the first HumanMessage in the compressed list
+            _summary_msg = next(
+                (m for m in working if isinstance(m, HumanMessage)
+                 and "[CONTEXTE COMPRESSÉ" in str(m.content)),
+                None,
+            )
 
         capped = False
         compressed = False
@@ -340,9 +402,17 @@ def _chat_node_factory():
 
                 elif not compressed:
                     compressed = True
-                    _on_compress()
+                    if not _compressed_this_turn:
+                        _compressed_this_turn = True
+                        _on_compress()
                     plain_llm = factory()
-                    working = _compress_context(working, plain_llm, backend)
+                    working, removed = _compress_context(working, plain_llm, backend)
+                    _state_removals.extend(r for r in removed if r not in _state_removals)
+                    _summary_msg = next(
+                        (m for m in working if isinstance(m, HumanMessage)
+                         and "[CONTEXTE COMPRESSÉ" in str(m.content)),
+                        _summary_msg,
+                    )
                     _console.print("[dim]  ↩  contexte compressé — reprise…[/dim]")
 
                 else:
@@ -352,7 +422,16 @@ def _chat_node_factory():
                     working = reduced
                     _console.print(f"[dim]  ↩  drop tool round ({len(working)} messages restants)…[/dim]")
 
-        return {"messages": [response]}
+        # Persist compression to LangGraph state so subsequent chatbot calls
+        # start with the compressed history, not the original bloated one.
+        from langchain_core.messages import RemoveMessage
+        result: list = []
+        if _state_removals:
+            result += [RemoveMessage(id=m.id) for m in _state_removals if getattr(m, "id", None)]
+            if _summary_msg:
+                result.append(_summary_msg)
+        result.append(response)
+        return {"messages": result}
 
     return chatbot, tools
 

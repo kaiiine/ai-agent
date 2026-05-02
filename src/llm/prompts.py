@@ -66,8 +66,9 @@ Confirmation avant : rm, git reset --hard, git push --force, suppression.\
 
 _CODING = """\
 ━━ DÉVELOPPEMENT ━━
-Toute tâche de code → run_coding_agent(task="...") UNIQUEMENT. Jamais les outils de code directement.
-Décris précisément (projet + objectif). Sous-tâches indépendantes → appels parallèles.
+Modification de code, bug, refactoring, nouvelle fonctionnalité → run_coding_agent(task="...") UNIQUEMENT.
+Commandes shell simples (audit disque, monitoring, scripts ponctuels) → shell_run directement.
+Décris précisément la tâche. Sous-tâches indépendantes → appels parallèles.
 Résultat reçu = tâche terminée. Ne rappelle jamais pour la même demande. Résume en 2-3 lignes.\
 """
 
@@ -95,6 +96,23 @@ Corps en Markdown. Min. 3-4 paragraphes : salutation + accroche → corps détai
 Ton naturel, chaleureux, direct. Pas de "N'hésite pas". Développe chaque idée complètement.\
 """
 
+
+_EXCALIDRAW = """\
+━━ DIAGRAMMES EXCALIDRAW ━━
+Utilise excalidraw_create dès que l'utilisateur demande un schéma, diagramme, architecture, \
+flowchart, mind map, séquence ou toute représentation visuelle.
+Génère des diagrammes COMPLETS et SOIGNÉS — pas des squelettes minimalistes.
+Palette dark par défaut : bg #1e1e2e, boîtes stroke #7c3aed fill #2d1b69, \
+texte #e2e8f0, flèches #a78bfa.
+Aligne sur grille 20px. Espace généreux entre éléments (≥ 40px). \
+Labels courts et précis sur chaque boîte.
+
+INTÉGRATION DANS UN SITE WEB :
+• Passe export_svg_to="<project>/public/diagrams/<name>.svg" pour exporter un SVG statique.
+• Le tool retourne embed_snippet avec le tag <Image> Next.js prêt à l'emploi.
+• Copie le snippet dans le composant React avec propose_file_change.\
+"""
+
 _MEMORY = """\
 ━━ MÉMOIRE PROJET ━━
 Quand tu découvres un fait non-évident sur le projet ou fais un changement important : \
@@ -102,6 +120,25 @@ appelle axon_note(fact="...") pour le persister. \
 Exemples : décision d'architecture, comportement surprenant d'une API, contrainte technique, \
 refactoring majeur effectué. Ne note pas les évidences — seulement ce qu'un futur thread \
 ne pourrait pas deviner en lisant le code.\
+"""
+
+_STUDY = """\
+━━ FICHES & EXERCICES ━━
+Quand l'utilisateur demande une fiche de révision, un résumé de cours, des exercices ou un QCM depuis un PDF ou contenu fourni :
+1. Génère le HTML complet en une seule fois (CSS embarqué, JS vanilla, aucune dépendance externe)
+2. Appelle save_study_file(html="...", file_type="fiche"|"exo", filename="<sujet>")
+
+DESIGN OBLIGATOIRE — DA Axon Slate Glass (fiches) :
+Thème dark/light via CSS custom properties. LIGHT par défaut (html sans classe). La classe .dark active le dark. Toggle bouton header "◑ Sombre" / "☀ Clair".
+Dark : --bg #0d1117, gradient slate sombre · Light : --bg #f0e6d0, gradient parchemin chaud
+--accent : #f59e0b dark / #b45309 light · --text : #e2d9c8 dark / #292010 light
+Glassmorphism sur toutes les cards : background var(--surface) · backdrop-filter blur(16px) · border 1px solid var(--surface-border)
+Cards sémantiques : border-left 3px + background var(--concept-bg/formula-bg/example-bg/danger-bg)
+ANTI scroll-x : jamais de min-width sur tables · div.table-wrapper overflow-x auto · grids auto-fit minmax(160px,1fr)
+
+Fiche : page unique linéaire (pas de tabs). Header sticky + bouton Imprimer. Couvre TOUTES les notions : Chiffres clés → Concepts/Définitions → Formules → Chapitres complets → Distinctions/Pièges → Synthèse tableau. Éléments interactifs (accordéons, flip cards) bienvenus si pertinents.
+
+Exercices : QCM feedback immédiat + explication, questions ouvertes révélation, barre de progression thin accent, score final, navigation, bouton Rejouer.\
 """
 
 _PLAN_MODE = """\
@@ -124,8 +161,12 @@ def _git_root(start: Path) -> Path | None:
 
 
 def _load_axon_context() -> str:
-    """Look for AXON.md from cwd upward to the git root. Return its content (≤3000 chars)."""
-    cwd = Path.cwd()
+    """Look for AXON.md from the shell CWD upward to the git root."""
+    try:
+        from src.agents.shell.tools import get_cwd
+        cwd = get_cwd()
+    except Exception:
+        cwd = Path.cwd()
     for directory in [cwd, *cwd.parents]:
         candidate = directory / "AXON.md"
         if candidate.is_file():
@@ -140,8 +181,13 @@ def _load_axon_context() -> str:
 
 
 def _load_axon_memory() -> str:
-    """Load .axon/memory.md from the git root. Return its content (≤2000 chars)."""
-    root = _git_root(Path.cwd())
+    """Load .axon/memory.md from the git root of the shell CWD."""
+    try:
+        from src.agents.shell.tools import get_cwd
+        cwd = get_cwd()
+    except Exception:
+        cwd = Path.cwd()
+    root = _git_root(cwd)
     if root is None:
         return ""
     p = root / ".axon" / "memory.md"
@@ -198,6 +244,7 @@ def build_system_prompt(
         parts.append(_SHELL)
     if coding_mode:
         parts.append(_CODING)
+
     if "axon_note" in t:
         parts.append(_MEMORY)
     if any(x.startswith("slack_") for x in t):
@@ -208,6 +255,10 @@ def build_system_prompt(
         parts.append(_JIRA)
     if any(x.startswith("gmail_") for x in t):
         parts.append(_EMAIL)
+    if "excalidraw_create" in t:
+        parts.append(_EXCALIDRAW)
+    if "save_study_file" in t:
+        parts.append(_STUDY)
 
     axon_ctx = _load_axon_context()
     if axon_ctx:
