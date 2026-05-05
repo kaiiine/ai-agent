@@ -28,7 +28,7 @@ from src.agents.system.tools import (
 )
 from src.agents.arxiv.tools import arxiv_search, arxiv_get_paper
 from src.agents.memory.tools import axon_note
-from src.agents.excalidraw.tools import excalidraw_create
+from src.agents.mermaid.tools import mermaid_diagram
 from src.agents.study.tools import save_study_file
 from src.agents.jira.tools import (
     jira_get_my_issues, jira_get_issue, jira_search_issues,
@@ -182,7 +182,7 @@ def build_all_tools() -> List[BaseTool]:
         # === MÉMOIRE PROJET ===
         axon_note,
         # === DIAGRAMMES ===
-        excalidraw_create,
+        mermaid_diagram,
         # === ÉTUDE ===
         save_study_file,
     ]

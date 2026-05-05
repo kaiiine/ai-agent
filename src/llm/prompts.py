@@ -97,20 +97,31 @@ Ton naturel, chaleureux, direct. Pas de "N'hésite pas". Développe chaque idée
 """
 
 
-_EXCALIDRAW = """\
-━━ DIAGRAMMES EXCALIDRAW ━━
-Utilise excalidraw_create dès que l'utilisateur demande un schéma, diagramme, architecture, \
-flowchart, mind map, séquence ou toute représentation visuelle.
-Génère des diagrammes COMPLETS et SOIGNÉS — pas des squelettes minimalistes.
-Palette dark par défaut : bg #1e1e2e, boîtes stroke #7c3aed fill #2d1b69, \
-texte #e2e8f0, flèches #a78bfa.
-Aligne sur grille 20px. Espace généreux entre éléments (≥ 40px). \
-Labels courts et précis sur chaque boîte.
+_MERMAID = """\
+━━ DIAGRAMMES MERMAID ━━
+Utilise mermaid_diagram dès que l'utilisateur demande un schéma, diagramme, architecture, \
+flowchart, mindmap, séquence, graphe ou toute représentation visuelle.
+Mermaid calcule le layout automatiquement — tu n'as JAMAIS à calculer des coordonnées.
 
-INTÉGRATION DANS UN SITE WEB :
-• Passe export_svg_to="<project>/public/diagrams/<name>.svg" pour exporter un SVG statique.
-• Le tool retourne embed_snippet avec le tag <Image> Next.js prêt à l'emploi.
-• Copie le snippet dans le composant React avec propose_file_change.\
+TYPES DISPONIBLES — choisis le plus adapté :
+  graph TD / graph LR   → flowchart top-down ou left-right
+  sequenceDiagram       → échanges entre acteurs (API, microservices, auth flows)
+  classDiagram          → modèle objet, relations entre entités
+  erDiagram             → schéma de base de données
+  mindmap               → brainstorming, arborescence
+  gantt                 → planning, roadmap
+  C4Context             → architecture système (niveau contexte)
+  C4Container           → architecture système (niveau conteneurs)
+
+RÈGLES DE STYLE :
+• Commence TOUJOURS par : %%{init: {"theme": "dark"}}%%
+• Labels courts et clairs — évite les phrases longues dans les nœuds.
+• Utilise des sous-graphes (subgraph) pour grouper les composants liés.
+• Pour les flowcharts : préfère graph LR pour les pipelines horizontaux.
+
+INTÉGRATION SITE WEB :
+  export_to="<projet>/public/diagrams/<nom>.html" → fichier HTML autonome prêt à intégrer.
+  Le tool retourne aussi un snippet HTML et un composant React/Next.js prêts à l'emploi.\
 """
 
 _MEMORY = """\
@@ -255,8 +266,8 @@ def build_system_prompt(
         parts.append(_JIRA)
     if any(x.startswith("gmail_") for x in t):
         parts.append(_EMAIL)
-    if "excalidraw_create" in t:
-        parts.append(_EXCALIDRAW)
+    if "mermaid_diagram" in t:
+        parts.append(_MERMAID)
     if "save_study_file" in t:
         parts.append(_STUDY)
 
