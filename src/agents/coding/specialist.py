@@ -41,7 +41,7 @@ def _get_coding_tools():
     )
     from src.agents.memory.tools import axon_note
     from src.agents.search.tools import web_research_report, web_search_news
-    from src.agents.excalidraw.tools import excalidraw_create
+    from src.agents.mermaid.tools import mermaid_diagram
     from src.agents.coding.asset_downloader import download_asset
     return [
         dev_plan_create, dev_plan_step_done, dev_explain,
@@ -54,7 +54,7 @@ def _get_coding_tools():
         url_fetch,
         axon_note,
         web_research_report, web_search_news,
-        excalidraw_create,
+        mermaid_diagram,
         download_asset,
     ]
 

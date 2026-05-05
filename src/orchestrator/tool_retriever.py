@@ -69,7 +69,7 @@ TOOL_GROUPS: dict[str, list[str]] = {
         "get_weather_by_city",
     ],
     "diagrams": [
-        "excalidraw_create",
+        "mermaid_diagram",
     ],
     "memory": [
         "axon_note",
@@ -228,7 +228,7 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "importer des tâches en masse dans jira",
         "créer un backlog complet dans jira",
     ],
-    "excalidraw_create": [
+    "mermaid_diagram": [
         "schématise moi quelque chose",
         "fais moi un schéma de ce concept",
         "crée un diagramme de l'architecture",
