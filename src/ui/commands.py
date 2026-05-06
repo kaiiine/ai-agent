@@ -5,6 +5,8 @@ from rich.panel import Panel
 from .panels import config_table, command_panel, banner, _BOX
 from .transcript import save_transcript
 from .config import SessionConfig
+from src.infra.checkpoint import load_thread_cwd, save_thread_cwd, save_last_thread
+from src.agents.shell.tools import get_cwd, set_cwd
 
 debug_state = {"enabled": False}
 
@@ -217,6 +219,9 @@ def _handle_history(cfg: SessionConfig, state: dict, console) -> None:
         cfg.thread_id = chosen
         state["messages"] = []
         save_last_thread(chosen)
+        saved_cwd = load_thread_cwd(chosen)
+        if saved_cwd:
+            set_cwd(saved_cwd)
 
         # Affiche les derniers messages du thread repris
         if console:
@@ -267,7 +272,6 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
     if cmd == "/new":
         cfg.thread_id = str(uuid.uuid4())[:8]
         state["messages"] = []
-        from src.infra.checkpoint import save_last_thread
         save_last_thread(cfg.thread_id)
         return command_panel(f"nouveau thread : {cfg.thread_id}")
 
@@ -358,7 +362,6 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         return command_panel("mode invalide. options : ask · auto", error=True)
 
     if cmd == "/branch":
-        from src.infra.checkpoint import save_last_thread
         old_thread = cfg.thread_id
         new_thread = str(uuid.uuid4())[:8]
 
@@ -377,6 +380,7 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         cfg.thread_id = new_thread
         state["messages"] = []
         save_last_thread(new_thread)
+        save_thread_cwd(new_thread, str(get_cwd()))
         return command_panel(f"branche créée : {old_thread[:8]} → {new_thread}")
 
     if cmd == "/undo":

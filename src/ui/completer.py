@@ -1,17 +1,6 @@
-"""Prompt-toolkit completer for Axon.
-
-Two completion contexts:
-  /command   — slash commands with description in meta column
-  @filepath  — fuzzy file search over git-tracked files (case-insensitive)
-
-Second-level completions:
-  /backend <tab>  → groq · ollama · ollama_cloud · gemini
-  /lang    <tab>  → fr · en · auto
-  /mode    <tab>  → ask · auto
-  /model   <tab>  → models for the current active backend
-"""
 from __future__ import annotations
 
+import subprocess
 import time
 from pathlib import Path
 
@@ -49,25 +38,29 @@ _SUBCOMMANDS: dict[str, list[str]] = {
     "/mode":    ["ask", "auto"],
 }
 
-# ── Git file cache (refreshed every 5 s to avoid subprocess spam) ─────────────
+# ── File cache for @ completion (invalidated on cwd change or TTL) ────────────
 _file_cache: list[str] = []
 _file_cache_ts: float = 0.0
+_file_cache_cwd: str = ""
 _CACHE_TTL = 5.0
+
+_FS_EXCLUDE = {
+    "node_modules", ".git", ".next", "dist", "build",
+    "__pycache__", ".venv", "venv", ".mypy_cache", "coverage",
+}
 
 
 class SlashCompleter(Completer):
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
 
-        # ── @mention completion ───────────────────────────────────────────────
         at_idx = text.rfind("@")
         if at_idx != -1 and (at_idx == 0 or text[at_idx - 1] in " \t"):
             query = text[at_idx + 1:]
-            if " " not in query:  # still typing the filename
+            if " " not in query:
                 yield from self._at_completions(query)
                 return
 
-        # ── /command completion (only if text starts with /) ──────────────────
         if not text.startswith("/"):
             return
 
@@ -75,7 +68,6 @@ class SlashCompleter(Completer):
         cmd = parts[0]
 
         if len(parts) == 2:
-            # Second-level: /backend g → groq, /model → backend model list
             sub = parts[1]
             options = _SUBCOMMANDS.get(cmd) or (self._model_options() if cmd == "/model" else [])
             for opt in options:
@@ -85,45 +77,46 @@ class SlashCompleter(Completer):
 
         for full_cmd, desc in _COMMANDS:
             if full_cmd.startswith(cmd):
-                yield Completion(
-                    full_cmd,
-                    start_position=-len(cmd),
-                    display_meta=desc,
-                )
-
-    # ── Helpers ───────────────────────────────────────────────────────────────
+                yield Completion(full_cmd, start_position=-len(cmd), display_meta=desc)
 
     def _at_completions(self, query: str):
-        """Yield Completion objects for @<query> — fuzzy substring match on git files."""
         ql = query.lower()
-        for filepath in self._git_files():
+        for filepath in self._files():
             if ql in filepath.lower():
-                name = Path(filepath).name
                 yield Completion(
                     filepath,
                     start_position=-len(query),
-                    display=f"  {name}",
+                    display=f"  {Path(filepath).name}",
                     display_meta=filepath,
                 )
 
-    def _git_files(self) -> list[str]:
-        global _file_cache, _file_cache_ts
-        now = time.monotonic()
-        if now - _file_cache_ts < _CACHE_TTL:
-            return _file_cache
+    def _files(self) -> list[str]:
+        global _file_cache, _file_cache_ts, _file_cache_cwd
         try:
-            import subprocess
             from src.agents.shell.tools import get_cwd
             cwd = str(get_cwd())
-            r = subprocess.run(
-                ["git", "ls-files"],
-                capture_output=True, text=True, timeout=5,
-                cwd=cwd,
-            )
-            _file_cache = r.stdout.strip().splitlines()
-            _file_cache_ts = now
         except Exception:
-            pass
+            cwd = ""
+        now = time.monotonic()
+        if cwd == _file_cache_cwd and now - _file_cache_ts < _CACHE_TTL:
+            return _file_cache
+        base = Path(cwd) if cwd else Path.cwd()
+        try:
+            r = subprocess.run(
+                ["git", "ls-files"], capture_output=True, text=True, timeout=5, cwd=str(base)
+            )
+            files = r.stdout.strip().splitlines()
+            if not files:
+                files = [
+                    str(p.relative_to(base))
+                    for p in base.rglob("*")
+                    if p.is_file() and not any(x in _FS_EXCLUDE for x in p.parts)
+                ]
+        except Exception:
+            files = []
+        _file_cache = files
+        _file_cache_ts = now
+        _file_cache_cwd = cwd
         return _file_cache
 
     def _model_options(self) -> list[str]:
