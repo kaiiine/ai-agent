@@ -14,6 +14,13 @@ _bg_procs: dict[str, subprocess.Popen] = {}  # label → processus background ac
 def get_cwd() -> Path:
     return _cwd
 
+
+def set_cwd(path: str | Path) -> None:
+    global _cwd
+    p = Path(path).expanduser().resolve()
+    if p.is_dir():
+        _cwd = p
+
 # RTK — proxy CLI qui comprime les outputs pour économiser les tokens.
 # Détecté une fois au chargement. Si absent → commandes brutes.
 _RTK: str | None = shutil.which("rtk")

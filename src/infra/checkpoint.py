@@ -9,6 +9,7 @@ Checkpointer SQLite persistant pour LangGraph.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -18,9 +19,10 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 
 # ── Répertoire de données Axon ─────────────────────────────────────────────────
-_AXON_DIR = Path.home() / ".axon"
-_DB_PATH   = _AXON_DIR / "memory.db"
-_LAST_FILE = _AXON_DIR / "last_thread"
+_AXON_DIR   = Path.home() / ".axon"
+_DB_PATH    = _AXON_DIR / "memory.db"
+_LAST_FILE  = _AXON_DIR / "last_thread"
+_CWD_FILE   = _AXON_DIR / "thread_cwds.json"
 
 _AXON_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -46,6 +48,29 @@ def load_last_thread() -> Optional[str]:
         tid = _LAST_FILE.read_text(encoding="utf-8").strip()
         return tid or None
     return None
+
+
+# ── Persistance du cwd par thread ─────────────────────────────────────────────
+
+def save_thread_cwd(thread_id: str, cwd: str) -> None:
+    data: dict = {}
+    if _CWD_FILE.exists():
+        try:
+            data = json.loads(_CWD_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    data[thread_id] = cwd
+    _CWD_FILE.write_text(json.dumps(data), encoding="utf-8")
+
+
+def load_thread_cwd(thread_id: str) -> Optional[str]:
+    if not _CWD_FILE.exists():
+        return None
+    try:
+        data = json.loads(_CWD_FILE.read_text(encoding="utf-8"))
+        return data.get(thread_id)
+    except Exception:
+        return None
 
 
 # ── Listing des threads ────────────────────────────────────────────────────────

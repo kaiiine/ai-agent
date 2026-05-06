@@ -11,7 +11,9 @@ from src.ui.panels import banner, command_panel, ACCENT, _BOX, _BORDER
 from src.ui.streaming import stream_once
 from src.infra.checkpoint import (
     load_last_thread, save_last_thread, get_recent_messages,
+    load_thread_cwd, save_thread_cwd,
 )
+from src.agents.shell.tools import get_cwd, set_cwd
 
 load_dotenv()
 console = Console(highlight=True, emoji=True)
@@ -62,6 +64,9 @@ def run_cli():
     last = load_last_thread()
     if last:
         cfg.thread_id = last
+        saved_cwd = load_thread_cwd(last)
+        if saved_cwd:
+            set_cwd(saved_cwd)
 
     console.clear()
     console.print(banner())
@@ -72,10 +77,12 @@ def run_cli():
     try:
         while True:
             stream_once(graph, state, cfg)
-            # Persiste le thread actif après chaque échange
+            # Persiste le thread actif et le cwd courant après chaque échange
             save_last_thread(cfg.thread_id)
+            save_thread_cwd(cfg.thread_id, str(get_cwd()))
     except KeyboardInterrupt:
         save_last_thread(cfg.thread_id)
+        save_thread_cwd(cfg.thread_id, str(get_cwd()))
         console.print()
         console.print(Rule("à bientôt", characters="·", style=f"dim {ACCENT}"))
         console.print()
