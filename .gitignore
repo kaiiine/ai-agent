@@ -210,3 +210,8 @@ __marimo__/
 credentials.json
 gcp-oauth.keys.json
 models/
+
+# Local/personal directories
+.axon/
+.claude/
+.vscode/
