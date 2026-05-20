@@ -8,7 +8,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-blue?style=flat-square)
 ![Ollama](https://img.shields.io/badge/Ollama-local%20%2B%20cloud-black?style=flat-square)
 ![Gemini](https://img.shields.io/badge/Gemini-2.0%20Flash-4285F4?style=flat-square&logo=google)
-![Tests](https://img.shields.io/badge/tests-363%20passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-392%20passing-brightgreen?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 </div>
@@ -110,7 +110,10 @@ dev_plan_create → analysis → dev_explain → propose_file_change
 - **`/mode ask`** (default): approval required for each file
 - **`/mode auto`**: writes directly without confirmation
 - **`/undo`**: restores all files modified since the last round (automatic snapshot)
-- Auto language detection: TypeScript/React, Python, Go, Rust, Java, Node.js, systems
+- **Per-stack prompts**: Next.js · Angular · Vue · Svelte · Three.js · Python · Rust · Go · Node.js · Java · Systems — loaded automatically by manifest detection or via `load_skill()`
+- **Task enrichment**: repos and files mentioned in the task are pre-read before the LLM starts — no wasted round-trips
+- **Semantic tool selection**: only the 6 most relevant tools are exposed per turn (Chroma embeddings), with full group expansion (e.g. `git_status` → whole git group)
+- **Configurable local context**: `CODING_NUM_CTX_LOCAL=16384` (default) — tune to your GPU VRAM
 
 ### Study sheets & exercises
 
@@ -160,13 +163,27 @@ Switches to read-only — all write tools are removed. The LLM analyses, reasons
 
 `@` triggers fuzzy autocomplete over all git-tracked files. On submit, the file is read and injected into the message.
 
-### Excalidraw diagrams
+### Mermaid diagrams
 
 ```
 › Create an architecture diagram of my FastAPI app with Redis and PostgreSQL
 ```
 
-Generates architecture diagrams, flowcharts, mind maps, UML sequences… with optional SVG export for web integration.
+Generates flowcharts, sequence diagrams, class diagrams, ER diagrams, C4 containers… rendered as a self-contained HTML file and exported to `public/diagrams/`.
+
+Supported types: `graph LR/TD` · `sequenceDiagram` · `classDiagram` · `erDiagram` · `C4Container`
+
+### Jupyter notebooks
+
+```
+› Go to my notebook analysis.ipynb and fill in the TODO cells
+```
+
+Native notebook editing — reads cells with indices, edits cell-by-cell with HITL review, inserts new cells, runs the notebook and checks outputs. Never corrupts `.ipynb` JSON.
+
+- `notebook_read` · `notebook_edit_cell` · `notebook_insert_cell` · `notebook_run`
+- Automatic `.venv` dependency resolution before execution
+- HITL diff review per cell (same approve/reject/refine flow as file changes)
 
 ---
 
@@ -182,7 +199,8 @@ Generates architecture diagrams, flowcharts, mind maps, UML sequences… with op
 | **Slack** | read channels/DMs, send (HITL), search |
 | **Jira** | read, create, transitions, bulk (Epic→Story→Task), workload |
 | **Code** | coding specialist HITL, plan, propose_file_change, download_asset |
-| **Visuals** | Excalidraw (diagrams), `/fiche`, `/exo` (HTML sheets) |
+| **Notebooks** | notebook_read, notebook_edit_cell, notebook_insert_cell, notebook_run |
+| **Visuals** | Mermaid (diagrams → HTML), `/fiche`, `/exo` (HTML sheets) |
 
 ---
 
@@ -267,12 +285,18 @@ ollama:
 groq:
   model: "llama-3.3-70b-versatile"
 
-coding_model: "gemini-2.5-flash"   # Model for the coding specialist
+coding_model: "qwen3-coder-next:cloud"  # coding specialist (ollama_cloud)
+
+gemini:
+  model: "gemini-2.5-flash"             # orchestrator
+  coding_model: "gemini-2.5-flash"      # coding specialist (separate quota)
 
 search:
   backend: "tavily"
   max_results: 10
 ```
+
+`CODING_NUM_CTX_LOCAL` (`.env`) — KV cache size for local Ollama coding model. Default `16384` (~3 GB VRAM). Increase to `32768` if your GPU has headroom.
 
 ### Ollama models (if using local backend)
 
@@ -306,8 +330,10 @@ ai-agent/
     ├── llm/                       # LLM factories, adaptive prompt
     ├── infra/                     # Settings, cache, redactor, browser, auth
     └── agents/
-        ├── coding/                # HITL specialist, propose_file_change, per-language prompts
-        ├── excalidraw/            # Diagram generation
+        ├── coding/                # HITL specialist, propose_file_change, per-stack prompts
+        │   └── prompts/           # nextjs · angular · vue · svelte · threedee · python · …
+        ├── mermaid/               # Diagram generation (flowchart, sequence, ER, C4…)
+        ├── notebook/              # Jupyter HITL editing (read/edit/insert/run)
         ├── study/                 # HTML study sheets & exercises
         ├── gmail/ · google_calendar/ · google_drive/ · google_doc/ · google_slide/
         ├── jira/ · slack/

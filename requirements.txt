@@ -2,6 +2,7 @@ ollama
 ipykernel
 nbconvert>=7.0
 python-dotenv
+pyyaml
 pydantic
 pydantic-settings
 langchain
@@ -9,6 +10,7 @@ langchain-community
 langchain-ollama
 langchain-groq
 langchain-tavily
+langchain-mistralai
 requests
 openai
 googlemaps
