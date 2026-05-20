@@ -77,12 +77,14 @@ def save_study_file(
             }
             llm = _factories.get(settings.llm_backend, make_llm_ollama_cloud)()
 
+            from src.llm.prompts import _LANG_INSTRUCTIONS
+            lang_instruction = _LANG_INSTRUCTIONS.get("fr", "")
             if file_type == "exo":
                 from src.ui.streaming import _EXO_PROMPT
-                prompt = _EXO_PROMPT.format(content=content_text, type_exo="Mélange de QCM (60%) et questions ouvertes (40%).")
+                prompt = _EXO_PROMPT.format(content=content_text, type_exo="Mélange de QCM (60%) et questions ouvertes (40%).", lang_instruction=lang_instruction)
             else:
                 from src.ui.streaming import _FICHE_PROMPT
-                prompt = _FICHE_PROMPT.format(content=content_text)
+                prompt = _FICHE_PROMPT.format(content=content_text, lang_instruction=lang_instruction)
 
             response = llm.invoke([HumanMessage(content=prompt)])
             html = response.content if isinstance(response.content, str) else str(response.content)

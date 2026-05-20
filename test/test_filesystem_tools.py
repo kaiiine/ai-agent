@@ -129,9 +129,9 @@ def test_list_directory_dirs_before_files(tmp_path):
 
 def test_list_directory_not_found(tmp_path):
     from src.agents.filesystem.tools import local_list_directory
-    # Provide both path (nonexistent) and no name — tool returns not_found only when target is None
-    result = local_list_directory.invoke({"path": str(tmp_path / "does_not_exist"), "name": ""})
-    # The path doesn't exist as a dir, and no name search → not_found
+    from unittest.mock import patch
+    with patch("src.agents.filesystem.tools._search_dirs", return_value=[]):
+        result = local_list_directory.invoke({"path": str(tmp_path / "does_not_exist"), "name": ""})
     assert result["status"] in ("not_found", "error")
 
 
