@@ -266,7 +266,7 @@ def test_build_message_large_text_attachment_uses_path(tmp_path):
     content_str = result["content"]
     assert source in content_str
     assert large_content not in content_str
-    assert "save_study_file" in content_str
+    assert "local_read_file" in content_str
 
 
 def test_build_message_with_image():
