@@ -136,7 +136,7 @@ def _full_prompt(*stacks: str) -> str:
 def test_system_prompt_contains_dev_plan_first_rule():
     prompt = _full_prompt()
     assert "dev_plan_create" in prompt
-    assert "PREMIER" in prompt or "FIRST" in prompt
+    assert "OBLIGATOIRE" in prompt
 
 
 def test_system_prompt_mentions_propose_file_change():
@@ -150,11 +150,6 @@ def test_system_prompt_mentions_browser_screenshot():
 def test_system_prompt_mentions_web_research():
     assert "web_research_report" in _full_prompt()
 
-
-def test_system_prompt_mentions_audit_issue_types():
-    prompt = _full_prompt("frontend")
-    for issue_type in ("text_cropped", "not_centered", "empty_section", "broken_image"):
-        assert issue_type in prompt, f"Prompt should guide the LLM on how to fix '{issue_type}'"
 
 
 def test_system_prompt_mentions_design_system_first():

@@ -18,7 +18,8 @@ class Settings(BaseSettings):
 
     # Coding specialist (delegated coding tasks)
     coding_model: str = "qwen3-coder-next:cloud"
-    coding_model_local: str = "qwen2.5-coder:14b"
+    coding_model_local: str = "qwen2.5-coder:7b"
+    coding_num_ctx_local: int = 16_384   # KV cache local — ajuster selon VRAM GPU (.env: CODING_NUM_CTX_LOCAL=8192)
     ollama_api_key: str | None = None
 
     # GROQ
@@ -28,6 +29,7 @@ class Settings(BaseSettings):
     # Gemini
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
+    gemini_coding_model: str = "gemini-2.5-flash"  # specialist can use a stronger model
 
     # Search
     search_backend: str = "tavily"
@@ -92,6 +94,8 @@ def _merge_yaml_into_settings() -> Settings:
         groq_model=yml.get("groq", {}).get("model", "openai/gpt-oss-20b"),
         llm_backend=yml.get("llm_backend", "ollama_cloud"),
         coding_model=yml.get("coding_model", "qwen3-coder-next:cloud"),
+        gemini_model=yml.get("gemini", {}).get("model", "gemini-2.5-flash"),
+        gemini_coding_model=yml.get("gemini", {}).get("coding_model", "gemini-2.5-flash"),
     )
 
 

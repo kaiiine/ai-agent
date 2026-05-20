@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/kaine/Documents/projets-perso/site-vitrine-agent/**)",
+      "Read(//home/kaine/Documents/projets-perso/site-vitrine-agent/src/app/**)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('src/ui/streaming.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Read(//home/kaine/Documents/projets-perso/axon-showcase-website/**)"
+    ]
+  }
+}

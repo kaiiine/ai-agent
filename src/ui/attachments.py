@@ -227,12 +227,11 @@ def build_message_with_attachments(text: str, attachments: List[Attachment]) -> 
         else:
             lang = Path(a.name).suffix.lstrip(".")
             if len(a.content) > _ORCHESTRATOR_INJECT:
-                # Fichier trop grand pour être injecté : donne le chemin au LLM
+                # File too large to inject: give the LLM the local path
                 text_parts.append(
-                    f"\n\n---\n**Fichier joint : {a.name}** (trop grand pour injection directe)\n"
-                    f"Chemin : `{a.source_path}`\n"
-                    f"Taille : {a.size_hint} — utilise save_study_file(pdf_path=\"{a.source_path}\") "
-                    f"pour générer une fiche ou des exercices, ou local_read_file pour lire par sections."
+                    f"\n\n---\n**Fichier joint : {a.name}** — LOCAL file on disk (do NOT search on Google Drive)\n"
+                    f"Absolute path: `{a.source_path}` · Size: {a.size_hint}\n"
+                    f"→ Use local_read_file(path=\"{a.source_path}\") to read the content in sections."
                 )
             else:
                 text_parts.append(

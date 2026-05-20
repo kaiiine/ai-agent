@@ -40,7 +40,7 @@ TOOL_GROUPS: dict[str, list[str]] = {
         "google_docs_create", "google_docs_update", "google_docs_read",
     ],
     "slides": [
-        "create_presentation", "add_slide",
+        "create_presentation", "create_slides",
     ],
     "slack": [
         "slack_find_user", "slack_list_channels", "slack_read_channel",
@@ -168,6 +168,22 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "chercher où est définie une fonction ou une classe dans le projet",
         "trouver tous les endroits où une variable est utilisée",
         "lister les dépendances du projet",
+
+        # ── Création from scratch / web apps ──────────────────
+        "créer une landing page ou un site vitrine",
+        "construire une application web de zéro",
+        "initialiser un projet Next.js, React, Vue ou Svelte",
+        "créer une app Next.js from scratch",
+        "bootstrapper un nouveau projet front-end",
+        "créer un site web pour un client ou un projet",
+        "mettre en place un projet front-end",
+        "créer un dossier et initialiser un projet",
+        "créer un nouveau dossier et installer une app",
+        "init git et créer une application",
+        "site vitrine pour une startup ou un produit",
+        "landing page d'un SaaS ou d'un produit",
+        "page d'accueil d'une application web",
+        "créer un site web moderne et épuré",
     ],
 
     "jira_get_my_issues": [
@@ -228,6 +244,26 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "importer des tâches en masse dans jira",
         "créer un backlog complet dans jira",
     ],
+    "create_presentation": [
+        "fais-moi une présentation sur un sujet",
+        "créer des slides professionnels",
+        "je veux un PowerPoint sur ce thème",
+        "génère un diaporama sur ce sujet",
+        "fais une présentation type Gamma",
+        "crée un pitch deck",
+        "présente ce sujet en slides",
+        "synthétise en slides",
+        "génère une présentation complète",
+        "slides sur l'intelligence artificielle",
+        "présentation pour mon cours ou meeting",
+        "fais des slides sur ce concept",
+        "je veux une présentation professionnelle",
+        "crée un exposé en slides",
+        "PowerPoint sur ce sujet",
+        "presentation slides about this topic",
+        "make me a presentation",
+        "create a slide deck",
+    ],
     "mermaid_diagram": [
         "schématise moi quelque chose",
         "fais moi un schéma de ce concept",
@@ -255,6 +291,32 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "crée un visuel pour expliquer",
         "diagram this architecture",
         "draw a flowchart",
+    ],
+    "web_research_report": [
+        # ── Recherche générale ────────────────────────────────────
+        "cherche sur internet",
+        "fais une recherche sur ce sujet",
+        "recherche des informations sur le web",
+        "trouve des infos en ligne sur",
+        "cherche la documentation de",
+        "recherche web approfondie",
+        "renseigne-toi sur",
+        "trouve la réponse sur internet",
+        "vérifie sur le web",
+        "cherche des sources sur",
+        "donne-moi des informations sur ce sujet",
+        "fais une veille sur",
+        "cherche ce terme sur internet",
+        "qu'est-ce que dit internet sur",
+        "googler ce sujet",
+        "que sait-on sur ce sujet en ligne",
+        # ── English ──────────────────────────────────────────────
+        "search the web for",
+        "look it up online",
+        "find information about",
+        "research this topic",
+        "web search",
+        "search online",
     ],
     "web_search_news": [
         # ── Événements récents ────────────────────────────────────
@@ -333,10 +395,11 @@ class ToolRetriever:
         for group in groups_needed:
             selected_names.update(TOOL_GROUPS[group])
 
-        # 4. Si coding détecté → retirer git/filesystem de l'orchestrateur
+        # 4. Si coding détecté → retirer git/filesystem de l'orchestrateur.
         #    Le specialist gère lui-même les fichiers et git.
-        #    Shell (shell_run, etc.) reste disponible pour les tâches système
-        #    pures (audit disque, monitoring…) qui ne nécessitent pas le specialist.
+        #    Note : le routing coding/general est maintenant géré en amont par
+        #    intent_router_node dans graph.py — le ToolRetriever n'est appelé que
+        #    pour l'intent "general", donc run_coding_agent n'est jamais dans sa sélection.
         if "coding" in groups_needed:
             for group in ("git", "filesystem"):
                 for tool_name in TOOL_GROUPS.get(group, []):

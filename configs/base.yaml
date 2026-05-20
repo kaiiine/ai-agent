@@ -2,7 +2,13 @@ ollama:
   model: "qwen2.5:7b"
   temperature: 0.0
 
-llm_backend: "ollama_cloud"   # "groq" | "ollama" | "ollama_cloud"
+llm_backend: "ollama_cloud"   # "groq" | "ollama" | "ollama_cloud" | "gemini"
+
+coding_model: "qwen3-coder-next:cloud"  # ollama_cloud only
+
+gemini:
+  model: "gemini-2.5-flash"         # orchestrateur
+  coding_model: "gemini-2.5-flash"    # specialist (plus capable, même quota)
 
 search:
   backend: "tavily"

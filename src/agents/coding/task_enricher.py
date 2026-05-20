@@ -42,6 +42,7 @@ _SKIP_DIRS = frozenset({
 _PROJECT_ROOTS: list[Path] = [
     p for p in [
         Path.home() / "Documents" / "projets-perso",
+        Path.home() / "projets-persos",
         Path.home() / "Documents" / "projects",
         Path.home() / "Projects",
         Path.home() / "projects",
@@ -101,6 +102,35 @@ _STOPWORDS = frozenset({
     "et", "ou", "and", "or", "si", "besoin", "need", "dans", "in",
     "me", "tu", "il", "elle", "nous", "vous", "ils", "elles",
 })
+
+
+_SPEC_SECTION_RE = re.compile(r'^##\s+\S', re.MULTILINE)
+_MIN_SPEC_CHARS = 500
+_SPEC_INLINE_LIMIT = 4_000
+_SPEC_FILE_PREFIX = "/tmp/axon_spec_"
+
+
+def _extract_inline_spec(task: str) -> Optional[tuple[str, str]]:
+    """Detect a pasted design brief (≥2 ## sections, ≥500 chars).
+
+    Returns (inline_preview, full_path) or None if no spec detected.
+    """
+    import hashlib
+    matches = list(_SPEC_SECTION_RE.finditer(task))
+    if len(matches) < 2:
+        return None
+    spec = task[matches[0].start():]
+    if len(spec) < _MIN_SPEC_CHARS:
+        return None
+    spec_hash = hashlib.md5(spec.encode()).hexdigest()[:8]
+    spec_path = f"{_SPEC_FILE_PREFIX}{spec_hash}.md"
+    try:
+        Path(spec_path).write_text(spec, encoding="utf-8")
+    except Exception:
+        spec_path = ""
+    label = f"spec — suite dans {spec_path}" if spec_path else "spec"
+    preview = _truncate(spec, _SPEC_INLINE_LIMIT, label)
+    return preview, spec_path
 
 
 def _extract_references(task: str) -> list[str]:
@@ -274,7 +304,16 @@ def enrich_task(task: str) -> str:
     because the content is already available.
     """
     refs = _extract_references(task)
-    if not refs:
+    spec_result = _extract_inline_spec(task)
+
+    # When a spec is detected, strip it from task — the spec_prefix carries
+    # the preview; keeping the full spec in task would double it in context.
+    if spec_result:
+        m0 = _SPEC_SECTION_RE.search(task)
+        if m0:
+            task = task[:m0.start()].strip()
+
+    if not refs and not spec_result:
         return task
 
     injected: list[str] = []
@@ -290,10 +329,21 @@ def enrich_task(task: str) -> str:
                 seen_paths.add(label)
                 injected.append(content)
 
-    if not injected:
-        return task
-
     divider = "━" * 56
+
+    spec_prefix = ""
+    if spec_result:
+        spec_preview, spec_path = spec_result
+        file_note = f"\n  Spec complète : local_read_file('{spec_path}')" if spec_path else ""
+        spec_prefix = (
+            f"⚠ SPEC PERMANENTE — à préserver en cas de compression.{file_note}\n"
+            f"  Modules, textes, palette, contraintes visuelles — copier mot pour mot.\n"
+            f"{divider}\n{spec_preview}\n{divider}\n\n"
+        )
+
+    if not injected:
+        return spec_prefix + task if spec_prefix else task
+
     header_lines = [
         "⚠ SOURCES PRÉ-LUES — contenu disponible directement ci-dessous.",
         "  Pas besoin de les relire avec local_read_file.",
@@ -304,4 +354,4 @@ def enrich_task(task: str) -> str:
         "",
         "TÂCHE :",
     ]
-    return "\n".join(header_lines) + "\n" + task
+    return spec_prefix + "\n".join(header_lines) + "\n" + task

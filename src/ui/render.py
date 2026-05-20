@@ -2,6 +2,7 @@ import time
 from rich.live import Live
 from rich.panel import Panel
 from rich.markdown import Markdown
+from rich.text import Text
 from rich import box
 
 from .panels import final_panel, _BOX, _BORDER
@@ -21,6 +22,13 @@ def update_live_markdown(live: Live, text: str, debounce_state: dict, cursor: bo
         debounce_state["last_update"] = now
 
 
-def finalize_live(live: Live, text: str, footer: str = ""):
-    content = text + (f"\n\n[dim]{footer}[/dim]" if footer else "")
-    live.update(final_panel(content))
+def finalize_live(live: Live, text: str, footer: str = "", console=None):
+    if console is not None:
+        live.update(Text(""))
+        live.stop()
+        console.print(final_panel(text))
+        if footer:
+            console.print(Text(f"  {footer}", style="dim"))
+    else:
+        content = text + (f"\n\n[dim]{footer}[/dim]" if footer else "")
+        live.update(final_panel(content))

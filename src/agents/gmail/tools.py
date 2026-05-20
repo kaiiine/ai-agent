@@ -4,6 +4,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import base64
 import os
+import re
+from email.utils import parsedate_to_datetime
 
 # --- Brouillon global ---
 _draft = {"to": None, "subject": None, "body": None, "has_draft": False}
@@ -139,16 +141,22 @@ def gmail_search(query: str = "newer_than:7d", max_results: int = 7) -> str:
     msgs = res.get("messages", [])
     if not msgs:
         return "📭 Aucun mail trouvé."
-    out = ["# 📬 Derniers mails", ""]
+    rows = []
     for i, m in enumerate(msgs, 1):
         meta = service.users().messages().get(
             userId="me", id=m["id"], format="metadata", metadataHeaders=["From","Subject","Date"]
         ).execute()
         headers = {h["name"]: h["value"] for h in meta["payload"]["headers"]}
-        out.append(f"**{i}.** **De :** {headers.get('From','?')}  \n"
-                   f"**Objet :** {headers.get('Subject','(sans sujet)')}  \n"
-                   f"**Date :** {headers.get('Date','?')}\n")
-    return "\n".join(out)
+        sender = headers.get("From", "?")
+        subject = headers.get("Subject", "(sans sujet)")
+        date = headers.get("Date", "?")
+        rows.append(f"| {i} | `{m['id']}` | {sender} | {subject} | {date} |")
+    table = (
+        "| # | ID | De | Objet | Date |\n"
+        "|---|----|----|-------|------|\n"
+        + "\n".join(rows)
+    )
+    return f"📬 **{len(rows)} mail(s)**\n\n{table}"
 
 @tool
 def gmail_summarize(message_id: str) -> str:

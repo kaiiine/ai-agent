@@ -29,8 +29,10 @@ def test_dev_plan_create_single_step():
 
 def test_dev_plan_step_done_ok():
     from src.agents.coding.tools import dev_plan_create, dev_plan_step_done
+    from src.agents.coding.pending import recent_tools
     dev_plan_create.invoke({"steps": ["A", "B", "C"]})
-    result = dev_plan_step_done.invoke({"step_index": 0})
+    recent_tools.record("local_read_file", {"path": "/tmp/x.py"}, {"content": "ok"})
+    result = dev_plan_step_done.invoke({"step_index": 0, "proof_type": "analysis"})
     assert result["status"] == "ok"
     assert result["step"] == "A"
     assert "remaining" in result
@@ -39,30 +41,39 @@ def test_dev_plan_step_done_ok():
 
 def test_dev_plan_step_done_already_done():
     from src.agents.coding.tools import dev_plan_create, dev_plan_step_done
+    from src.agents.coding.pending import recent_tools
     dev_plan_create.invoke({"steps": ["A"]})
-    dev_plan_step_done.invoke({"step_index": 0})
-    result = dev_plan_step_done.invoke({"step_index": 0})
+    recent_tools.record("local_read_file", {"path": "/tmp/x.py"}, {"content": "ok"})
+    dev_plan_step_done.invoke({"step_index": 0, "proof_type": "analysis"})
+    # First completion clears recent_tools — re-record for second call
+    recent_tools.record("local_read_file", {"path": "/tmp/y.py"}, {"content": "ok"})
+    result = dev_plan_step_done.invoke({"step_index": 0, "proof_type": "analysis"})
     assert result["status"] == "already_done"
 
 
 def test_dev_plan_step_done_out_of_range():
     from src.agents.coding.tools import dev_plan_create, dev_plan_step_done
     dev_plan_create.invoke({"steps": ["A", "B"]})
-    result = dev_plan_step_done.invoke({"step_index": 99})
+    # out-of-range check is before proof check — any proof_type works
+    result = dev_plan_step_done.invoke({"step_index": 99, "proof_type": "analysis"})
     assert result["status"] == "error"
 
 
 def test_dev_plan_step_done_no_plan():
     from src.agents.coding.tools import dev_plan_step_done
-    result = dev_plan_step_done.invoke({"step_index": 0})
+    # no plan → index check fails before proof check
+    result = dev_plan_step_done.invoke({"step_index": 0, "proof_type": "analysis"})
     assert result["status"] == "error"
 
 
 def test_dev_plan_step_done_remaining_reaches_zero():
     from src.agents.coding.tools import dev_plan_create, dev_plan_step_done
+    from src.agents.coding.pending import recent_tools
     dev_plan_create.invoke({"steps": ["A", "B"]})
-    dev_plan_step_done.invoke({"step_index": 0})
-    result = dev_plan_step_done.invoke({"step_index": 1})
+    recent_tools.record("local_read_file", {"path": "/tmp/x.py"}, {"content": "ok"})
+    dev_plan_step_done.invoke({"step_index": 0, "proof_type": "analysis"})
+    recent_tools.record("local_read_file", {"path": "/tmp/y.py"}, {"content": "ok"})
+    result = dev_plan_step_done.invoke({"step_index": 1, "proof_type": "analysis"})
     assert result["remaining"] == 0
 
 
@@ -72,13 +83,12 @@ def test_dev_explain_ok():
     from src.agents.coding.tools import dev_explain
     result = dev_explain.invoke({"message": "Voici ce que j'ai trouvé."})
     assert result["status"] == "ok"
-    assert result["message"] == "Voici ce que j'ai trouvé."
 
 
 def test_dev_explain_empty_message():
     from src.agents.coding.tools import dev_explain
     result = dev_explain.invoke({"message": ""})
-    assert result["status"] == "ok"
+    assert result["status"] == "error"
 
 
 # ── propose_file_change ───────────────────────────────────────────────────────

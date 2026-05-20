@@ -75,9 +75,122 @@ def _scan_dir(directory: Path, depth_penalty: int = 0) -> list[tuple[str, int]]:
     return results
 
 
+# ── Sub-framework signals (high confidence = +4, returned alongside "frontend") ──
+
+_NEXTJS_STRONG: frozenset[str] = frozenset({
+    "next.js", "nextjs", "next js", "app router", "pages router",
+    "next/font", "next/image", "next/link", "next-app", "vercel",
+    "server component", "rsc", "server action",
+})
+_NEXTJS_WEAK: frozenset[str] = frozenset({
+    "react", "tsx", "jsx", "shadcn",
+})
+
+_ANGULAR_STRONG: frozenset[str] = frozenset({
+    "angular", "@angular", "angular cli", "ng new", "standalone component",
+    "ngrx", "rxjs", "angular material",
+})
+_ANGULAR_WEAK: frozenset[str] = frozenset({
+    "typescript", "signals", "inject(",
+})
+
+_VUE_STRONG: frozenset[str] = frozenset({
+    "vue", "vuejs", "vue.js", "nuxt", "pinia", "composition api",
+    "vite vue", "quasar",
+})
+_VUE_WEAK: frozenset[str] = frozenset({
+    "composable", "definestore", "useHead",
+})
+
+_SVELTE_STRONG: frozenset[str] = frozenset({
+    "svelte", "sveltekit", "svelte kit", "$state", "$derived", "$effect",
+})
+_SVELTE_WEAK: frozenset[str] = frozenset({
+    "runes", "+page.svelte", "kit",
+})
+
+_THREEDEE_STRONG: frozenset[str] = frozenset({
+    "three.js", "threejs", "three js", "react three fiber", "r3f",
+    "@react-three", "useframe", "useglb", "useglft",
+    "3d", "webgl", "glb", "gltf", "shader", "glsl",
+    "immersif", "immersive", "canvas 3d", "particules 3d",
+    "gsap scrolltrigger", "scroll 3d",
+})
+_THREEDEE_WEAK: frozenset[str] = frozenset({
+    "drei", "postprocessing", "bloom", "particles", "particules",
+    "mesh", "geometry", "texture", "animation 3d",
+})
+
+# ── Generic frontend / new project signals ──
+
+_FRONTEND_STRONG: frozenset[str] = frozenset({
+    "landing page", "site web", "vitrine", "portfolio", "frontend", "front-end",
+    "tailwindcss", "gatsby", "astro", "remix", "solid-js", "preact",
+})
+_FRONTEND_WEAK: frozenset[str] = frozenset({
+    "landing", "website", "tailwind", "composant", "component",
+    "page web", "interface", "ui ", "design system", "framer",
+})
+
+_NEW_PROJECT_SIGNALS: frozenset[str] = frozenset({
+    "crée", "créer", "fais", "faire", "génère",
+    "create", "make", "build", "scaffold",
+    "nouveau projet", "new project", "initialise", "setup",
+})
+
+# ── Python signals ──
+
+_PYTHON_STRONG: frozenset[str] = frozenset({
+    "python", "flask", "fastapi", "django", "script python",
+    ".ipynb", "notebook", "pandas", "numpy", "sklearn",
+    "pytorch", "tensorflow", "torch", "venv", "pyproject",
+})
+_PYTHON_WEAK: frozenset[str] = frozenset({
+    "pip ", "requirements", "celery", "pydantic", "sqlalchemy",
+})
+
+
+def _detect_from_text(task: str) -> list[tuple[str, int]]:
+    """Keyword-based stack detection — returns generic + sub-framework stacks."""
+    low = task.lower()
+    new_project = any(sig in low for sig in _NEW_PROJECT_SIGNALS)
+
+    def score(strong: frozenset[str], weak: frozenset[str], cap: int) -> int:
+        s = sum(4 for kw in strong if kw in low) + sum(1 for kw in weak if kw in low)
+        return min(cap, s + (1 if new_project and s > 0 else 0))
+
+    results: list[tuple[str, int]] = []
+
+    # Sub-frameworks — detected alongside "frontend"
+    nextjs_score    = score(_NEXTJS_STRONG,    _NEXTJS_WEAK,    10)
+    angular_score   = score(_ANGULAR_STRONG,   _ANGULAR_WEAK,   10)
+    vue_score       = score(_VUE_STRONG,       _VUE_WEAK,       10)
+    svelte_score    = score(_SVELTE_STRONG,    _SVELTE_WEAK,    10)
+    threedee_score  = score(_THREEDEE_STRONG,  _THREEDEE_WEAK,  10)
+
+    # Generic frontend (activated by sub-framework hits too)
+    fe_score = score(_FRONTEND_STRONG, _FRONTEND_WEAK, 9)
+    implicit_fe = max(nextjs_score, angular_score, vue_score, svelte_score, threedee_score)
+
+    if nextjs_score   > 0: results.append(("nextjs",   nextjs_score))
+    if angular_score  > 0: results.append(("angular",  angular_score))
+    if vue_score      > 0: results.append(("vue",      vue_score))
+    if svelte_score   > 0: results.append(("svelte",   svelte_score))
+    if threedee_score > 0: results.append(("threedee", threedee_score))
+    if fe_score > 0 or implicit_fe > 0:
+        results.append(("frontend", max(fe_score, implicit_fe - 1)))
+
+    py_score = score(_PYTHON_STRONG, _PYTHON_WEAK, 9)
+    if py_score > 0:
+        results.append(("python", py_score))
+
+    return results
+
+
 def detect_stacks(
     extra_roots: list[str | Path] | None = None,
     _roots_override: list[str | Path] | None = None,
+    task_text: str | None = None,
 ) -> list[str]:
     """
     Scan the shell's cwd + process cwd + extra_roots for manifest files.
@@ -130,6 +243,13 @@ def detect_stacks(
         except PermissionError:
             pass
 
+    # Merge text-based signals (they can boost or add stacks missing from filesystem)
+    text_stacks: set[str] = set()
+    if task_text:
+        text_results = _detect_from_text(task_text)
+        text_stacks = {s for s, _ in text_results}
+        raw.extend(text_results)
+
     if not raw:
         return []
 
@@ -138,6 +258,12 @@ def detect_stacks(
     for stack, score in raw:
         if stack not in best or score > best[stack]:
             best[stack] = score
+
+    # Suppress python false-positives from the agent's own pyproject.toml:
+    # if text signals any frontend intent but not python, drop it.
+    _FRONTEND_SUBS = {"nextjs", "angular", "vue", "svelte", "threedee", "frontend"}
+    if task_text and (text_stacks & _FRONTEND_SUBS) and "python" not in text_stacks:
+        best.pop("python", None)
 
     ordered = sorted(best.items(), key=lambda x: -x[1])
     return [stack for stack, _ in ordered[:_MAX_STACKS]]

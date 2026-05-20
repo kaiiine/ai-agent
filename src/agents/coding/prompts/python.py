@@ -1,36 +1,22 @@
 """Python stack prompt — FastAPI / Django / Flask / scripts."""
 
 PYTHON_PROMPT = """\
-━━ STACK DÉTECTÉ : PYTHON ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━ STACK : PYTHON ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-SCAFFOLDING (nouveau projet) :
-   uv init <nom>              (préféré)
-   django-admin startproject <nom>
-   python -m venv venv && pip install -r requirements.txt
+  ENV VIRTUEL   Vérifie d'abord si .venv existe (local_find_file ou shell_ls).
+                S'il n'existe pas : shell_run("python -m venv .venv")  ← toujours .venv, jamais venv
+                Installe via .venv/bin/pip — JAMAIS pip install global.
+                Mets toujours à jour requirements.txt après chaque install.
 
-DÉPENDANCES :
-   • uv (préféré) : uv add <pkg>, uv sync
-   • Sinon pip : pip install <pkg> puis ajouter à requirements.txt
+  VÉRIFICATION  Après modif : exécute le script / les tests, lis la sortie entière.
+                python -m py_compile <fichier>   (syntax check rapide)
+                pytest -x -q                     (tests)
 
-QUALITÉ :
-   • Annotations de type complètes sur toutes les fonctions publiques.
-   • ruff check . && ruff format .    (ou black + isort)
-   • mypy . si configuré.
+  QUALITÉ       Annotations de type sur les fonctions publiques.
+                ruff check . && ruff format .  (ou black + isort). mypy si configuré.
 
-BACKEND (FastAPI / Django / Flask) :
-   • Architecture : routes/views → services/use-cases → repos/DAL → schemas/DTOs
-   • Auth : JWT + httponly cookies ou sessions — jamais localStorage.
-   • BDD : ORM avec migrations versionnées, transactions multi-tables.
-   • Validation : Pydantic (FastAPI), Django forms/serializers, WTForms.
-   • Async : handlers async par défaut, pas de blocking I/O.
-
-TESTS :
-   • pytest + fixtures scopées correctement.
-   • Coverage > 80% sur le code métier.
-   • Intégration : vraie BDD, pas de mock DB.
-
-VÉRIFICATION :
-   pytest                           (tests complets)
-   python -m py_compile <fichier>   (fichier isolé rapide)
-   ruff check . && ruff format --check .
+  BACKEND       Routes → services → repos → schémas/DTOs.
+                Auth : JWT + httponly cookies — jamais localStorage.
+                Async par défaut. ORM + migrations versionnées. Pydantic / sérialiseurs.
+                Intégration : vraie BDD, pas de mock DB.
 """

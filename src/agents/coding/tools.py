@@ -7,7 +7,7 @@ from typing import Dict, Any, List
 
 from langchain_core.tools import tool
 
-from src.agents.coding.pending import FileChange, pending_changes, dev_plan
+from src.agents.coding.pending import FileChange, pending_changes, dev_plan, recent_tools, _ANALYSIS_TOOLS
 
 from src.utils.paths import get_projects_dir
 
@@ -41,25 +41,159 @@ def dev_plan_create(steps: List[str]) -> Dict[str, Any]:
     return {"status": "ok", "count": len(steps)}
 
 
+_TODO_MARKERS = (
+    # Python / shell
+    "# TODO", "# FIXME", "# HACK", "# XXX",
+    "# A compléter", "# A completer", "# à compléter", "# Compléter", "# FILL",
+    # JS / TS / Java / C / Go / Rust
+    "// TODO", "// FIXME", "// HACK", "// XXX",
+    "// A compléter", "// A completer", "// à compléter", "// Compléter",
+    "/* TODO", "/* FIXME",
+    # HTML / JSX templates
+    "<!-- TODO", "{/* TODO",
+)
+
+
+def _verify_notebook_cell(path: str, cell_index: int, must_contain: str = "") -> tuple[bool, str]:
+    """Reads the actual notebook file and checks the cell is non-trivial."""
+    import json
+    from pathlib import Path as _Path
+    try:
+        with open(path, encoding="utf-8") as f:
+            nb = json.load(f)
+    except Exception as e:
+        return False, f"Impossible de lire le notebook : {e}"
+
+    cells = nb.get("cells", [])
+    if not (0 <= cell_index < len(cells)):
+        return False, f"Cellule {cell_index} introuvable dans le notebook ({len(cells)} cellules)"
+
+    source = "".join(cells[cell_index].get("source", []))
+
+    if not source.strip():
+        return False, f"Cellule {cell_index} est vide — aucun code n'a été écrit"
+
+    for marker in _TODO_MARKERS:
+        if marker.lower() in source.lower():
+            return False, f"Cellule {cell_index} contient encore '{marker}' — la complétion n'a pas eu lieu"
+
+    if must_contain and must_contain not in source:
+        return False, f"Cellule {cell_index} ne contient pas '{must_contain}' — vérifie le contenu écrit"
+
+    return True, ""
+
+
+def _verify_file_written(path: str, must_contain: str = "") -> tuple[bool, str]:
+    """Checks a file exists, has non-trivial content, no TODO markers, and optionally a keyword."""
+    from pathlib import Path as _Path
+    p = _Path(path)
+    if not p.exists():
+        return False, f"Fichier '{path}' introuvable sur le disque — la modification n'a pas été appliquée"
+    try:
+        content = p.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        return False, f"Impossible de lire '{path}' : {e}"
+
+    if not content.strip():
+        return False, f"Fichier '{path}' est vide — aucun code n'a été écrit"
+
+    for marker in _TODO_MARKERS:
+        if marker.lower() in content.lower():
+            return False, f"Fichier '{path}' contient encore '{marker}' — la complétion n'a pas eu lieu"
+
+    if must_contain and must_contain not in content:
+        return False, f"Fichier '{path}' ne contient pas '{must_contain}'"
+
+    return True, ""
+
+
 @tool("dev_plan_step_done")
-def dev_plan_step_done(step_index: int) -> Dict[str, Any]:
+def dev_plan_step_done(
+    step_index: int,
+    proof_type: str,
+    proof_path: str = "",
+    proof_cell_index: int = -1,
+    proof_contains: str = "",
+) -> Dict[str, Any]:
     """
-    Marks a plan step as completed and refreshes the plan display.
-    Call this immediately after finishing each step.
+    Marks a plan step as completed. Performs a REAL verification on disk — cannot be faked.
 
     Args:
-        step_index: zero-based index of the completed step
+        step_index:        zero-based index of the completed step
+        proof_type:        what kind of proof to check:
+                             "analysis"            — a read tool was called (notebook_read, local_read_file…)
+                             "notebook_cell_edited" — a notebook cell was actually modified on disk
+                             "file_written"         — a file was actually written to disk
+                             "shell_ran"            — a shell command ran with exit_code 0
+        proof_path:        required for "notebook_cell_edited" and "file_written" — absolute path
+        proof_cell_index:  required for "notebook_cell_edited" — zero-based cell index
+        proof_contains:    optional substring that must be present in the cell/file content
+
     Returns:
-        {"status": "ok", "step": label} or {"status": "error"}
+        {"status": "ok", "step": label, "remaining": N}
+        {"status": "error", "error": "…"}  ← real check failed, do the actual work first
     """
     steps = dev_plan.steps
     if not (0 <= step_index < len(steps)):
         return {"status": "error", "error": f"Index {step_index} hors limites (plan : {len(steps)} étapes)"}
 
+    if not proof_type or not proof_type.strip():
+        return {"status": "error", "error": "proof_type est obligatoire. Indique 'analysis', 'notebook_cell_edited', 'file_written' ou 'shell_ran'."}
+
+    # ── Real verification ──────────────────────────────────────────────────────
+    ok, err = True, ""
+
+    if proof_type == "analysis":
+        if not recent_tools.any_analysis():
+            ok, err = False, (
+                "Aucun outil d'analyse n'a été appelé depuis la dernière étape. "
+                "Appelle notebook_read, local_read_file ou dev_explain d'abord."
+            )
+
+    elif proof_type == "notebook_cell_edited":
+        if not proof_path:
+            return {"status": "error", "error": "proof_path est requis pour proof_type='notebook_cell_edited'"}
+        if proof_cell_index < 0:
+            return {"status": "error", "error": "proof_cell_index est requis pour proof_type='notebook_cell_edited'"}
+        if not recent_tools.cell_was_edited(proof_path, proof_cell_index):
+            ok, err = False, (
+                f"La cellule {proof_cell_index} de '{proof_path}' n'a pas été éditée (notebook_edit_cell non accepté). "
+                "Appelle notebook_edit_cell et assure-toi que l'utilisateur accepte."
+            )
+        else:
+            ok, err = _verify_notebook_cell(proof_path, proof_cell_index, proof_contains)
+
+    elif proof_type == "file_written":
+        if not proof_path:
+            return {"status": "error", "error": "proof_path est requis pour proof_type='file_written'"}
+        if not recent_tools.file_was_written(proof_path):
+            ok, err = False, (
+                f"'{proof_path}' n'a pas été écrit (propose_file_change non accepté). "
+                "Appelle propose_file_change et assure-toi que l'utilisateur accepte."
+            )
+        else:
+            ok, err = _verify_file_written(proof_path, proof_contains)
+
+    elif proof_type == "shell_ran":
+        if not recent_tools.shell_succeeded():
+            ok, err = False, (
+                "Aucune commande shell n'a terminé avec exit_code=0 depuis la dernière étape. "
+                "Appelle shell_run et assure-toi que la commande réussit."
+            )
+
+    else:
+        return {"status": "error", "error": f"proof_type inconnu : '{proof_type}'. Valeurs acceptées : analysis, notebook_cell_edited, file_written, shell_ran"}
+
+    if not ok:
+        return {"status": "error", "error": f"Vérification échouée : {err}"}
+
+    # ── Mark done ──────────────────────────────────────────────────────────────
     changed = dev_plan.check(step_index)
     label = steps[step_index].label
     if not changed:
         return {"status": "already_done", "step": label}
+
+    recent_tools.clear()
     return {"status": "ok", "step": label, "remaining": sum(1 for s in dev_plan.steps if not s.done)}
 
 
@@ -75,8 +209,10 @@ def dev_explain(message: str) -> Dict[str, Any]:
     Returns:
         {"status": "ok"}
     """
+    if not message.strip():
+        return {"status": "error", "reason": "Message vide interdit. Fournis une explication détaillée : ce que tu as trouvé, pourquoi, et ce que tu vas changer."}
     # The actual display is handled by the UI via the progress callback
-    return {"status": "ok", "message": message}
+    return {"status": "ok"}
 
 
 @tool("find_git_repos")
@@ -169,6 +305,29 @@ def browser_screenshot(
     """
     from src.infra.browser import screenshot_url
     return screenshot_url(url, width=width, height=height, wait_ms=wait_ms)
+
+
+@tool("load_skill")
+def load_skill(stack: str) -> str:
+    """
+    Loads best-practice guidelines for a detected tech stack.
+    Call this as soon as you identify the framework/language used in the project.
+    Returns a detailed prompt with rules, conventions, and tooling for that stack.
+
+    Available stacks: nextjs, angular, vue, svelte, threedee, python,
+                      rust, go, node_backend, java, systems, frontend
+
+    Args:
+        stack: detected stack name (e.g. "nextjs", "python", "vue")
+    Returns:
+        Full guidelines prompt for that stack
+    """
+    from src.agents.coding.prompts import _STACK_PROMPTS
+    prompt = _STACK_PROMPTS.get(stack.lower())
+    if not prompt:
+        available = ", ".join(_STACK_PROMPTS.keys())
+        return f"Stack '{stack}' non reconnu. Disponibles : {available}"
+    return prompt
 
 
 @tool("propose_file_change")

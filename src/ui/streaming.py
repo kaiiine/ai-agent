@@ -19,7 +19,7 @@ from prompt_toolkit.key_binding import KeyBindings
 
 from .config import fmt_ms, SessionConfig
 from .language import detect_lang, enforce_lang_output
-from .panels import live_panel_initial, tool_call_panel, command_panel, plan_panel, compile_panel, ACCENT
+from .panels import live_panel_initial, tool_call_panel, command_panel, plan_panel, compile_panel, ACCENT, _BOX
 from .render import update_live_markdown, finalize_live
 from .commands import debug_state
 from .attachments import AttachmentStore, open_file_picker, get_clipboard_image, build_message_with_attachments
@@ -27,10 +27,28 @@ from .completer import SlashCompleter
 
 console = Console()
 _attachments = AttachmentStore()
+_BORDER = f"dim {ACCENT}"
 
 _DEBOUNCE = 0.03
 _REFRESH_RATE = 20
 _THINKING_WAIT = 0.4
+
+
+def _safe_stop(live, stop_event: threading.Event | None = None,
+               thread: threading.Thread | None = None) -> None:
+    """Clear the live panel then stop it — prevents committing the thinking frame to stdout."""
+    if stop_event is not None:
+        stop_event.set()
+    if thread is not None:
+        thread.join(timeout=0.3)
+    try:
+        live.update(Text(""))
+    except Exception:
+        pass
+    try:
+        live.stop()
+    except Exception:
+        pass
 
 
 def _make_thinking_loop(stop_event: threading.Event, live: "Live",
@@ -189,14 +207,29 @@ def _debug_prompt(state: dict, graph, cfg: SessionConfig):
 
 _FICHE_PROMPT = """\
 INSTRUCTION PRIORITAIRE : Réponds UNIQUEMENT avec le code HTML complet. Aucun texte avant ou après, aucun bloc markdown, aucune explication.
+LANGUE : {lang_instruction} Aucun caractère non-latin parasite (pas de chinois, japonais, arabe ou autre).
 
 Tu es un expert pédagogique. Génère une fiche de révision complète et visuellement soignée à partir du ou des documents fournis.
 
+━━ ÉTAPE 0 — ANALYSE OBLIGATOIRE (mentale, ne pas écrire hors HTML) ━━
+
+Avant de générer le moindre HTML, parcours intégralement le document et extrait :
+1. Tous les chapitres et sous-chapitres, dans l'ordre
+2. Toutes les définitions, même celles données en passant
+3. Tous les modèles, méthodes, étapes, protocoles, frameworks
+4. Toutes les distinctions importantes (X ≠ Y, A vs B)
+5. Tous les exemples, cas pratiques, illustrations, schémas commentés
+6. Tous les pièges d'examen identifiables (confusions courantes, cas limites)
+7. Tout quiz, exercice ou question pratique présent dans le document
+8. Les notions qui reviennent plusieurs fois ou que l'auteur souligne = prioritaires
+
+Cette analyse détermine le contenu de la fiche. Ne l'écris pas comme texte libre — intègre-la directement dans les sections HTML.
+
 ━━ OBJECTIF ━━
 
-La meilleure fiche possible pour réviser un partiel : complète, dense, structurée.
-Couvre TOUTES les notions du document — rien ne doit manquer.
-Page unique, défilement vertical. Les éléments interactifs (accordéons, QCM rapide, flip cards) sont bienvenus quand ils aident à mémoriser, mais jamais obligatoires.
+La meilleure fiche possible pour réviser un partiel : complète, dense, orientée examen.
+Couvrir toutes les notions explicitement présentes ou fortement structurantes du document, en priorisant les notions examinables.
+Page unique, défilement vertical. Les éléments interactifs (accordéons, flip cards) sont bienvenus quand ils aident à mémoriser, mais jamais obligatoires.
 
 ━━ STRUCTURE DU CONTENU ━━
 
@@ -209,7 +242,7 @@ Page unique, défilement vertical. Les éléments interactifs (accordéons, QCM 
 3. CONCEPTS & DÉFINITIONS :
    - Toutes les définitions importantes, précises, dans des cards (border-left teal)
    - Acronymes développés et expliqués
-   - Mnémotechniques pour les listes longues
+   - Mémotechniques pour les listes longues
 
 4. FORMULES, RÈGLES, THÉORÈMES :
    - Cards border-left violet, formule en monospace bien lisible
@@ -217,20 +250,36 @@ Page unique, défilement vertical. Les éléments interactifs (accordéons, QCM 
 
 5. CHAPITRES (dans l'ordre du document, tous couverts) :
    - Chaque chapitre = section h2 avec tout son contenu
-   - Définitions, exemples concrets, cas pratiques
    - Tableaux comparatifs pour les éléments similaires (ex: types A/B/C)
    - Listes structurées et denses — pas de paraphrase vague
    - Accordéons JS optionnels pour les sous-sections très longues
+   GUIDE PAR CHAPITRE — si le contenu s'y prête, inclure :
+     • un exemple concret ou cas pratique (seulement s'il existe dans le document)
+     • un piège ou distinction (seulement s'il y en a un réel)
+     Ne pas inventer d'éléments absents du document — mieux vaut un chapitre court et juste qu'un chapitre long et fabriqué.
+   RÈGLE SLIDES — si le document contient des quiz, exemples ou cas pratiques :
+     les reprendre explicitement, jamais les ignorer.
 
 6. DISTINCTIONS SUBTILES & PIÈGES :
    - Cards border-left rouge pour les confusions fréquentes
    - "X ≠ Y" clairement formulé
    - Erreurs classiques d'examen
 
-7. SYNTHÈSE & RÉCAP FINAL :
+7. CE QUI PEUT TOMBER AU PARTIEL (section obligatoire) :
+   - Types d'exercices probables déduits du document (QCM définitions, schéma à compléter, cas pratique, étude de cas…)
+   - Notions à connaître par cœur (liste priorisée)
+   - Pièges classiques sur ce cours
+   - 3 à 5 mini-exemples de questions possibles avec réponse courte
+
+8. CHECKLIST ANTI-OUBLI (section obligatoire, en fin de fiche) :
+   Tableau ou liste cochée confirmant que les grands blocs du cours sont couverts.
+   Déduis les blocs directement des chapitres identifiés à l'étape 0.
+   Blocs universels à toujours inclure : Définitions · Modèles/Méthodes · Exemples concrets · Distinctions/Pièges · Tableaux comparatifs · Cas pratiques
+   Ajoute les blocs spécifiques au document (noms des chapitres principaux).
+
+9. SYNTHÈSE & RÉCAP FINAL :
    - Tableau récapitulatif des concepts essentiels (tout en une vue)
    - Acronymes et points à retenir absolument
-   - Ce qui tombe souvent aux partiels
 
 ━━ DESIGN — AXON SLATE GLASS ━━
 
@@ -252,7 +301,7 @@ Variables :root (LIGHT par défaut — parchemin chaud) :
   --bg-vignette:  radial-gradient(ellipse at 50% 100%, rgba(120,70,20,0.12) 0%, transparent 60%)
   --surface:      rgba(255,255,255,0.45)
   --surface-border: rgba(160,110,40,0.22)
-  --header-bg:    rgba(240,230,210,0.90)
+  --header-bg:    #f0e6d0
   --accent:       #b45309
   --accent-dim:   rgba(180,83,9,0.12)
   --accent-glow:  rgba(180,83,9,0.20)
@@ -278,7 +327,7 @@ Variables html.dark (dark mode — slate sombre) :
   --bg-vignette:  radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.08) 0%, transparent 65%)
   --surface:      rgba(255,255,255,0.05)
   --surface-border: rgba(255,255,255,0.10)
-  --header-bg:    rgba(9,13,19,0.85)
+  --header-bg:    #0d1117
   --accent:       #f59e0b
   --accent-dim:   rgba(245,158,11,0.15)
   --accent-glow:  rgba(245,158,11,0.30)
@@ -312,17 +361,42 @@ Règles globales :
   - Grids : grid-template-columns: repeat(auto-fit, minmax(160px, 1fr))
   - Tout élément enfant : max-width: 100%
 
-Sticky header :
-  position sticky, top 0, z-index 100
-  background: var(--header-bg), backdrop-filter: blur(20px), -webkit-backdrop-filter: blur(20px)
-  border-bottom: 2px solid var(--accent)
-  padding: 0.8rem 1.5rem, display flex, justify-content space-between, align-items center, gap 1rem
-  Titre h1 : font-size 1.1rem, font-weight 700, color var(--text-strong)
+Floating header — FIXE, détaché du bord, toujours visible :
+  Structure HTML OBLIGATOIRE : <header><div class="header-inner">...</div></header>
+  Le header est un élément DIRECT de <body>, AVANT .container.
+
+  CSS header :
+    position: fixed
+    top: 12px
+    left: 50%
+    transform: translateX(-50%)
+    width: calc(100% - 48px)
+    max-width: 920px
+    z-index: 100
+    pointer-events: none  (laisse passer les clics sur les bords extérieurs)
+
+  CSS .header-inner :
+    pointer-events: auto
+    background: var(--header-bg)
+    backdrop-filter: blur(24px)
+    -webkit-backdrop-filter: blur(24px)
+    border: 1px solid var(--surface-border)
+    border-radius: 16px
+    padding: 0.65rem 1.2rem
+    display: flex
+    justify-content: space-between
+    align-items: center
+    gap: 1rem
+    box-shadow: 0 4px 24px rgba(0,0,0,0.22)
+
+  body : padding-top: 72px  (compense la hauteur du header fixe)
+
+  Titre h1 : font-size 1rem, font-weight 700, color var(--text-strong), margin 0
   Badge matière : background var(--accent), color white, border-radius 5px, padding 0.2em 0.7em, font-size 0.75rem, font-weight 700
   Zone boutons (flex, gap 0.5rem) :
     Bouton toggle thème : texte "☀ Clair" en dark / "◑ Sombre" en light
     Bouton imprimer : "⎙ Imprimer"
-    Style commun : background var(--accent-dim), border 1.5px solid var(--accent), border-radius 6px,
+    Style commun : background var(--accent-dim), border 1.5px solid var(--accent), border-radius 8px,
       padding 0.3rem 0.8rem, font-size 0.8rem, font-weight 600, color var(--accent), cursor pointer
       hover : background var(--accent), color white (ou #1a0e00 en dark)
 
@@ -368,11 +442,11 @@ Tableaux (dans div.table-wrapper overflow-x auto) :
   td : padding 0.6rem 1rem, border-bottom 1px solid var(--surface-border), color var(--text)
   tr:nth-child(even) : background var(--surface)
 
-Mnémotechniques : background var(--success-bg), border-left 3px solid var(--success), border-radius 10px, padding 0.9rem 1.1rem
+Mémotechniques : background var(--success-bg), border-left 3px solid var(--success), border-radius 10px, padding 0.9rem 1.1rem
   .mnemo-label : color var(--success), font-size 0.72rem, font-weight 700, display block, margin-bottom 0.3rem
 
 @media print :
-  header display none
+  header, .header-inner {{ display: none }}
   body background white !important, color #1c1917 !important
   .card {{ background #f9f6f0 !important; border 1px solid #d0c8b8 !important; backdrop-filter none !important; }}
   h2 {{ color #8b5e3c !important; border-color #8b5e3c !important; }}
@@ -392,10 +466,20 @@ Bouton toggle dans le header — texte initial "◑ Sombre" (car on est en light
 
 ━━ CONTENU ━━
 
-Sois exhaustif — une fiche utile est dense, pas vague.
 Fusionne intelligemment si plusieurs documents.
 Inclure des mémotechniques quand les listes sont longues (acronymes, phrases).
 Les tableaux comparatifs sont préférables aux listes pour les éléments similaires.
+
+CONTRÔLE QUALITÉ (vérification mentale avant de produire le HTML — ne pas écrire hors du HTML) :
+Avant de clore le </body>, valide mentalement :
+  ✓ Ai-je couvert chaque chapitre identifié à l'étape 0 ?
+  ✓ Ai-je inclus toutes les définitions, même celles données brièvement ?
+  ✓ Ai-je inclus les notions qui revenaient plusieurs fois dans le document ?
+  ✓ Ai-je inclus les pièges et distinctions ?
+  ✓ Ai-je inclus des exemples concrets pour chaque concept majeur ?
+  ✓ La section "CE QUI PEUT TOMBER AU PARTIEL" est-elle présente et utile ?
+  ✓ La CHECKLIST ANTI-OUBLI confirme-t-elle la couverture complète ?
+Si une case n'est pas cochée → ajouter le contenu manquant avant de fermer le HTML.
 
 ━━ DOCUMENTS À ANALYSER ━━
 {content}
@@ -403,22 +487,44 @@ Les tableaux comparatifs sont préférables aux listes pour les éléments simil
 
 _EXO_PROMPT = """\
 INSTRUCTION PRIORITAIRE : Réponds UNIQUEMENT avec le code HTML complet. Aucun texte avant ou après, aucun bloc markdown.
+LANGUE : {lang_instruction} Aucun caractère non-latin parasite (pas de chinois, japonais, arabe ou autre).
 
 Tu es un expert pédagogique. Génère un fichier d'exercices interactifs complet à partir du ou des documents fournis.
+
+━━ ÉTAPE 0 — ANALYSE DU DOCUMENT (mentale, ne pas écrire hors HTML) ━━
+
+Avant de générer les exercices, analyse le document et identifie :
+1. Les chapitres et notions clés à tester
+2. Les quiz, questions ou exercices déjà présents dans les slides → reprends-les en priorité
+3. Le type de contenu pour adapter les exercices au document :
+   - Si le document contient des processus/étapes → exercices de mise en ordre
+   - Si le document contient des définitions/concepts → associations terme↔définition, QCM
+   - Si le document contient des cas pratiques/scénarios → mini-cas à analyser
+   - Si le document contient des formules/règles → application numérique ou vrai/faux
+4. Les distinctions subtiles et pièges → en faire des vrai/faux ou QCM avec distracteurs proches
 
 ━━ TYPE D'EXERCICES ━━
 {type_exo}
 
+Complète automatiquement avec les types adaptés au document détectés à l'étape 0.
+Mélange obligatoire selon la richesse du document :
+  • QCM (4 choix, distracteurs plausibles et proches — pas évidents)
+  • Vrai/Faux (cibler les confusions et pièges identifiés)
+  • Association terme ↔ définition (glisser-déposer ou sélection)
+  • Mise en ordre d'étapes (Kill Chain, PDCA, algorithme…) si pertinent
+  • Mini-cas pratique : scénario court → identifier l'attaque, la clause, la faille, le pattern
+
 ━━ STRUCTURE ━━
 
-1. En-tête : titre, nombre de questions, score en temps réel
+1. En-tête : titre du cours, nombre de questions, score en temps réel
 2. Barre de progression (trait fin accent orange)
 3. Questions (une par écran) :
-   - QCM : 4 choix, clic → feedback immédiat + explication de la bonne réponse
-   - Question ouverte : textarea + bouton "Voir la réponse" qui révèle la réponse correcte
-   - Vrai/Faux : 2 boutons avec feedback
-4. Navigation : Précédent / Suivant, "X / Y"
-5. Score final : résumé, questions ratées avec corrections, bouton Rejouer
+   - QCM : 4 choix, clic → feedback immédiat + explication complète de la bonne réponse
+   - Vrai/Faux : 2 boutons avec feedback + explication systématique
+   - Question ouverte : textarea + bouton "Voir la réponse" qui révèle la réponse modèle
+   - Mini-cas : énoncé court + champ de réponse + corrigé détaillé
+4. Navigation : Précédent / Suivant, compteur "X / Y"
+5. Score final : pourcentage, liste des questions ratées avec corrections complètes, bouton Rejouer
 
 ━━ JAVASCRIPT ━━
 
@@ -462,9 +568,18 @@ Règles :
 
 ━━ CONTENU ━━
 
-Génère entre 10 et 20 questions selon la richesse du document.
-Questions couvrant les points importants, pas triviales.
-Distracteurs QCM plausibles.
+Génère entre 12 et 25 questions selon la richesse du document.
+Couvre tous les chapitres identifiés à l'étape 0 — aucun chapitre sans au moins une question.
+Reprends en priorité les quiz et exercices déjà présents dans les slides.
+Distracteurs QCM : plausibles, proches de la bonne réponse, ciblant les confusions réelles.
+Questions ouvertes : cibler les définitions, les étapes de processus, les distinctions.
+
+CONTRÔLE QUALITÉ (vérification mentale avant de clore le HTML) :
+  ✓ Ai-je couvert tous les chapitres du document ?
+  ✓ Ai-je repris les exercices/quiz présents dans les slides ?
+  ✓ Ai-je inclus les pièges et distinctions comme vrai/faux ou QCM ?
+  ✓ Les distracteurs sont-ils vraiment piégeux (pas évidents) ?
+  ✓ Y a-t-il au moins un mini-cas pratique si le domaine s'y prête ?
 
 ━━ DOCUMENTS À ANALYSER ━━
 {content}
@@ -529,7 +644,10 @@ def _handle_fiche(graph, state: dict, cfg: "SessionConfig") -> None:
         return
 
     slug = _pdf_slug(attachments)
-    prompt = _FICHE_PROMPT.format(content=content[:60_000])
+    from src.orchestrator.graph import get_lang_pref
+    from src.llm.prompts import _LANG_INSTRUCTIONS
+    lang_instruction = _LANG_INSTRUCTIONS.get(get_lang_pref(), _LANG_INSTRUCTIONS["fr"])
+    prompt = _FICHE_PROMPT.format(content=content[:60_000], lang_instruction=lang_instruction)
     result = _run_letter_stream(graph, prompt, [], cfg)
     if result:
         try:
@@ -574,7 +692,10 @@ def _handle_exo(graph, state: dict, cfg: "SessionConfig") -> None:
         return
 
     slug = _pdf_slug(attachments)
-    prompt = _EXO_PROMPT.format(content=content[:60_000], type_exo=type_exo)
+    from src.orchestrator.graph import get_lang_pref
+    from src.llm.prompts import _LANG_INSTRUCTIONS
+    lang_instruction = _LANG_INSTRUCTIONS.get(get_lang_pref(), _LANG_INSTRUCTIONS["fr"])
+    prompt = _EXO_PROMPT.format(content=content[:60_000], type_exo=type_exo, lang_instruction=lang_instruction)
     result = _run_letter_stream(graph, prompt, [], cfg)
     if result:
         try:
@@ -821,7 +942,7 @@ def _run_letter_stream(graph, prompt_text: str, attachments, cfg: SessionConfig)
             stop_thinking.set()
             footer = fmt_ms(perf_counter() - t0)
             if saw_any_token:
-                finalize_live(live, response_content, footer)
+                finalize_live(live, response_content, footer, console=console)
     except Exception as e:
         console.print(command_panel(f"erreur : {e}", error=True))
 
@@ -912,6 +1033,7 @@ def _handle_ameliore(graph, state: dict, cfg: SessionConfig) -> None:
 def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
     """Streams a single text message to the graph (no slash commands, no HITL re-check)."""
     from langchain_core.messages import HumanMessage
+    from src.infra.settings import settings
 
     current_state = {"messages": [HumanMessage(content=text)]}
     config = {"configurable": {"thread_id": cfg.thread_id}}
@@ -935,8 +1057,7 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
                 if isinstance(msg, ToolMessage):
                     tool_name = getattr(msg, "name", None) or getattr(msg, "tool_name", None) or meta.get("tool", "tool")
                     if tool_name == "gmail_send_email":
-                        stop_thinking.set()
-                        live.stop()
+                        _safe_stop(live, stop_thinking, t)
                         from .review import review_email
                         action, refinement = review_email()
                         if action == "send":
@@ -946,21 +1067,39 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
                         elif action == "modify" and refinement:
                             pending_refinements_inner.append(f"L'utilisateur veut modifier le mail : {refinement}")
                         live.start(refresh=False)
-                    elif tool_name in ("dev_plan_create", "dev_plan_step_done"):
+                    elif tool_name == "dev_plan_step_done":
                         stop_thinking.set()
                         live.update(Text(""))
                         live.stop()
                         from src.agents.coding.pending import render_plan
                         render_plan(console)
+                        stop_thinking.clear()
                         live.start(refresh=False)
+                        new_t = threading.Thread(
+                            target=_make_thinking_loop(stop_thinking, live), daemon=True
+                        )
+                        new_t.start()
+                        t = new_t
                         last_node = "tools"
                     else:
                         live.update(tool_call_panel(tool_name))
                     last_node = "tools"
                     continue
                 if isinstance(msg, AIMessageChunk):
-                    chunk_text = msg.content or ""
+                    _raw = msg.content or ""
+                    # Gemini returns content as list-of-parts — extract text
+                    if isinstance(_raw, list):
+                        chunk_text = "".join(
+                            p.get("text", "") if isinstance(p, dict) else str(p)
+                            for p in _raw
+                        )
+                    else:
+                        chunk_text = _raw
                     if not chunk_text:
+                        tool_calls = getattr(msg, "tool_calls", None) or []
+                        for tc in tool_calls:
+                            if (tc.get("name") or "") == "run_coding_agent":
+                                live.update(tool_call_panel("run_coding_agent"))
                         continue
                     if last_node == "tools":
                         response_content = ""
@@ -968,10 +1107,19 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
                         last_node = "chatbot"
                     stop_thinking.set()
                     saw_any_token = True
+                    if settings.llm_backend == "gemini" and response_content and chunk_text.startswith(response_content):
+                        chunk_text = chunk_text[len(response_content):]
                     response_content += chunk_text
                     update_live_markdown(live, response_content, deb, cursor=True)
                 elif isinstance(msg, AIMessage) and not saw_any_token:
-                    chunk_text = msg.content or ""
+                    _raw = msg.content or ""
+                    if isinstance(_raw, list):
+                        chunk_text = "".join(
+                            p.get("text", "") if isinstance(p, dict) else str(p)
+                            for p in _raw
+                        )
+                    else:
+                        chunk_text = _raw
                     if not chunk_text:
                         continue
                     if last_node == "tools":
@@ -985,7 +1133,7 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
             stop_thinking.set()
             footer = fmt_ms(perf_counter() - t0)
             if saw_any_token:
-                finalize_live(live, response_content, footer)
+                finalize_live(live, response_content, footer, console=console)
     except Exception as e:
         console.print(command_panel(f"erreur : {e}", error=True))
 
@@ -1306,8 +1454,6 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     stop_thinking = threading.Event()
     compile_mode = threading.Event()  # shared with thinking thread — switches panel
     _thinking_thread: list[threading.Thread] = []  # mutable holder so _coding_progress can join it
-    _last_explain: str = ""  # dedup dev_explain panels
-
     live = Live(live_panel_initial(), console=console, refresh_per_second=_REFRESH_RATE, vertical_overflow="crop")
 
     def _on_compile() -> None:
@@ -1315,35 +1461,75 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         compile_mode.set()
 
     def _coding_progress(tool_name: str, args: dict, result: dict | None = None):
-        """Called by the coding specialist for plan/file/shell events.
-
-        Called BEFORE execution with tool_name="shell_run:before" (pre-hook).
-        Called AFTER execution with the actual tool_name and result.
-
-        Returns a dict to override the ToolMessage content (HITL mechanism),
-        or None to keep the original result.
-        """
+        """Called by the coding specialist for plan/file/shell events."""
         nonlocal response_content, saw_any_token
         response_content = ""
         saw_any_token = False
         override = None
 
-        # Stop thinking animation once (first call only) — join to avoid race on live.update
-        if not stop_thinking.is_set():
-            stop_thinking.set()
-            if _thinking_thread:
-                _thinking_thread[0].join(timeout=0.5)
-            try:
-                live.update(Text(""))
-            except Exception:
-                pass
+        # Stop thinking animation before any output
+        stop_thinking.set()
+        if _thinking_thread:
+            _thinking_thread[0].join(timeout=0.2)
+        try:
+            live.update(Text(""))
+        except Exception:
+            pass
 
-        # ── Specialist context compression → compile animation ───────────────
-        if tool_name == "specialist:compress":
-            compile_mode.set()
+        def _resume_thinking():
+            stop_thinking.clear()
+            new_t = threading.Thread(
+                target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True
+            )
+            new_t.start()
+            if _thinking_thread:
+                _thinking_thread[0] = new_t
+            elif _thinking_thread is not None:
+                _thinking_thread.append(new_t)
+
+        # ── Specialist start → show model + stacks ────────────────────────────
+        if tool_name == "specialist:start":
+            model = (args or {}).get("model", "?")
+            stacks = (args or {}).get("stacks", [])
+            t = Text()
+            t.append("  ⚙ ", style=f"bold {ACCENT}")
+            t.append("Agent code : ", style="dim white")
+            t.append(model, style=f"bold {ACCENT}")
+            if stacks:
+                t.append(f"  [{' · '.join(stacks)}]", style="dim")
+            console.print(t)
+            _resume_thinking()
             return None
 
-        # ── Pre-execution: shell command preview ──────────────────────────────
+        # ── load_skill → show detected stack ─────────────────────────────────
+        if tool_name == "load_skill":
+            stack = (args or {}).get("stack", "")
+            if stack:
+                t = Text()
+                t.append("  ◈ ", style=f"bold {ACCENT}")
+                t.append("Stack détecté : ", style="dim white")
+                t.append(stack, style=f"bold {ACCENT}")
+                console.print(t)
+            _resume_thinking()
+            return None
+
+        # ── Context compression → compile animation ───────────────────────────
+        if tool_name == "specialist:compress":
+            compile_mode.set()
+            _resume_thinking()
+            return None
+
+        # ── Rate limit → inform user ──────────────────────────────────────────
+        if tool_name == "specialist:rate_limit":
+            wait = (args or {}).get("wait", 30)
+            t = Text()
+            t.append("  ⏳ ", style=f"bold {ACCENT}")
+            t.append(f"Rate limit — nouvelle tentative dans {wait}s", style="dim white")
+            console.print(t)
+            _resume_thinking()
+            return None
+
+        # ── Shell command preview (before execution) ──────────────────────────
         if tool_name == "shell_run:before":
             cmd = (args or {}).get("command", "")
             if cmd:
@@ -1361,7 +1547,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 t.append(path, style="dim white")
                 console.print(t)
 
-        # ── Post-execution: shell result ──────────────────────────────────────
+        # ── Shell result (after execution) ────────────────────────────────────
         elif tool_name == "shell_run":
             if result:
                 stdout = (result.get("stdout") or "").strip()
@@ -1370,17 +1556,15 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 output = stdout or stderr
 
                 t = Text()
-                t.append("     ", style="")
+                t.append("     ")
                 if exit_code == 0:
                     t.append("✓", style=f"bold {ACCENT}")
                     if output:
-                        first = output.splitlines()[0][:80]
-                        t.append(f"  {first}", style="dim")
+                        t.append(f"  {output.splitlines()[0][:80]}", style="dim")
                 else:
                     t.append(f"exit {exit_code}", style="bold red")
                     if output:
-                        first = output.splitlines()[0][:70]
-                        t.append(f"  {first}", style="dim red")
+                        t.append(f"  {output.splitlines()[0][:70]}", style="dim red")
                 console.print(t)
 
                 has_real_output = output and (exit_code != 0 or len(output.splitlines()) > 3)
@@ -1390,13 +1574,9 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                         output = "\n".join(lines[:20]) + f"\n[dim]…({len(lines) - 20} lignes)[/dim]"
                     style = "red" if exit_code != 0 else "dim"
                     border = "red" if exit_code != 0 else f"dim {ACCENT}"
-                    console.print(Panel(
-                        f"[{style}]{output}[/{style}]",
-                        border_style=border,
-                        padding=(0, 2),
-                    ))
+                    console.print(Panel(f"[{style}]{output}[/{style}]", border_style=border, padding=(0, 2)))
 
-        # ── Read-only exploration (compact one-liner) ────────────────────────
+        # ── Read-only exploration (compact one-liner) ─────────────────────────
         elif tool_name in ("local_read_file", "local_grep", "local_glob",
                            "local_find_file", "local_list_directory", "shell_ls",
                            "shell_pwd", "url_fetch", "web_research_report",
@@ -1411,22 +1591,18 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             }.get(tool_name, "·")
             t = Text()
             t.append(f"  {icon}  ", style=f"dim {ACCENT}")
-            t.append(tool_name, style="dim")
-            if short:
-                t.append(f"  {short}", style="dim")
+            t.append(short or tool_name, style="dim")
             console.print(t)
 
-        # ── Plan events ───────────────────────────────────────────────────────
-        elif tool_name in ("dev_plan_create", "dev_plan_step_done"):
+        # ── Plan ──────────────────────────────────────────────────────────────
+        elif tool_name == "dev_plan_step_done":
             from src.agents.coding.pending import render_plan
             render_plan(console)
 
         # ── Explain / analyse ─────────────────────────────────────────────────
         elif tool_name == "dev_explain":
             message = args.get("message", "") if args else ""
-            fingerprint = message[:120]
-            if message and fingerprint != _last_explain:
-                _last_explain = fingerprint
+            if message:
                 from rich.markdown import Markdown
                 console.print(Panel(
                     Markdown(message),
@@ -1436,7 +1612,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                     padding=(0, 2),
                 ))
 
-        # ── File change — HITL only stops/starts the live ────────────────────
+        # ── File change (HITL) ────────────────────────────────────────────────
         elif tool_name == "propose_file_change":
             _file_path = args.get("path", "") if args else ""
             _is_internal = ".axon/" in _file_path or _file_path.endswith("AXON.md")
@@ -1465,7 +1641,6 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                     except Exception as e:
                         console.print(Text(f"  ✗  {change.path}: {e}", style="red"))
                 else:
-                    # Store was empty (already popped by a previous call) — still confirm
                     override = {
                         "status": "accepted",
                         "path": _file_path,
@@ -1473,7 +1648,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                         "message": "Fichier déjà appliqué.",
                     }
             else:
-                # HITL review needs full terminal — stop live during interaction only
+                # HITL review — temporarily stop Live to free the terminal
                 try:
                     live.update(Text(""))
                     live.stop()
@@ -1481,6 +1656,20 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                     pass
                 from .review import review_single_latest
                 action, refinement = review_single_latest()
+                # Resume Live after review
+                stop_thinking.clear()
+                try:
+                    live.start(refresh=False)
+                except Exception:
+                    pass
+                new_t = threading.Thread(
+                    target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True
+                )
+                new_t.start()
+                if _thinking_thread:
+                    _thinking_thread[0] = new_t
+                elif _thinking_thread is not None:
+                    _thinking_thread.append(new_t)
                 if action == "apply":
                     override = {
                         "status": "accepted",
@@ -1504,21 +1693,78 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                             "Prends en compte ce feedback et rappelle propose_file_change avec le contenu corrigé."
                         ),
                     }
+
+        # ── Notebook cell HITL ────────────────────────────────────────────────
+        elif tool_name in ("notebook_edit_cell", "notebook_insert_cell"):
+            if get_mode() == "auto":
+                from src.agents.notebook.tools import pending_cell_changes as _pcells, apply_cell_change
+                from src.infra.tools_cache import session_cache
+                change = _pcells.pop_latest()
+                if change:
+                    try:
+                        apply_cell_change(change)
+                        session_cache.invalidate_filesystem()
+                        t = Text()
+                        t.append("  ✓  ", style="bold green")
+                        t.append(change.path, style="dim")
+                        console.print(t)
+                        override = {"status": "accepted", "awaiting_confirmation": False}
+                    except Exception as e:
+                        override = {"status": "error", "error": str(e)}
+                else:
+                    override = {"status": "accepted", "awaiting_confirmation": False}
+            else:
+                try:
+                    live.update(Text(""))
+                    live.stop()
+                except Exception:
+                    pass
+                from .review import review_latest_cell_change
+                action, refinement = review_latest_cell_change()
+                stop_thinking.clear()
                 try:
                     live.start(refresh=False)
                 except Exception:
                     pass
+                new_t = threading.Thread(
+                    target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True
+                )
+                new_t.start()
+                if _thinking_thread:
+                    _thinking_thread[0] = new_t
+                elif _thinking_thread is not None:
+                    _thinking_thread.append(new_t)
+                if action == "apply":
+                    override = {"status": "accepted", "awaiting_confirmation": False}
+                elif action == "reject":
+                    override = {
+                        "status": "rejected",
+                        "message": "L'utilisateur a refusé ce changement. Ne modifie pas cette cellule en l'état.",
+                    }
+                elif action == "refine" and refinement:
+                    override = {
+                        "status": "needs_refinement",
+                        "feedback": refinement,
+                        "message": (
+                            f"L'utilisateur demande des modifications : {refinement}. "
+                            "Rappelle notebook_edit_cell avec le contenu corrigé."
+                        ),
+                    }
 
+        # Restart thinking so LLM-think time shows animation (HITL branches cleared it already)
+        if stop_thinking.is_set():
+            _resume_thinking()
         return override
 
     set_progress_callback(_coding_progress)
     set_compile_callback(_on_compile)
 
+    plan_rendered = False  # track outside try so post-stream HITL can read it
+
     try:
         live.start(refresh=False)
         response_content = ""
         saw_any_token = False
-        plan_rendered = False          # have we already rendered an <axon:plan> block?
         last_node = ""
         last_debug_node = ""
         deb = {"DEBOUNCE": 0.03, "last_update": 0.0}
@@ -1538,8 +1784,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             if isinstance(msg, ToolMessage):
                 tool_name = getattr(msg, "name", None) or getattr(msg, "tool_name", None) or meta.get("tool", "tool")
                 if tool_name == "gmail_send_email":
-                    stop_thinking.set()
-                    live.stop()
+                    _safe_stop(live, stop_thinking, _thinking_thread[0] if _thinking_thread else None)
                     from .review import review_email
                     action, refinement = review_email()
                     if action == "send":
@@ -1548,16 +1793,27 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                         pending_refinements.append("Envoi annulé par l'utilisateur.")
                     elif action == "modify" and refinement:
                         pending_refinements.append(f"L'utilisateur veut modifier le mail : {refinement}")
+                    stop_thinking.clear()
                     live.start(refresh=False)
-                elif tool_name in ("dev_plan_create", "dev_plan_step_done"):
+                    new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
+                    new_t.start()
+                    if _thinking_thread:
+                        _thinking_thread[0] = new_t
+                    else:
+                        _thinking_thread.append(new_t)
+                elif tool_name == "run_coding_agent":
+                    # Stop coding-specialist thinking thread, restart for orchestrator response
                     stop_thinking.set()
-                    response_content = ""
-                    saw_any_token = False
-                    live.update(Text(""))
-                    live.stop()
-                    from src.agents.coding.pending import render_plan
-                    render_plan(console)
-                    live.start(refresh=False)
+                    if _thinking_thread:
+                        _thinking_thread[0].join(timeout=0.2)
+                    compile_mode.clear()
+                    stop_thinking.clear()
+                    new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
+                    new_t.start()
+                    if _thinking_thread:
+                        _thinking_thread[0] = new_t
+                    else:
+                        _thinking_thread.append(new_t)
                 else:
                     live.update(tool_call_panel(tool_name))
                 if cfg.debug:
@@ -1580,19 +1836,45 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 else:
                     chunk_text = raw
                 if not chunk_text:
+                    tool_calls = getattr(msg, "tool_calls", None) or []
+                    for tc in tool_calls:
+                        if (tc.get("name") or "") == "run_coding_agent":
+                            # Commit any accumulated orchestrator text to scrollback
+                            # BEFORE specialist starts printing — fixes visual ordering
+                            if saw_any_token and response_content:
+                                from .panels import final_panel
+                                console.print(final_panel(response_content))
+                                response_content = ""
+                                saw_any_token = False
+                            live.update(Text(""))
                     continue
                 if last_node == "tools":
                     response_content = ""
                     saw_any_token = False
                     plan_rendered = False
                     last_node = "chatbot"
-                compile_mode.clear()  # back to normal after compilation
+                    # Stop thinking thread first so it can't draw after the re-anchor
+                    stop_thinking.set()
+                    if _thinking_thread:
+                        _thinking_thread[0].join(timeout=0.2)
+                    # Re-anchor Live from current cursor (after all coding-agent console.prints)
+                    try:
+                        live.update(Text(""))
+                        live.stop()
+                        live.start(refresh=False)
+                    except Exception:
+                        pass
+                compile_mode.clear()
                 stop_thinking.set()
-                saw_any_token = True
-                response_content += chunk_text
 
                 _PLAN_OPEN  = "<axon:plan>"
                 _PLAN_CLOSE = "</axon:plan>"
+
+                if settings.llm_backend == "gemini" and response_content and chunk_text.startswith(response_content):
+                    chunk_text = chunk_text[len(response_content):]
+                response_content += chunk_text
+
+                saw_any_token = True
 
                 if not plan_rendered:
                     if _PLAN_OPEN in response_content and _PLAN_CLOSE in response_content:
@@ -1620,14 +1902,26 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         footer = fmt_ms(perf_counter() - t0)
         if saw_any_token:
             safe = _guard_sanitize(enforce_lang_output(response_content, user_lang))
-            finalize_live(live, safe, footer)
+            finalize_live(live, safe, footer, console=console)
         else:
             final_state = graph.invoke(current_state, config=config)
             last = final_state["messages"][-1]
             text = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
             safe = _guard_sanitize(enforce_lang_output(text, user_lang))
-            finalize_live(live, safe, footer)
+            finalize_live(live, safe, footer, console=console)
         live.stop()
+
+    except KeyboardInterrupt:
+        stop_thinking.set()
+        try:
+            live.stop()
+        except Exception:
+            pass
+        msg = Text()
+        msg.append("  ⊘  ", style=f"bold {ACCENT}")
+        msg.append("interrompu", style="dim")
+        console.print(msg)
+        return
 
     except Exception as e:
         try:
@@ -1664,7 +1958,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                             update_live_markdown(live2, rc2, {"DEBOUNCE":_DEBOUNCE,"last_update":0.0}, cursor=True)
                 stop2.set()
                 if saw2:
-                    finalize_live(live2, _guard_sanitize(enforce_lang_output(rc2, user_lang)), "retry")
+                    finalize_live(live2, _guard_sanitize(enforce_lang_output(rc2, user_lang)), "retry", console=console)
                 live2.stop()
             except Exception:
                 live2.stop()
@@ -1726,6 +2020,32 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                     pending_refinements.append(refinement)
                 else:
                     break
+
+    # ── Post-stream: plan HITL ────────────────────────────────────────────────
+    from src.ui.plan_mode import is_active as _is_plan_active
+    if plan_rendered and _is_plan_active():
+        from .review import review_plan
+        from src.ui.plan_mode import set_active as _set_plan_active
+
+        while True:
+            _plan_action, _plan_refinement = review_plan()
+            if _plan_action == "accept":
+                _set_plan_active(False)
+                pending_refinements.append(
+                    "Plan approuvé. Procède maintenant aux changements en suivant exactement ce plan."
+                )
+                break
+            elif _plan_action == "refine" and _plan_refinement:
+                _stream_message(
+                    graph,
+                    f"Voici des précisions pour le plan : {_plan_refinement}. "
+                    "Révise le plan en tenant compte de ces spécifications et propose un plan mis à jour.",
+                    cfg,
+                )
+                # Loop back → review_plan() on the updated plan
+            else:  # reject or empty refine
+                _set_plan_active(False)
+                break
 
     for refinement in pending_refinements:
         _stream_message(graph, refinement, cfg)

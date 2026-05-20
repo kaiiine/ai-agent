@@ -123,9 +123,10 @@ def _drop_smartest(messages: List) -> List | None:
             if j > i + 1:
                 return messages[:i] + messages[j:]
 
-    # No complete tool round found — drop oldest non-system message
+    # No complete tool round found — drop oldest non-system, non-human message
     for i in range(start, len(messages)):
-        return messages[:i] + messages[i + 1:]
+        if not isinstance(messages[i], HumanMessage):
+            return messages[:i] + messages[i + 1:]
 
     return None
 
@@ -336,12 +337,21 @@ def _chat_node_factory():
         else:
             query = _content_to_str(last_message.content) if hasattr(last_message, "content") else str(last_message)
         selected_tools = retriever.get(query)
+
         global _last_selected_tools
         _last_selected_tools = [t.name for t in selected_tools]
 
-        # Plan mode — strip all write-capable tools
+        # Plan mode — force-include all read-only tools, strip writes
         plan_mode = _is_plan_mode()
         if plan_mode:
+            from src.orchestrator.tool_retriever import TOOL_GROUPS
+            _read_groups = ("filesystem", "search", "git", "drive", "arxiv", "time")
+            _tools_by_name = {t.name: t for t in tools}
+            _selected_names = {t.name for t in selected_tools}
+            for _g in _read_groups:
+                for _tname in TOOL_GROUPS.get(_g, []):
+                    if _tname not in _selected_names and _tname in _tools_by_name:
+                        selected_tools.append(_tools_by_name[_tname])
             selected_tools = [t for t in selected_tools if t.name not in BLOCKED_TOOLS]
 
         # Tool-round cap — force text response after _MAX_TOOL_ROUNDS consecutive rounds

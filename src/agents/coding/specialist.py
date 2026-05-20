@@ -7,8 +7,7 @@ import uuid
 from typing import Callable, Optional
 
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
-from src.agents.coding.prompts import build_system_prompt
-from src.agents.coding.prompts.detector import detect_stacks
+from src.agents.coding.prompts.base import BASE_PROMPT
 
 # Module-level progress callback set by the streaming UI
 _progress_cb: Optional[Callable[[str, dict, Optional[dict]], Optional[dict]]] = None
@@ -27,7 +26,7 @@ def _get_coding_llm():
 def _get_coding_tools():
     from src.agents.coding.tools import (
         dev_plan_create, dev_plan_step_done, dev_explain, find_git_repos,
-        propose_file_change, browser_screenshot,  # noqa: F401
+        propose_file_change, browser_screenshot, load_skill,
     )
     from src.agents.filesystem.tools import (
         local_find_file, local_read_file, local_list_directory,
@@ -43,9 +42,12 @@ def _get_coding_tools():
     from src.agents.search.tools import web_research_report, web_search_news
     from src.agents.mermaid.tools import mermaid_diagram
     from src.agents.coding.asset_downloader import download_asset
+    from src.agents.notebook.tools import (
+        notebook_read, notebook_edit_cell, notebook_insert_cell, notebook_run,
+    )
     return [
         dev_plan_create, dev_plan_step_done, dev_explain,
-        find_git_repos, propose_file_change, browser_screenshot,
+        find_git_repos, propose_file_change, browser_screenshot, load_skill,
         local_find_file, local_read_file, local_list_directory,
         local_grep, local_glob,
         shell_run, shell_cd, shell_pwd, shell_ls, shell_kill_bg,
@@ -56,6 +58,7 @@ def _get_coding_tools():
         web_research_report, web_search_news,
         mermaid_diagram,
         download_asset,
+        notebook_read, notebook_edit_cell, notebook_insert_cell, notebook_run,
     ]
 
 
@@ -64,10 +67,29 @@ _PROGRESS_TOOLS = {
     "local_read_file", "local_grep", "local_glob", "local_find_file", "local_list_directory",
     "shell_ls", "shell_pwd", "url_fetch", "web_research_report", "web_search_news",
     "git_status", "git_log", "git_diff",
+    "notebook_read", "notebook_edit_cell", "notebook_insert_cell", "notebook_run",
+    "load_skill",
 }
 _SHELL_PREVIEW_TOOLS = {"shell_run", "shell_cd"}
 _MAX_ITERATIONS = 75
-_CONTEXT_CHAR_BUDGET = 150_000  # ~50k tokens — conservative to leave room for tool descriptions
+# Tools exempt from the repetition guard: writes, planning, and shell (may legitimately retry)
+_REPETITION_EXEMPT = frozenset({
+    "dev_plan_create", "dev_plan_step_done", "dev_explain",
+    "propose_file_change", "shell_run", "shell_cd",
+})
+# Keywords used to detect frontend projects for the load_skill() reminder guard
+_FRONTEND_KW = frozenset({"next", "react", "vue", "svelte", "angular", "frontend"})
+# Adaptive context budget per backend (chars ≈ tokens × 3)
+_CONTEXT_CHAR_BUDGET: dict[str, int] = {
+    "ollama_cloud": 120_000,   # ~40k tokens — quota-sensitive
+    "groq":         120_000,   # ~40k tokens — quota-sensitive
+    "ollama":        48_000,   # ~16k tokens — match num_ctx local, évite CPU offload
+    "gemini":       400_000,   # ~133k tokens — 1M context, cheap
+}
+_CONTEXT_CHAR_BUDGET_DEFAULT = 180_000  # fallback
+
+_SERVER_ERR_MARKERS = ("500", "502", "503", "504", "server error", "internal error", "bad gateway", "service unavailable")
+_RATE_LIMIT_MARKERS = ("429", "too many requests", "resource_exhausted", "rate limit", "quota exceeded", "ratelimit")
 
 
 def _compress_specialist_messages(messages: list, llm) -> list:
@@ -96,7 +118,27 @@ def _compress_specialist_messages(messages: list, llm) -> list:
         elif isinstance(m, ToolMessage):
             name = getattr(m, "name", "tool") or "tool"
             content = m.content if isinstance(m.content, str) else str(m.content)
-            transcript_parts.append(f"[TOOL RESULT] {name}: {content[:2_500]}")
+            # For file reads: replace truncated content with a re-read instruction so
+            # the LLM knows to re-read rather than writing from an incomplete view.
+            if name == "local_read_file":
+                try:
+                    import json as _json
+                    parsed = _json.loads(content)
+                    fpath = parsed.get("path", "") or ""
+                    raw = parsed.get("content", "")
+                    flines = raw.count("\n") + 1 if raw else 0
+                except Exception:
+                    fpath, flines = "", 0
+                if fpath:
+                    transcript_parts.append(
+                        f"[TOOL RESULT] local_read_file: ⚠ Contenu compressé hors contexte."
+                        f" Fichier : '{fpath}' ({flines} lignes). Re-lire OBLIGATOIREMENT avec"
+                        f" local_read_file(path='{fpath}') avant tout propose_file_change sur ce fichier."
+                    )
+                else:
+                    transcript_parts.append(f"[TOOL RESULT] {name}: {content[:2_500]}")
+            else:
+                transcript_parts.append(f"[TOOL RESULT] {name}: {content[:2_500]}")
 
     transcript = "\n".join(transcript_parts)
     # Cap transcript so the compression call itself never exceeds model limits
@@ -113,7 +155,10 @@ def _compress_specialist_messages(messages: list, llm) -> list:
         "3. Le répertoire de travail courant (dernier shell_cd)\n"
         "4. Commandes exécutées et leur résultat (succès / erreur + cause)\n"
         "5. Dépendances installées, variables d'env, configs importantes\n"
-        "6. Ce qui était exactement en cours au moment de la compression\n\n"
+        "6. Ce qui était exactement en cours au moment de la compression\n"
+        "7. La spec/brief du message initial : modules listés, palette, typographie,\n"
+        "   contraintes visuelles ('no animations', 'no rounded', 'no UI library'),\n"
+        "   structure des sections, textes exacts — même si déjà mentionnés ailleurs.\n\n"
         f"TRANSCRIPTION :\n{transcript}\n\n"
         "Résumé dense (chemins exacts, noms de variables, valeurs de config — pas de généralités) :"
     )
@@ -131,8 +176,8 @@ def _compress_specialist_messages(messages: list, llm) -> list:
         )
         return [system_msg, task_msg, summary_msg]
     except Exception:
-        # Fallback: keep only the last 10 messages (best-effort, never truncate content)
-        return [system_msg, task_msg] + history[-10:]
+        # Fallback: keep only last 5 messages to guarantee the context fits
+        return [system_msg, task_msg] + history[-5:]
 
 
 def _vram_swap_in() -> None:
@@ -200,40 +245,107 @@ def _extract_json_tool_call(content: str) -> dict | None:
     return None
 
 
+def _build_specialist_trace(messages: list) -> str:
+    """Build a compact trace block prepended to the specialist's return value."""
+    from src.agents.coding.pending import dev_plan
+    from src.agents.shell.tools import get_cwd
+
+    parts: list[str] = []
+
+    cwd = str(get_cwd())
+    parts.append(f"cwd:{cwd}")
+
+    written: list[str] = []
+    for m in messages:
+        if not isinstance(m, AIMessage):
+            continue
+        for tc in (getattr(m, "tool_calls", None) or []):
+            if tc.get("name") == "propose_file_change":
+                p = (tc.get("args") or {}).get("path", "")
+                if p and p not in written:
+                    written.append(p)
+    if written:
+        parts.append("files:" + ",".join(written))
+
+    steps = dev_plan.steps
+    if steps:
+        plan_parts = [f"✓{s.label}" if s.done else f"○{s.label}" for s in steps]
+        parts.append("plan:" + "|".join(plan_parts))
+
+    return "[SPECIALIST-TRACE]\n" + "\n".join(parts) + "\n[/SPECIALIST-TRACE]\n"
+
+
 def _run(task: str) -> str:
+    import time as _time
+    from src.agents.coding.tool_retriever import CodingToolRetriever, retrieval_query
+    from src.infra.settings import settings as _settings
+
     llm = _get_coding_llm()
-    tools = _get_coding_tools()
-    tool_map = {t.name: t for t in tools}
-    llm_with_tools = llm.bind_tools(tools)
+    all_tools = _get_coding_tools()
+    tool_map = {t.name: t for t in all_tools}  # full map — every tool remains callable
+
+    retriever = CodingToolRetriever(all_tools, k=6)
+
+    _budget = _CONTEXT_CHAR_BUDGET.get(_settings.llm_backend, _CONTEXT_CHAR_BUDGET_DEFAULT)
 
     from src.agents.coding.task_enricher import enrich_task
     enriched_task = enrich_task(task)
 
-    stacks = detect_stacks()
-    system_prompt = build_system_prompt(stacks)
-    messages = [SystemMessage(system_prompt), HumanMessage(enriched_task)]
+    messages = [SystemMessage(BASE_PROMPT), HumanMessage(enriched_task)]
     _plan_complete = False
+    _call_counts: dict[tuple, int] = {}  # (tool, args_json) → count, reset per plan step
+    _load_skill_called = False
+    _tool_call_count = 0
+    _is_frontend_task = any(kw in enriched_task.lower() for kw in _FRONTEND_KW)
+
+    if _progress_cb:
+        model_name = getattr(llm, "model", "unknown")
+        try:
+            _progress_cb("specialist:start", {"model": model_name}, None)
+        except Exception:
+            pass
 
     for _ in range(_MAX_ITERATIONS):
-        # Compress context if it exceeds budget — same as orchestrator's "compiling"
         total_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
-        if total_chars > _CONTEXT_CHAR_BUDGET:
+        # Guard: never compress with only system+task — transcript would be empty → infinite loop
+        if total_chars > _budget and len(messages) > 3:
             messages = _compress_specialist_messages(messages, llm)
 
-        invoker = llm if _plan_complete else llm_with_tools
+        # Per-turn tool selection: only bind tools relevant to the current step
+        _query = retrieval_query(messages, enriched_task)
+        _active_tools = retriever.get(_query)
+        _bound_llm = llm.bind_tools(_active_tools)
+
+        invoker = llm if _plan_complete else _bound_llm
         response = None
-        for _ in range(3):
+        _compressed = False
+        for attempt in range(3):
             try:
                 response = invoker.invoke(messages)
                 break
             except Exception as e:
                 err = str(e).lower()
                 if any(k in err for k in ("context", "length", "token", "400", "exceed")):
-                    if len(messages) > 3:
+                    if not _compressed and len(messages) > 3:
                         messages = _compress_specialist_messages(messages, llm)
-                        invoker = llm if _plan_complete else llm_with_tools
+                        invoker = llm if _plan_complete else _bound_llm
+                        _compressed = True
                     else:
-                        return "Erreur : le contexte initial est trop volumineux pour ce modèle."
+                        return "Contexte trop volumineux même après compression. Démarrez un nouveau thread avec /new."
+                elif any(k in err for k in _RATE_LIMIT_MARKERS):
+                    wait = 30 * (attempt + 1)  # 30s, 60s, 90s
+                    if _progress_cb:
+                        try:
+                            _progress_cb("specialist:rate_limit", {"wait": wait}, None)
+                        except Exception:
+                            pass
+                    _time.sleep(wait)
+                    continue
+                elif any(k in err for k in _SERVER_ERR_MARKERS):
+                    if attempt < 2:
+                        _time.sleep(2 ** attempt)  # 1s, 2s backoff
+                        continue
+                    raise
                 else:
                     raise
         if response is None:
@@ -248,11 +360,29 @@ def _run(task: str) -> str:
             if parsed and parsed["name"] in tool_map:
                 tool_calls = [{"name": parsed["name"], "args": parsed["args"], "id": str(uuid.uuid4())}]
             else:
-                return _clean_output(response.content) or "Tâche terminée."
+                trace = _build_specialist_trace(messages)
+                return trace + (_clean_output(response.content) or "Tâche terminée.")
 
         for tc in tool_calls:
             name = tc["name"]
             args = tc.get("args", {})
+
+            # load_skill() reminder guard: if 5 tool calls pass without load_skill on frontend
+            _tool_call_count += 1
+            if name == "load_skill":
+                _load_skill_called = True
+            elif (
+                _tool_call_count == 5
+                and not _load_skill_called
+                and _is_frontend_task
+            ):
+                messages.append(HumanMessage(
+                    content=(
+                        "[Rappel automatique] load_skill() n'a pas encore été appelé après 5 actions. "
+                        "Pour ce projet frontend, appelle load_skill('nextjs') / load_skill('vue') / etc. "
+                        "MAINTENANT, avant de modifier d'autres fichiers."
+                    )
+                ))
 
             # Pre-execution hook: show shell commands BEFORE they run
             if _progress_cb and name in _SHELL_PREVIEW_TOOLS:
@@ -263,9 +393,25 @@ def _run(task: str) -> str:
 
             # Execute the tool (with session cache for read-only tools)
             from src.infra.tools_cache import session_cache, CACHEABLE_TOOLS
+            from src.agents.coding.pending import recent_tools, dev_plan
+
+            # Repetition guard: same read tool called ≥3 times → redirect instead of re-executing
+            _args_key = (name, json.dumps(args, sort_keys=True, ensure_ascii=False, default=str))
+            _call_counts[_args_key] = _call_counts.get(_args_key, 0) + 1
+
             tool_fn = tool_map.get(name)
             if not tool_fn:
                 result = {"status": "error", "error": f"Outil inconnu : {name}"}
+            elif _call_counts[_args_key] >= 3 and name not in _REPETITION_EXEMPT:
+                result = {
+                    "status": "repeated_call",
+                    "message": (
+                        f"'{name}' a été appelé {_call_counts[_args_key]} fois avec les mêmes arguments. "
+                        "Le résultat n'a pas changé depuis la dernière lecture. "
+                        "→ Si tu attends un changement suite à une écriture, vérifie que propose_file_change a bien été accepté. "
+                        "→ Sinon, tu as déjà l'information — avance à l'étape suivante du plan."
+                    ),
+                }
             elif name in CACHEABLE_TOOLS and (hit := session_cache.get(name, args)) is not None:
                 result = hit
             else:
@@ -277,13 +423,12 @@ def _run(task: str) -> str:
                 except Exception as e:
                     result = {"status": "error", "error": str(e)}
 
-            # Post-execution hook: notify UI of result
-            # For shell tools: pass result so UI can show stdout/exit_code
-            # For plan/file tools: may return an override dict (HITL)
+            # Post-execution hook: notify UI of result — MUST run before record() so
+            # propose_file_change gets the "accepted" override before being tracked.
             if _progress_cb and (name in _PROGRESS_TOOLS or name in _SHELL_PREVIEW_TOOLS):
                 skip = (name == "dev_plan_step_done" and
                         isinstance(result, dict) and
-                        result.get("status") == "already_done")
+                        result.get("status") in ("already_done", "error"))
                 if not skip:
                     try:
                         override = _progress_cb(name, args, result)
@@ -291,6 +436,16 @@ def _run(task: str) -> str:
                             result = override
                     except Exception:
                         pass
+
+            # Record tool outcome for proof validation (after override so "accepted" is captured)
+            if name != "dev_plan_step_done":
+                recent_tools.record(name, args, result)
+            # Reset state when a new plan is created or a step is completed
+            if name == "dev_plan_create" and isinstance(result, dict) and result.get("status") == "ok":
+                recent_tools.clear()
+                _call_counts.clear()
+            if name == "dev_plan_step_done" and isinstance(result, dict) and result.get("status") == "ok":
+                _call_counts.clear()
 
             messages.append(ToolMessage(
                 content=json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result,
@@ -301,4 +456,5 @@ def _run(task: str) -> str:
             if name == "dev_plan_step_done" and isinstance(result, dict) and result.get("remaining") == 0:
                 _plan_complete = True
 
-    return "Tâche interrompue (limite d'itérations atteinte)."  # end of _run
+    trace = _build_specialist_trace(messages)
+    return trace + "Tâche interrompue (limite d'itérations atteinte)."  # end of _run

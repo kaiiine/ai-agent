@@ -6,11 +6,32 @@ from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 import emoji as emoji_lib
 
-_USER_CACHE: Dict[str, str] = {}
+_USER_CACHE: Dict[str, str] = {}       # user_id → display name
+_MEMBERS_CACHE: list = []              # full members list (fetched once per session)
+_CHANNEL_CACHE: Dict[str, str] = {}   # channel name/handle → channel ID
+
+
+def _get_members(client: WebClient) -> list:
+    """Returns the full workspace member list, fetched once per session."""
+    global _MEMBERS_CACHE
+    if _MEMBERS_CACHE:
+        return _MEMBERS_CACHE
+    members = []
+    for resp in client.users_list(limit=200):
+        for u in resp.get("members", []):
+            if not u.get("deleted") and not u.get("is_bot"):
+                members.append(u)
+                # Populate user cache while we're at it
+                uid = u.get("id", "")
+                name = u.get("real_name") or u.get("profile", {}).get("display_name") or u.get("name", uid)
+                if uid:
+                    _USER_CACHE[uid] = name
+    _MEMBERS_CACHE = members
+    return members
 
 
 def _resolve_user(client: WebClient, user_id: str) -> str:
-    """Résout un user ID Slack en nom réel."""
+    """Résout un user ID Slack en nom réel — appel individuel ciblé, cache-first."""
     if not user_id:
         return "?"
     if user_id in _USER_CACHE:
@@ -18,7 +39,7 @@ def _resolve_user(client: WebClient, user_id: str) -> str:
     try:
         info = client.users_info(user=user_id)
         u = info["user"]
-        name = u.get("real_name") or u.get("display_name") or u.get("name", user_id)
+        name = u.get("real_name") or u.get("profile", {}).get("display_name") or u.get("name", user_id)
         _USER_CACHE[user_id] = name
         return name
     except Exception:
@@ -52,60 +73,66 @@ def _similarity(a: str, b: str) -> float:
 
 
 def _find_user_id_by_name(client: WebClient, name: str) -> str | None:
-    """Cherche un user ID par nom approximatif (fuzzy, insensible à la casse et aux fautes légères)."""
+    """Cherche un user ID par nom approximatif — utilise le cache membre, 1 seul appel API."""
     needle = _normalize(name)
     needle_parts = needle.split()
     best_id, best_score = None, 0.0
-    for resp in client.users_list(limit=200):
-        for u in resp.get("members", []):
-            if u.get("deleted") or u.get("is_bot"):
-                continue
-            candidates = [
-                _normalize(u.get("real_name", "")),
-                _normalize(u.get("name", "")),
-                _normalize(u.get("profile", {}).get("display_name", "")),
-            ]
-            for c in candidates:
-                # Match exact partiel (prénom seul)
-                if any(p in c for p in needle_parts):
-                    score = max([_similarity(needle, c)] + [_similarity(needle, part) for part in c.split()])
-                else:
-                    score = _similarity(needle, c)
-                if score > best_score:
-                    best_score, best_id = score, u["id"]
+    for u in _get_members(client):
+        candidates = [
+            _normalize(u.get("real_name", "")),
+            _normalize(u.get("name", "")),
+            _normalize(u.get("profile", {}).get("display_name", "")),
+        ]
+        for c in candidates:
+            if any(p in c for p in needle_parts):
+                score = max([_similarity(needle, c)] + [_similarity(needle, part) for part in c.split()])
+            else:
+                score = _similarity(needle, c)
+            if score > best_score:
+                best_score, best_id = score, u["id"]
     return best_id if best_score >= 0.6 else None
 
 
 def _resolve_channel(client: WebClient, name_or_id: str) -> str:
-    """Résout un nom de channel (#general), @nom ou ID (C/D/G...) → channel ID."""
+    """Résout un nom de channel (#general), @nom ou ID (C/D/G...) → channel ID (avec cache)."""
+    if name_or_id in _CHANNEL_CACHE:
+        return _CHANNEL_CACHE[name_or_id]
+
+    # ID direct
     if name_or_id.startswith(("C", "D", "G", "W")):
         return name_or_id
 
-    # @nom → DM avec cet utilisateur
+    # @nom → DM (cherche directement parmi les membres, pas de listing channels)
     if name_or_id.startswith("@"):
         user_name = name_or_id.lstrip("@")
         user_id = _find_user_id_by_name(client, user_name)
         if not user_id:
             raise ValueError(f"Utilisateur introuvable : {name_or_id}")
         resp = client.conversations_open(users=user_id)
-        return resp["channel"]["id"]
+        ch_id = resp["channel"]["id"]
+        _CHANNEL_CACHE[name_or_id] = ch_id
+        return ch_id
 
-    # #channel ou nom brut → cherche dans les channels
     clean = name_or_id.lstrip("#")
+
+    # Cherche d'abord dans les channels (public + privé + DM)
     for types in ("public_channel,im,mpim", "private_channel"):
         try:
             for resp in client.conversations_list(types=types, limit=200):
                 for ch in resp.get("channels", []):
                     if ch.get("name") == clean:
+                        _CHANNEL_CACHE[name_or_id] = ch["id"]
                         return ch["id"]
         except SlackApiError:
             pass
 
-    # Dernier recours : interprète comme un nom de personne → DM
+    # Dernier recours : nom de personne → DM (pas de double users_list grâce au cache)
     user_id = _find_user_id_by_name(client, name_or_id)
     if user_id:
         resp = client.conversations_open(users=user_id)
-        return resp["channel"]["id"]
+        ch_id = resp["channel"]["id"]
+        _CHANNEL_CACHE[name_or_id] = ch_id
+        return ch_id
 
     raise ValueError(f"Canal ou utilisateur introuvable : '{name_or_id}'")
 
@@ -132,22 +159,19 @@ def slack_find_user(name: str) -> Dict[str, Any]:
         needle = _normalize(name)
         needle_parts = needle.split()
         matches = []
-        for resp in client.users_list(limit=200):
-            for u in resp.get("members", []):
-                if u.get("deleted") or u.get("is_bot"):
-                    continue
-                candidates = [
-                    _normalize(u.get("real_name", "")),
-                    _normalize(u.get("name", "")),
-                    _normalize(u.get("profile", {}).get("display_name", "")),
-                ]
-                if any(needle in c for c in candidates) or any(all(p in c for p in needle_parts) for c in candidates):
-                    matches.append({
-                        "id": u["id"],
-                        "real_name": u.get("real_name", ""),
-                        "handle": f"@{u.get('name', '')}",
-                        "display_name": u.get("profile", {}).get("display_name", ""),
-                    })
+        for u in _get_members(client):
+            candidates = [
+                _normalize(u.get("real_name", "")),
+                _normalize(u.get("name", "")),
+                _normalize(u.get("profile", {}).get("display_name", "")),
+            ]
+            if any(needle in c for c in candidates) or any(all(p in c for p in needle_parts) for c in candidates):
+                matches.append({
+                    "id": u["id"],
+                    "real_name": u.get("real_name", ""),
+                    "handle": f"@{u.get('name', '')}",
+                    "display_name": u.get("profile", {}).get("display_name", ""),
+                })
         if not matches:
             return {"status": "empty", "matches": []}
         return {"status": "ok", "count": len(matches), "matches": matches}
@@ -293,16 +317,13 @@ def slack_list_dms() -> Dict[str, Any]:
     """
     client = _client()
     try:
+        # Warm the members cache once — covers all user_id lookups below for free
+        _get_members(client)
         dms = []
         for resp in client.conversations_list(types="im", limit=100):
             for ch in resp.get("channels", []):
                 user_id = ch.get("user", "")
-                name = "?"
-                try:
-                    info = client.users_info(user=user_id)
-                    name = info["user"].get("real_name") or info["user"].get("name", user_id)
-                except Exception:
-                    name = user_id
+                name = _USER_CACHE.get(user_id, user_id)
                 dms.append({"id": ch["id"], "user_id": user_id, "name": name})
         return {"status": "ok", "count": len(dms), "dms": dms}
     except SlackApiError as e:

@@ -20,8 +20,15 @@ def _auth() -> tuple[str, HTTPBasicAuth]:
     return url, HTTPBasicAuth(email, token)
 
 
-def _api_version() -> str:
-    """Détecte la version API disponible (v3 d'abord, fallback v2)."""
+_API_VERSION_CACHE: str | None = None
+_ACCOUNT_ID_CACHE: str | None = None
+
+
+def _bootstrap() -> tuple[str, str]:
+    """Détecte la version API et récupère l'account ID en un seul appel /myself (cache-first)."""
+    global _API_VERSION_CACHE, _ACCOUNT_ID_CACHE
+    if _API_VERSION_CACHE and _ACCOUNT_ID_CACHE:
+        return _API_VERSION_CACHE, _ACCOUNT_ID_CACHE
     base, auth = _auth()
     for v in ("3", "2"):
         try:
@@ -32,37 +39,25 @@ def _api_version() -> str:
                 timeout=10,
             )
             if r.status_code == 200:
-                return v
+                _API_VERSION_CACHE = v
+                _ACCOUNT_ID_CACHE = r.json().get("accountId", "")
+                return _API_VERSION_CACHE, _ACCOUNT_ID_CACHE
         except Exception:
             continue
-    return "3"
-
-
-_API_VERSION_CACHE: str | None = None
+    _API_VERSION_CACHE = "3"
+    _ACCOUNT_ID_CACHE = ""
+    return _API_VERSION_CACHE, _ACCOUNT_ID_CACHE
 
 
 def _api(path: str) -> str:
-    global _API_VERSION_CACHE
-    if _API_VERSION_CACHE is None:
-        _API_VERSION_CACHE = _api_version()
+    v, _ = _bootstrap()
     base, _ = _auth()
-    return f"{base}/rest/api/{_API_VERSION_CACHE}/{path.lstrip('/')}"
+    return f"{base}/rest/api/{v}/{path.lstrip('/')}"
 
 
 def _get_account_id() -> str:
-    """Retourne l'account ID de l'utilisateur courant via /myself."""
-    base, auth = _auth()
-    global _API_VERSION_CACHE
-    if _API_VERSION_CACHE is None:
-        _API_VERSION_CACHE = _api_version()
-    r = requests.get(
-        f"{base}/rest/api/{_API_VERSION_CACHE}/myself",
-        auth=auth,
-        headers={"Accept": "application/json"},
-        timeout=10,
-    )
-    r.raise_for_status()
-    return r.json().get("accountId", "")
+    _, account_id = _bootstrap()
+    return account_id
 
 
 def _get(path: str, params: dict | None = None) -> dict:
