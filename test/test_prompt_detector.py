@@ -193,5 +193,8 @@ def test_build_prompt_shorter_than_monolith():
 
 def test_all_stack_ids_have_a_prompt():
     from src.agents.coding.prompts import _STACK_PROMPTS
-    expected = {"frontend", "node_backend", "python", "rust", "go", "java", "systems"}
+    expected = {
+        "frontend", "nextjs", "angular", "vue", "svelte", "threedee",
+        "node_backend", "python", "rust", "go", "java", "systems",
+    }
     assert expected == set(_STACK_PROMPTS.keys())

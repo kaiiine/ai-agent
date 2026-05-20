@@ -4,6 +4,67 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
+# Tools that count as "analysis" proof (read-only, no disk writes)
+_ANALYSIS_TOOLS: frozenset[str] = frozenset({
+    "notebook_read", "local_read_file", "local_grep", "local_glob",
+    "local_find_file", "local_list_directory", "shell_ls", "shell_pwd",
+    "git_status", "git_log", "git_diff", "find_git_repos",
+    "web_research_report", "web_search_news", "url_fetch", "dev_explain",
+})
+
+
+class RecentToolsStore:
+    """Tracks tool outcomes since the last dev_plan_step_done for real proof validation."""
+
+    def __init__(self) -> None:
+        self._called: set[str] = set()
+        self._written_paths: set[str] = set()           # files written to disk
+        self._edited_cells: set[tuple[str, int]] = set() # (path, cell_index) notebook edits
+        self._shell_ok: bool = False                     # any shell_run with exit_code 0
+
+    def record(self, tool_name: str, args: dict, result: object) -> None:
+        self._called.add(tool_name)
+
+        if isinstance(result, dict):
+            status = result.get("status", "")
+            path = (args or {}).get("path", "")
+
+            # File accepted (HITL or auto)
+            if tool_name in ("propose_file_change", "notebook_insert_cell") and status == "accepted" and path:
+                self._written_paths.add(path)
+
+            # Notebook cell accepted
+            if tool_name == "notebook_edit_cell" and status == "accepted" and path:
+                self._written_paths.add(path)
+                cell_idx = (args or {}).get("cell_index", -1)
+                if cell_idx >= 0:
+                    self._edited_cells.add((path, cell_idx))
+
+            # Shell success
+            if tool_name == "shell_run" and result.get("exit_code", 1) == 0:
+                self._shell_ok = True
+
+    def any_analysis(self) -> bool:
+        return bool(self._called & _ANALYSIS_TOOLS)
+
+    def file_was_written(self, path: str) -> bool:
+        return path in self._written_paths
+
+    def cell_was_edited(self, path: str, cell_index: int) -> bool:
+        return (path, cell_index) in self._edited_cells
+
+    def shell_succeeded(self) -> bool:
+        return self._shell_ok
+
+    def clear(self) -> None:
+        self._called.clear()
+        self._written_paths.clear()
+        self._edited_cells.clear()
+        self._shell_ok = False
+
+
+recent_tools = RecentToolsStore()
+
 
 @dataclass
 class FileChange:

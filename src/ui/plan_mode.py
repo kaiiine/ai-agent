@@ -13,6 +13,7 @@ BLOCKED_TOOLS: frozenset[str] = frozenset({
     "shell_run", "process_kill", "clipboard_write", "notify",
     "git_add", "git_commit", "git_checkout", "git_stash",
     "run_coding_agent",
+    "propose_file_change", "dev_plan_create", "dev_plan_step_done", "download_asset",
     "google_docs_create", "google_docs_update",
     "create_presentation", "add_slide",
     "gmail_send_email", "gmail_confirm_send", "gmail_edit_draft",

@@ -1,8 +1,12 @@
+import re
 import uuid
 from rich.pretty import Pretty
 from rich.panel import Panel
+from rich.text import Text
+from rich.rule import Rule
+from rich.markdown import Markdown
 
-from .panels import config_table, command_panel, banner, _BOX
+from .panels import config_table, command_panel, banner, _BOX, final_panel
 from .transcript import save_transcript
 from .config import SessionConfig
 from src.infra.checkpoint import load_thread_cwd, save_thread_cwd, save_last_thread
@@ -223,26 +227,31 @@ def _handle_history(cfg: SessionConfig, state: dict, console) -> None:
         if saved_cwd:
             set_cwd(saved_cwd)
 
-        # Affiche les derniers messages du thread repris
+        # Affiche l'historique complet du thread repris
         if console:
             console.print()
             console.print(Rule("reprise de session", characters="·", style="dim color(214)"))
-            msgs = get_recent_messages(chosen, n=6)
-            _ROLE_STYLE = {
-                "human": ("bold color(214)", "›"),
-                "ai":    ("dim white",       "·"),
-                "tool":  ("dim",             "⚙"),
-            }
-            from rich.text import Text
-            for m in msgs:
+            msgs = get_recent_messages(chosen)
+            visible = [m for m in msgs if m["role"] in ("human", "ai") and m["content"].strip()]
+            hidden = len(visible) - 50
+            if hidden > 0:
+                visible = visible[-50:]
+            if hidden > 0:
+                console.print(Text(f"  … {hidden} messages plus anciens", style="dim"))
+                console.print()
+            for m in visible:
                 role, content = m["role"], m["content"].strip()
-                if not content:
-                    continue
-                style, icon = _ROLE_STYLE.get(role, ("dim", "?"))
-                t = Text()
-                t.append(f"  {icon}  ", style="bold color(214)")
-                t.append(content, style=style)
-                console.print(t)
+                if role == "human":
+                    t = Text()
+                    t.append("  ›  ", style="bold color(214)")
+                    t.append(content, style="bold color(214)")
+                    console.print(t)
+                elif role == "ai":
+                    clean = re.sub(
+                        r'<axon:plan>.*?</axon:plan>\s*', '', content, flags=re.DOTALL
+                    ).strip()
+                    if clean:
+                        console.print(final_panel(clean))
             console.print()
 
         return command_panel(f"thread repris : {chosen[:8]}")

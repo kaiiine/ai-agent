@@ -52,7 +52,11 @@ def _ollama_unload(model: str, base_url: str = "http://localhost:11434") -> None
 def make_coding_llm():
     """Coding specialist — uses dedicated coding model with VRAM swap on local ollama."""
     if settings.llm_backend == "ollama":
-        return ChatOllama(model=settings.coding_model_local, temperature=0.0, num_ctx=131_072)
+        return ChatOllama(
+            model=settings.coding_model_local,
+            temperature=0.0,
+            num_ctx=settings.coding_num_ctx_local,
+        )
     elif settings.llm_backend == "groq":
         return ChatGroq(
             api_key=settings.groq_api_key,
@@ -64,13 +68,22 @@ def make_coding_llm():
     elif settings.llm_backend == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(
-            model=settings.gemini_model,
+            model=settings.gemini_coding_model,
             google_api_key=settings.gemini_api_key,
             temperature=0.0,
-            max_output_tokens=8192,
+            max_output_tokens=32768,
         )
     else:
-        return ChatOllama(model=settings.coding_model, temperature=0.0)
+        # Mirror make_llm_ollama_cloud() connection logic but with coding_model
+        coding_model = settings.coding_model
+        if settings.ollama_api_key:
+            return ChatOllama(
+                model=coding_model.removesuffix("-cloud"),
+                base_url="https://ollama.com",
+                headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
+                temperature=0.0,
+            )
+        return ChatOllama(model=coding_model, temperature=0.0)
 
 
 def make_llm_groq():
@@ -93,4 +106,5 @@ def make_llm_gemini():
         temperature=settings.temperature,
         max_output_tokens=8192,
         streaming=True,
+        thinking_budget=0, 
     )

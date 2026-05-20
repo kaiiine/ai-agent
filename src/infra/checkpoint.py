@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, ToolMessage
 
 # ── Répertoire de données Axon ─────────────────────────────────────────────────
 _AXON_DIR   = Path.home() / ".axon"
@@ -131,10 +131,10 @@ def list_threads() -> list[dict]:
     return threads
 
 
-def get_recent_messages(thread_id: str, n: int = 6) -> list[dict]:
+def get_recent_messages(thread_id: str, n: int | None = None) -> list[dict]:
     """
-    Retourne les N derniers messages d'un thread sous forme de dicts simples
-    {role, content} en utilisant l'API publique LangGraph.
+    Retourne les messages d'un thread sous forme de dicts {role, content}.
+    n=None → tous les messages. n=K → les K derniers.
     """
     config = {"configurable": {"thread_id": thread_id}}
     try:
@@ -148,14 +148,15 @@ def get_recent_messages(thread_id: str, n: int = 6) -> list[dict]:
     msgs: list[BaseMessage] = (
         tup.checkpoint.get("channel_values", {}).get("messages", [])
     )
-    recent = msgs[-n:] if len(msgs) > n else msgs
+    if n is not None:
+        msgs = msgs[-n:] if len(msgs) > n else msgs
 
     result = []
-    for m in recent:
+    for m in msgs:
         role    = _role_of(m)
         content = _text_of(m)
         if content:
-            result.append({"role": role, "content": content[:300]})
+            result.append({"role": role, "content": content})
     return result
 
 
@@ -166,6 +167,8 @@ def _role_of(m: BaseMessage) -> str:
         return "human"
     if isinstance(m, AIMessage):
         return "ai"
+    if isinstance(m, ToolMessage) and getattr(m, "name", "") == "run_coding_agent":
+        return "coding_agent"
     return getattr(m, "type", "?")
 
 

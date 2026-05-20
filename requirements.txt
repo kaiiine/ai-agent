@@ -1,5 +1,6 @@
 ollama
 ipykernel
+nbconvert>=7.0
 python-dotenv
 pydantic
 pydantic-settings
@@ -67,6 +68,7 @@ huggingface-hub
 markdown
 click
 python-docx
+python-pptx
 psutil
 
 # Translator

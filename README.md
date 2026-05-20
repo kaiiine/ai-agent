@@ -1,15 +1,8 @@
 <div align="center">
 
-```
-  ██████╗ ██╗  ██╗ ██████╗ ███╗  ██╗
- ██╔══██╗╚██╗██╔╝██╔═══██╗████╗ ██║
- ███████║ ╚███╔╝ ██║   ██║██╔██╗██║
- ██╔══██║ ██╔██╗ ██║   ██║██║╚████║
- ██║  ██║██╔╝ ██╗╚██████╔╝██║ ╚███║
- ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚══╝
-```
+<img src="assets/banner.svg" alt="Axon" width="800"/>
 
-**Personal AI agent in your terminal — LangGraph · multi-backend · HITL · context-aware**
+<br/>
 
 ![Python](https://img.shields.io/badge/Python-3.11+-orange?style=flat-square&logo=python&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-blue?style=flat-square)

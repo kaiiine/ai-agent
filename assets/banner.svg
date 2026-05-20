@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 230" width="900">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#160d2b"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="230" rx="12" fill="url(#bg)"/>
+
+  <!-- Subtle top border accent -->
+  <rect width="900" height="2" rx="1" fill="#f59e0b" opacity="0.6"/>
+
+  <!-- Orange glow line at bottom -->
+  <rect y="228" width="900" height="2" rx="1" fill="#7c3aed" opacity="0.4"/>
+
+  <!-- ASCII art — orange with glow -->
+  <g font-family="'Courier New',Courier,monospace" font-size="17" fill="#f59e0b" text-anchor="middle" filter="url(#glow)">
+    <text x="450" y="50">  ██████╗ ██╗  ██╗ ██████╗ ███╗  ██╗</text>
+    <text x="450" y="72"> ██╔══██╗╚██╗██╔╝██╔═══██╗████╗ ██║</text>
+    <text x="450" y="94"> ███████║ ╚███╔╝ ██║   ██║██╔██╗██║</text>
+    <text x="450" y="116"> ██╔══██║ ██╔██╗ ██║   ██║██║╚████║</text>
+    <text x="450" y="138"> ██║  ██║██╔╝ ██╗╚██████╔╝██║ ╚███║</text>
+    <text x="450" y="160"> ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚══╝</text>
+  </g>
+
+  <!-- Divider -->
+  <line x1="200" y1="178" x2="700" y2="178" stroke="#f59e0b" stroke-width="0.5" opacity="0.25"/>
+
+  <!-- Subtitle -->
+  <text x="450" y="205" font-family="'Segoe UI','Inter',system-ui,sans-serif" font-size="13.5" fill="#94a3b8" text-anchor="middle" letter-spacing="0.3">
+    Personal AI agent in your terminal — LangGraph · multi-backend · HITL · context-aware
+  </text>
+</svg>
