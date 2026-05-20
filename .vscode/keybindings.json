@@ -1,8 +1,0 @@
-[
-  {
-    "key": "ctrl+alt+a",
-    "command": "workbench.action.tasks.runTask",
-    "args": "Agent Dev: /dev",
-    "when": "editorTextFocus"
-  }
-]
