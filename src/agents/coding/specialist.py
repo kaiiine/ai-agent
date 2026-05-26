@@ -71,20 +71,21 @@ _PROGRESS_TOOLS = {
     "load_skill",
 }
 _SHELL_PREVIEW_TOOLS = {"shell_run", "shell_cd"}
-_MAX_ITERATIONS = 75
+_MAX_ITERATIONS = 35
 # Tools exempt from the repetition guard: writes, planning, and shell (may legitimately retry)
 _REPETITION_EXEMPT = frozenset({
     "dev_plan_create", "dev_plan_step_done", "dev_explain",
-    "propose_file_change", "shell_run", "shell_cd",
+    "propose_file_change", "shell_cd",
 })
-# Keywords used to detect frontend projects for the load_skill() reminder guard
+# Keywords used to detect frontend projects for the load_skill() 
 _FRONTEND_KW = frozenset({"next", "react", "vue", "svelte", "angular", "frontend"})
 # Adaptive context budget per backend (chars ≈ tokens × 3)
 _CONTEXT_CHAR_BUDGET: dict[str, int] = {
-    "ollama_cloud": 120_000,   # ~40k tokens — quota-sensitive
-    "groq":         120_000,   # ~40k tokens — quota-sensitive
-    "ollama":        48_000,   # ~16k tokens — match num_ctx local, évite CPU offload
-    "gemini":       400_000,   # ~133k tokens — 1M context, cheap
+    "ollama_cloud": 120_000,   
+    "groq":         120_000,   
+    "ollama":        48_000,   
+    "gemini":       400_000,   
+    "mistral":      60_000,
 }
 _CONTEXT_CHAR_BUDGET_DEFAULT = 180_000  # fallback
 
@@ -297,6 +298,7 @@ def _run(task: str) -> str:
     _load_skill_called = False
     _tool_call_count = 0
     _is_frontend_task = any(kw in enriched_task.lower() for kw in _FRONTEND_KW)
+    _text_only_retries = 0
 
     if _progress_cb:
         model_name = getattr(llm, "model", "unknown")
@@ -350,18 +352,37 @@ def _run(task: str) -> str:
                     raise
         if response is None:
             return "Erreur : impossible d'invoquer le modèle après compression (contexte trop volumineux)."
-        messages.append(response)
-
         tool_calls = response.tool_calls or []
 
         # Small models sometimes return tool calls as JSON text instead of using the API
         if not tool_calls and response.content:
             parsed = _extract_json_tool_call(response.content)
             if parsed and parsed["name"] in tool_map:
-                tool_calls = [{"name": parsed["name"], "args": parsed["args"], "id": str(uuid.uuid4())}]
+                tc_id = str(uuid.uuid4())
+                tool_calls = [{"name": parsed["name"], "args": parsed["args"], "id": tc_id}]
+                # Declare the tool_call in the AIMessage so Mistral sees balanced pairs
+                messages.append(AIMessage(content="", tool_calls=tool_calls))
             else:
-                trace = _build_specialist_trace(messages)
-                return trace + (_clean_output(response.content) or "Tâche terminée.")
+                messages.append(response)
+                from src.agents.coding.pending import dev_plan
+                plan_complete = all(s.done for s in dev_plan.steps) if dev_plan.steps else False
+                if plan_complete or not dev_plan.steps:
+                    trace = _build_specialist_trace(messages)
+                    return trace + (_clean_output(response.content) or "Task completed")
+                else:
+                    if _text_only_retries < 2:
+                        _text_only_retries += 1
+                        messages.append(HumanMessage(content=(
+                            "[System] You still have incomplete plan steps. "
+                            "Use your tools to continue — don't summarize yet."
+                        )))
+                        continue
+                    else:
+                        _text_only_retries = 0
+                        trace = _build_specialist_trace(messages)
+                        return trace + (_clean_output(response.content) or "Task completed")
+        else:
+            messages.append(response)
 
         for tc in tool_calls:
             name = tc["name"]
@@ -416,11 +437,34 @@ def _run(task: str) -> str:
                 result = hit
             else:
                 try:
+                    if name == "shell_run":
+                        try:
+                            from src.agents.shell.tools import set_shell_stream_callback
+
+                            def _stream_line(line: str):
+                                if _progress_cb:
+                                    _progress_cb("shell_run:stream", {"line": line}, None)
+
+                            set_shell_stream_callback(_stream_line)
+                        except Exception:
+                            pass
                     result = tool_fn.invoke(args)
+                    if name == "shell_run":
+                        try:
+                            from src.agents.shell.tools import set_shell_stream_callback
+                            set_shell_stream_callback(None)
+                        except Exception:
+                            pass
                     if name in CACHEABLE_TOOLS:
                         session_cache.set(name, args, result)
                     session_cache.on_tool_executed(name)
                 except Exception as e:
+                    if name == "shell_run":
+                        try:
+                            from src.agents.shell.tools import set_shell_stream_callback
+                            set_shell_stream_callback(None)
+                        except Exception:
+                            pass    
                     result = {"status": "error", "error": str(e)}
 
             # Post-execution hook: notify UI of result — MUST run before record() so

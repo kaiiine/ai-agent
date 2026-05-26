@@ -66,7 +66,7 @@ def save_study_file(
 
         try:
             from src.infra.settings import settings
-            from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini
+            from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini, make_llm_mistral
             from langchain_core.messages import HumanMessage
 
             _factories = {
@@ -74,6 +74,7 @@ def save_study_file(
                 "groq": make_llm_groq,
                 "ollama_cloud": make_llm_ollama_cloud,
                 "gemini": make_llm_gemini,
+                "mistral": make_llm_mistral
             }
             llm = _factories.get(settings.llm_backend, make_llm_ollama_cloud)()
 

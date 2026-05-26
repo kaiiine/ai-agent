@@ -11,10 +11,14 @@ from .transcript import save_transcript
 from .config import SessionConfig
 from src.infra.checkpoint import load_thread_cwd, save_thread_cwd, save_last_thread
 from src.agents.shell.tools import get_cwd, set_cwd
+from langchain_core.messages import SystemMessage
+from src.orchestrator.graph import _SUMMARY_MARKER, _estimate_tokens, _cap_tool_messages
+
 
 debug_state = {"enabled": False}
 
 _COMMANDS = [
+    ("/compact", "compresse le contexte de la session courante en un résumé dense"),
     ("/attach",            "joint un fichier (code, texte, PDF, image) à ton prochain message"),
     ("/paste",             "colle une image depuis le presse-papiers"),
     ("/attachments",       "liste les pièces jointes en attente"),
@@ -23,11 +27,13 @@ _COMMANDS = [
     ("/upgrade",           "améliore une lettre existante — attach ton CV, colle la lettre puis l'offre"),
     ("/fiche",             "fiche de révision HTML/CSS depuis PDF(s) — /attach tes cours d'abord"),
     ("/exo",               "exercices interactifs HTML/JS (QCM, ouvert…) depuis PDF(s) — /attach tes cours"),
+    ("/spec [prompt]",     "wizard interactif de spécification — l'IA pose des questions guidées"),
+    ("/build [projet]",   "exécute spec.md par phases — 60-70% moins de tokens qu'une session unique"),
     ("/clear",             "efface l'écran et réaffiche l'en-tête"),
     ("/new",               "démarre un nouveau thread de conversation"),
     ("/history",           "liste les threads passés et permet d'en reprendre un (flèches ↑↓)"),
     ("/help",              "affiche cette liste de commandes"),
-    ("/backend <b>",       "change le backend LLM — groq · ollama · ollama_cloud · gemini"),
+    ("/backend <b>",       "change le backend LLM — groq · ollama · ollama_cloud · gemini · mistral"),
     ("/model <nom>",       "change le modèle du backend actif (ex: llama3.1:8b, openai/gpt-oss-20b)"),
     ("/temp <val>",        "change la température (ex: /temp 0.7)"),
     ("/lang <fr|en>",      "force la langue de réponse"),
@@ -46,6 +52,8 @@ _COMMANDS = [
     ("Ctrl+D",             "supprimer toutes les pièces jointes"),
     ("@fichier",           "injecte un fichier dans ton message — autocomplété par Tab"),
 ]
+
+_BACKENDS = ["groq", "ollama", "ollama_cloud", "gemini", "mistral"]
 
 
 _OLLAMA_FALLBACK = ["qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b"]
@@ -67,10 +75,15 @@ _CLOUD_MODELS    = [
     "kimi-k2:1t-cloud"
 ]
 _GEMINI_MODELS   = [
-    "gemini-3.1-flash-lite-preview",  # rapide, gratuit — recommandé
-    "gemini-2.5-flash",        # plus capable, gratuit
-    "gemini-2.5-pro",          # meilleur, quota limité
-    "gemini-1.5-flash",        # fallback stable
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-flash-lite-preview", 
+    "gemini-2.5-flash",        
+    "gemini-2.5-pro",          
+    "gemini-1.5-flash",       
+]
+_MISTRAL_MODELS = [
+    "mistral-small-2603",
 ]
 
 
@@ -92,6 +105,8 @@ def _get_model_options(backend: str) -> list[str]:
         return _CLOUD_MODELS
     if backend == "gemini":
         return _GEMINI_MODELS
+    if backend == "mistral":
+        return _MISTRAL_MODELS
     return _get_ollama_local_models()
 
 
@@ -102,6 +117,8 @@ def _current_model(settings) -> str:
         return settings.ollama_cloud_model
     if settings.llm_backend == "gemini":
         return settings.gemini_model
+    if settings.llm_backend == "mistral":
+        return settings.mistral_model
     return settings.ollama_model
 
 
@@ -112,6 +129,8 @@ def _set_model(settings, model: str) -> None:
         settings.ollama_cloud_model = model
     elif settings.llm_backend == "gemini":
         settings.gemini_model = model
+    elif settings.llm_backend == "mistral":
+        settings.mistral_model = model
     else:
         settings.ollama_model = model
 
@@ -290,7 +309,6 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
     if cmd.startswith("/backend"):
         from src.infra.settings import settings
         from src.ui.picker import pick
-        _BACKENDS = ["groq", "ollama", "ollama_cloud", "gemini"]
         parts = cmd.split(maxsplit=1)
         if len(parts) == 1:
             # Arrow-key picker
@@ -301,7 +319,7 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
             return command_panel(f"backend : {chosen}")
         b = parts[1].strip().lower()
         if b not in _BACKENDS:
-            return command_panel("backend invalide. options : groq · ollama · ollama_cloud · gemini", error=True)
+            return command_panel("backend invalide. options : groq · ollama · ollama_cloud · gemini · mistral", error=True)
         settings.llm_backend = b
         return command_panel(f"backend : {b}")
 
@@ -426,5 +444,73 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         except Exception as e:
             return command_panel(f"erreur dump : {e}", error=True)
         return Panel(Pretty(state["messages"], expand_all=True), box=_BOX, border_style="dim", title="dump")
+    
+    if cmd == "/compact":
+        if not graph:
+            return command_panel("pas de graph actif", error=True)
+        try:
+            from src.infra.settings import settings
+            from src.orchestrator.graph import _compress_context, _chat_node_factory
+            from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini, make_llm_mistral
+            from langchain_core.messages import RemoveMessage
+
+            _factories = {
+                "groq":         make_llm_groq,
+                "ollama_cloud": make_llm_ollama_cloud,
+                "ollama":       make_llm,
+                "gemini":       make_llm_gemini,
+                "mistral":      make_llm_mistral,
+            }
+            backend = settings.llm_backend
+            factory = _factories.get(backend, make_llm_ollama_cloud)
+
+            config = {"configurable": {"thread_id": cfg.thread_id}}
+            snapshot = graph.get_state(config)
+            messages = snapshot.values.get("messages", []) if snapshot.values else []
+
+            if len(messages) <= 3:
+                return command_panel("contexte trop court pour compresser")
+
+            already_compacted = any(
+                isinstance(m, SystemMessage)
+                and _SUMMARY_MARKER in str(m.content)
+                for m in messages
+            )
+
+            if already_compacted and len(messages) < 12:
+                return command_panel(
+                    "contexte déjà compacté récemment"
+                )
+
+            plain_llm = factory()
+            before_tokens = _estimate_tokens(messages)
+
+            messages = _cap_tool_messages(messages)
+            compressed, removed = _compress_context(messages, plain_llm, backend)
+
+            after_tokens = _estimate_tokens(compressed)
+            freed = before_tokens - after_tokens
+
+            # Persist dans LangGraph
+            removals = [RemoveMessage(id=m.id) for m in removed if getattr(m, "id", None)]
+            summary = next(
+                (
+                    m for m in compressed
+                    if isinstance(m, SystemMessage)
+                    and _SUMMARY_MARKER in str(m.content)
+                ),
+                None,
+            )
+            updates = removals + ([summary] if summary else [])
+            if updates:
+                graph.update_state(config, {"messages": updates})
+
+            return command_panel(
+                f"contexte compressé — "
+                f"{before_tokens:,} → {after_tokens:,} tokens "
+                f"(-{freed:,})"
+            )
+        except Exception as e:
+            return command_panel(f"erreur compression : {e}", error=True)
 
     return None

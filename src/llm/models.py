@@ -73,6 +73,12 @@ def make_coding_llm():
             temperature=0.0,
             max_output_tokens=32768,
         )
+    elif settings.llm_backend == "mistral":
+        from langchain_mistralai import ChatMistralAI
+        return ChatMistralAI(
+            model=settings.mistral_coding_model,
+            temperature=0.0,
+        )
     else:
         # Mirror make_llm_ollama_cloud() connection logic but with coding_model
         coding_model = settings.coding_model
@@ -107,4 +113,12 @@ def make_llm_gemini():
         max_output_tokens=8192,
         streaming=True,
         thinking_budget=0, 
+    )
+
+def make_llm_mistral():
+    """Mistral - free, 1M context tokens"""
+    from langchain_mistralai import ChatMistralAI
+    return ChatMistralAI(
+        model=settings.mistral_model,
+        temperature=0.0,
     )

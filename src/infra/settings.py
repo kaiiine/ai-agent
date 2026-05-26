@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash"
     gemini_coding_model: str = "gemini-2.5-flash"  # specialist can use a stronger model
 
+    # Mistral
+    mistral_api_key: str | None = None
+    mistral_model: str = "mistral-small-2603"
+    mistral_coding_model: str = "codestral-2508"
+
     # Search
     search_backend: str = "tavily"
     search_max_results: int = 10
@@ -96,6 +101,8 @@ def _merge_yaml_into_settings() -> Settings:
         coding_model=yml.get("coding_model", "qwen3-coder-next:cloud"),
         gemini_model=yml.get("gemini", {}).get("model", "gemini-2.5-flash"),
         gemini_coding_model=yml.get("gemini", {}).get("coding_model", "gemini-2.5-flash"),
+        mistral_model=yml.get("mistral", {}).get("model", "mistral-small-2603"),
+        mistral_coding_model=yml.get("mistral", {}).get("coding_model", "codestral-2508"),
     )
 
 
