@@ -3,32 +3,16 @@
 Le LLM appelle axon_note() quand il découvre ou fait quelque chose
 d'important que les futurs threads sur ce repo doivent connaître.
 
-Les notes sont écrites dans {git_root}/.axon/memory.md et injectées
+Les notes sont écrites dans {git_root}/.axon/memory/<kind>.md et injectées
 automatiquement dans le system prompt au prochain lancement.
 """
 from __future__ import annotations
 
-from datetime import datetime
-from pathlib import Path
-
 from langchain_core.tools import tool
 
 
-def _find_git_root(start: Path) -> Path:
-    """Remonte depuis start jusqu'à trouver un .git. Retourne start si absent."""
-    for directory in [start, *start.parents]:
-        if (directory / ".git").exists():
-            return directory
-    return start
-
-
-def _memory_path() -> Path:
-    root = _find_git_root(Path.cwd())
-    return root / ".axon" / "memory.md"
-
-
 @tool("axon_note")
-def axon_note(fact: str) -> str:
+def axon_note(fact: str, kind: str = "learning") -> str:
     """
     Sauvegarde un fait important dans la mémoire persistante du projet.
 
@@ -49,21 +33,9 @@ def axon_note(fact: str) -> str:
 
     Args:
         fact: phrase concise décrivant le fait, la découverte ou le changement
+        kind: "decision" | "learning" | "blocker" | "eval" (défaut: "learning")
     Returns:
         confirmation d'écriture
     """
-    p = _memory_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-
-    date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    entry = f"\n## {date_str}\n{fact.strip()}\n"
-
-    with p.open("a", encoding="utf-8") as f:
-        if p.stat().st_size == 0:
-            # Premier appel sur ce projet — écrire l'en-tête
-            project_name = p.parent.parent.name
-            f.write(f"# Axon Memory — {project_name}\n")
-            f.write("*Généré automatiquement. Ne pas éditer manuellement.*\n")
-        f.write(entry)
-
-    return f"Note enregistrée dans {p}"
+    from src.agents.memory.persistent import write_single_entry
+    return write_single_entry(kind, fact)

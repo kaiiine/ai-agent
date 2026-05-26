@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Diagramme</title>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'base',
+      themeVariables: {
+        darkMode: true,
+        background: '#0d1117',
+        primaryColor: '#1e3a5f',
+        primaryTextColor: '#e2e8f0',
+        primaryBorderColor: '#3b82f6',
+        lineColor: '#94a3b8',
+        secondaryColor: '#2d1b69',
+        tertiaryColor: '#1a3a2a',
+        edgeLabelBackground: '#1e293b',
+        fontFamily: 'Inter, system-ui, sans-serif',
+        fontSize: '14px',
+      },
+      flowchart: { curve: 'linear', padding: 24, useMaxWidth: false, htmlLabels: true },
+      sequence: { mirrorActors: false, useMaxWidth: false },
+    });
+  </script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      background: #0d1117;
+      color: #e2e8f0;
+      font-family: Inter, system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 24px;
+    }
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      color: #f97316;
+      margin-bottom: 24px;
+      letter-spacing: 0.02em;
+    }
+    .export-bar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+    .export-btn {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      color: #94a3b8;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.8rem;
+      padding: 6px 14px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .export-btn:hover {
+      border-color: #3b82f6;
+      color: #e2e8f0;
+    }
+    .export-btn:active {
+      background: #1e293b;
+    }
+    .mermaid-wrapper {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 24px;
+      width: 100%;
+      max-width: 1200px;
+      overflow: auto;
+    }
+    .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+    .mermaid svg {
+      max-width: 100%;
+      display: block;
+    }
+    .mermaid svg text {
+      fill: #e2e8f0 !important;
+    }
+    .mermaid .label div,
+    .mermaid .nodeLabel {
+      color: #e2e8f0 !important;
+      text-align: center;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+  </style>
+  <script>
+    function exportPng(transparent) {
+      const svg = document.querySelector('.mermaid svg');
+      if (!svg) { alert('Diagram not ready yet.'); return; }
+      const scale = 2;
+      const bbox = svg.getBoundingClientRect();
+      const w = Math.round(bbox.width  * scale) || 1200;
+      const h = Math.round(bbox.height * scale) || 900;
+
+      // Inline fonts so the canvas renderer doesn't fall back to system fonts
+      const svgClone = svg.cloneNode(true);
+      svgClone.setAttribute('width',  w);
+      svgClone.setAttribute('height', h);
+
+      const serializer = new XMLSerializer();
+      const svgStr = serializer.serializeToString(svgClone);
+      const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+      const url  = URL.createObjectURL(blob);
+
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width  = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!transparent) {
+          ctx.fillStyle = '#0d1117';
+          ctx.fillRect(0, 0, w, h);
+        }
+        ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+
+        const suffix = transparent ? 'transparent' : 'dark';
+        canvas.toBlob(pngBlob => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(pngBlob);
+          a.download = `diagram-${suffix}.png`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+        }, 'image/png');
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); alert('PNG export failed.'); };
+      img.src = url;
+    }
+  </script>
+</head>
+<body>
+  <h1>Diagramme</h1>
+  <div class="export-bar">
+    <button class="export-btn" onclick="exportPng(true)">⬇ PNG sans fond</button>
+    <button class="export-btn" onclick="exportPng(false)">⬇ PNG fond sombre</button>
+  </div>
+  <div class="mermaid-wrapper">
+    <pre class="mermaid">
+%%{init: {"theme": "dark"}}%%
+graph TD
+subgraph MONOLITHE["Monolithe"]
+    M1["Client"] --> M2["Load Balancer"]
+    M2 --> M3["Application Monolithique"]
+    M3 --> M4["Base de données Partagée"]
+end
+
+subgraph MICROSERVICES["Microservices"]
+    C1["Client"] --> C2["API Gateway"]
+    C2 --> C3["Service Auth"]
+    C2 --> C4["Service Commande"]
+    C2 --> C5["Service Paiement"]
+    C3 --> C7["DB Auth"]
+    C4 --> C8["DB Commande"]
+    C5 --> C9["DB Paiement"]
+end
+
+classDef monolith fill:#1e3a5f,stroke:#4a90d9,color:#fff
+classDef microservice fill:#2d1b69,stroke:#9b59b6,color:#fff
+classDef db fill:#1a3a2a,stroke:#27ae60,color:#fff
+
+class M1,M2,M3,M4 monolith
+class C1,C2,C3,C4,C5 microservice
+class C7,C8,C9 db
+    </pre>
+  </div>
+</body>
+</html>
