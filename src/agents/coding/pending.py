@@ -226,3 +226,17 @@ def render_plan(console) -> None:
         console.print(t)
 
     console.print(Rule(characters="·", style=f"dim {_ACCENT}"))
+
+
+def reset_specialist_state() -> None:
+    """Réinitialise tous les singletons module-level entre les phases /build.
+    La liste messages dans _run() est déjà locale — aucun LangGraph thread impliqué."""
+    dev_plan.clear()
+    recent_tools.clear()
+    pending_changes.clear()
+    snapshots.clear()
+    try:
+        from src.infra.tools_cache import session_cache
+        session_cache.clear()
+    except Exception:
+        pass

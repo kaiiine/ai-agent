@@ -48,6 +48,14 @@ def build_system_prompt(stacks: list[str]) -> str:
         sections.append(FRONTEND_PROMPT)
 
     for stack in stacks:
+        try:
+            from src.agents.coding.skill_retriever import get_skill
+            section = get_skill(stack)
+            if section and not section.startswith("Skill '"):
+                sections.append(section)
+                continue
+        except Exception:
+            pass
         section = _STACK_PROMPTS.get(stack)
         if section:
             sections.append(section)

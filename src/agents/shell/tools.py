@@ -371,14 +371,17 @@ def _find_dir(name: str) -> Optional[Path]:
             lines = [l.strip() for l in res.stdout.splitlines() if l.strip()]
             if not lines:
                 continue
-            # Trier par profondeur (moins profond = meilleur) puis par similarité
+            # Prefer: exact name > inside project roots > shallower depth
+            from src.utils.paths import get_projects_dir as _gpd
+            _projects = str(_gpd())
             def _score(p: str) -> tuple:
                 parts = p.split("/")
                 depth = len(parts)
                 basename = parts[-1].lower()
                 exact = basename == needle
                 contains = needle in basename
-                return (not exact, not contains, depth)
+                in_projects = p.startswith(_projects)
+                return (not exact, not contains, not in_projects, depth)
             lines.sort(key=_score)
             return Path(lines[0])
         except (FileNotFoundError, subprocess.TimeoutExpired):

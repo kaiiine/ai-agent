@@ -322,12 +322,12 @@ def load_skill(stack: str) -> str:
     Returns:
         Full guidelines prompt for that stack
     """
-    from src.agents.coding.prompts import _STACK_PROMPTS
-    prompt = _STACK_PROMPTS.get(stack.lower())
-    if not prompt:
-        available = ", ".join(_STACK_PROMPTS.keys())
-        return f"Stack '{stack}' non reconnu. Disponibles : {available}"
-    return prompt
+    from src.agents.coding.skill_retriever import get_skill, list_skills
+    result = get_skill(stack)
+    if not result or result.startswith("Skill '"):
+        from src.agents.coding.prompts import _STACK_PROMPTS
+        result = _STACK_PROMPTS.get(stack.lower(), f"Stack '{stack}' non reconnu. Disponibles : {', '.join(list_skills())}")
+    return result
 
 
 @tool("propose_file_change")

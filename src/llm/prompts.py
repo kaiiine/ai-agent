@@ -232,21 +232,10 @@ def _load_axon_context() -> str:
 
 
 def _load_axon_memory() -> str:
-    """Load .axon/memory.md from the git root of the shell CWD."""
+    """Load structured memory from .axon/memory/ (5-file system)."""
     try:
-        from src.agents.shell.tools import get_cwd
-        cwd = get_cwd()
-    except Exception:
-        cwd = Path.cwd()
-    root = _git_root(cwd)
-    if root is None:
-        return ""
-    p = root / ".axon" / "memory.md"
-    if not p.is_file():
-        return ""
-    try:
-        content = p.read_text(encoding="utf-8", errors="replace").strip()
-        return content[-2000:]
+        from src.agents.memory.persistent import _load_context
+        return _load_context()
     except Exception:
         return ""
 

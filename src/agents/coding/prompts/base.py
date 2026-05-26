@@ -71,7 +71,12 @@ DEMANDER UNE CLARIFICATION quand :
               → Corriger jusqu'à ce que le contenu soit visible dans le screenshot.
               → Jamais déclarer "opérationnel" sans avoir vu le rendu réel.
 
-  ⑥ CLÔTURE   axon_note(fact) · mise à jour AXON.md · résumé final via dev_explain
+  ⑥ CLÔTURE   mise à jour AXON.md · résumé final via dev_explain
+              axon_note(fact, kind) — UNIQUEMENT pour les notes manuelles URGENTES :
+              une découverte critique, un comportement inattendu, une décision importante.
+              axon_note(fact="...", kind="decision"|"learning"|"blocker")
+              Ne note que ce qu'un futur thread ne pourrait pas deviner en lisant le code.
+              ❌ Ne pas appeler axon_note() systématiquement en fin de tâche.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   RÈGLES FERMES
@@ -98,6 +103,13 @@ DEMANDER UNE CLARIFICATION quand :
                  → utilise local_read_file(path="…") pour lire un fichier.
               ✅ local_list_directory retourne {"path": "/chemin/exact", "entries": […]}
                  → ce "path" est la vérité — copie-le tel quel dans local_read_file.
+
+  SOURCES     Quand le contexte débute par "⚠ SOURCES PRÉ-LUES" et contient
+  PRÉ-LUES    "📁 Repo : /chemin/absolu", utilise ce chemin EXACT dans shell_cd.
+              ❌ Ne jamais appeler shell_cd("nom-du-projet") — fuzzy search peut donner
+                 un faux positif si plusieurs dossiers portent le même nom.
+              ✅ shell_cd("/home/kaine/Documents/projets-perso/techfor2pets")
+                 ← chemin absolu copié depuis la ligne "📁 Repo :" du contexte.
 
   ENV PYTHON  Avant tout pip install ou exécution Python/notebook :
               → Vérifie si .venv existe : shell_ls ou local_find_file(".venv")

@@ -8,6 +8,7 @@ from typing import Callable, Optional
 
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
 from src.agents.coding.prompts.base import BASE_PROMPT
+from src.agents.memory.persistent import _persist_session_memory
 
 # Module-level progress callback set by the streaming UI
 _progress_cb: Optional[Callable[[str, dict, Optional[dict]], Optional[dict]]] = None
@@ -72,6 +73,12 @@ _PROGRESS_TOOLS = {
 }
 _SHELL_PREVIEW_TOOLS = {"shell_run", "shell_cd"}
 _MAX_ITERATIONS = 35
+_phase_max_iterations: int | None = None  # override pour /build
+
+
+def set_phase_max_iterations(n: int | None) -> None:
+    global _phase_max_iterations
+    _phase_max_iterations = n
 # Tools exempt from the repetition guard: writes, planning, and shell (may legitimately retry)
 _REPETITION_EXEMPT = frozenset({
     "dev_plan_create", "dev_plan_step_done", "dev_explain",
@@ -307,7 +314,14 @@ def _run(task: str) -> str:
         except Exception:
             pass
 
-    for _ in range(_MAX_ITERATIONS):
+    try:
+        from src.agents.coding.skill_retriever import warmup as _skill_warmup
+        _skill_warmup()
+    except Exception:
+        pass
+
+    _iter_limit = _phase_max_iterations if _phase_max_iterations is not None else _MAX_ITERATIONS
+    for _ in range(_iter_limit):
         total_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
         # Guard: never compress with only system+task — transcript would be empty → infinite loop
         if total_chars > _budget and len(messages) > 3:
@@ -368,7 +382,9 @@ def _run(task: str) -> str:
                 plan_complete = all(s.done for s in dev_plan.steps) if dev_plan.steps else False
                 if plan_complete or not dev_plan.steps:
                     trace = _build_specialist_trace(messages)
-                    return trace + (_clean_output(response.content) or "Task completed")
+                    _result = _clean_output(response.content) or "Task completed"
+                    _persist_session_memory(messages, enriched_task, _result, _settings.llm_backend)
+                    return trace + _result
                 else:
                     if _text_only_retries < 2:
                         _text_only_retries += 1
@@ -380,7 +396,9 @@ def _run(task: str) -> str:
                     else:
                         _text_only_retries = 0
                         trace = _build_specialist_trace(messages)
-                        return trace + (_clean_output(response.content) or "Task completed")
+                        _result = _clean_output(response.content) or "Task completed"
+                        _persist_session_memory(messages, enriched_task, _result, _settings.llm_backend)
+                        return trace + _result
         else:
             messages.append(response)
 
@@ -501,4 +519,5 @@ def _run(task: str) -> str:
                 _plan_complete = True
 
     trace = _build_specialist_trace(messages)
+    _persist_session_memory(messages, enriched_task, "Tâche interrompue.", _settings.llm_backend)
     return trace + "Tâche interrompue (limite d'itérations atteinte)."  # end of _run
