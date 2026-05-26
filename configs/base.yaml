@@ -4,11 +4,15 @@ ollama:
 
 llm_backend: "ollama_cloud"   # "groq" | "ollama" | "ollama_cloud" | "gemini"
 
-coding_model: "qwen3-coder-next:cloud"  # ollama_cloud only
+coding_model: "qwen3-coder-next:cloud"
 
 gemini:
-  model: "gemini-2.5-flash"         # orchestrateur
-  coding_model: "gemini-2.5-flash"    # specialist (plus capable, même quota)
+  model: "gemini-2.5-flash"        
+  coding_model: "gemini-2.5-pro"  
+
+mistral:
+  model: "mistral-small-2603"
+  coding_model: "codestral-2508"
 
 search:
   backend: "tavily"

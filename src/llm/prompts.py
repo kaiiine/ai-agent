@@ -66,7 +66,7 @@ git_suggest_commit after git add only — propose the message, wait for validati
 Confirm before: rm, git reset --hard, git push --force, any deletion.\
 """
 
-_CODING = """\
+_OLD_CODING = """\
 ━━ DEVELOPMENT ━━
 Any task involving code, project files, or modifying/fixing/analysing a project → run_coding_agent(task="...") IMMEDIATELY and EXCLUSIVELY.
 ❌ Do NOT use shell_cd / shell_ls / shell_pwd for code work — these tools cannot create or modify project files.
@@ -77,6 +77,17 @@ Result received = task complete. Summarise in 2-3 lines.
   • "landing page" / "showcase site" / "web app" / "Next.js" → CODE → run_coding_agent. NEVER create_presentation.
   • "presentation" / "slides" / "slideshow" / "PowerPoint" / "pitch deck" → create_presentation. NEVER run_coding_agent.
   • "diagram" / "schema" / "flowchart" → mermaid_diagram.\
+"""
+
+_CODING = """\
+━━ DEVELOPMENT ━━
+Any task involving code, project files, or modifying/fixing/analysing a project → run_coding_agent(task="...") IMMEDIATELY and EXCLUSIVELY.
+❌ Do NOT use shell_cd / shell_ls / shell_pwd for code work — the specialist handles project tools.
+✓ Pass a concise task brief, not the full conversation.
+✓ Include only: objective, repo/path if known, files mentioned, constraints, expected deliverable.
+❌ Do NOT paste huge plans, long logs, full reports, or repeated previous context into task.
+If the user asks to continue/resume, pass only the current known state and next step.
+Result received = task complete. Summarise in 2-3 lines.
 """
 
 _SLACK = """\

@@ -92,6 +92,13 @@ DEMANDER UNE CLARIFICATION quand :
               ✅ propose_file_change doit TOUJOURS contenir le fichier entier, ligne par ligne.
                  Un fichier de 300 lignes modifié sur 10 lignes → content doit avoir 300+ lignes.
 
+  CHEMINS     Après local_list_directory ou find_git_repos → utilise le champ "path"
+              retourné dans le résultat JSON. Ne jamais reconstruire un chemin de tête.
+              ❌ shell_run("cat …") / shell_run("ls …") / shell_run("head …")
+                 → utilise local_read_file(path="…") pour lire un fichier.
+              ✅ local_list_directory retourne {"path": "/chemin/exact", "entries": […]}
+                 → ce "path" est la vérité — copie-le tel quel dans local_read_file.
+
   ENV PYTHON  Avant tout pip install ou exécution Python/notebook :
               → Vérifie si .venv existe : shell_ls ou local_find_file(".venv")
               → S'il n'existe pas : shell_run("python -m venv .venv")  ← TOUJOURS .venv, jamais venv

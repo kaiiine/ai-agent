@@ -21,6 +21,22 @@ _CONTEXT_LIMITS: dict[str, int] = {
 _COMPACTION_BUFFER = 20_000
 _PRUNE_PROTECT     = 40_000
 _PRUNE_MINIMUM     = 12_000
+_BACKEND_POLICY = {
+    "ollama": {"ratio": 0.40, "keep_recent": 6},
+    "ollama_cloud": {"ratio": 0.70, "keep_recent": 12},
+    "gemini": {"ratio": 0.75, "keep_recent": 24},
+    "mistral": {"ratio": 0.60, "keep_recent": 8},
+    "groq": {"ratio": 0.65, "keep_recent": 12},
+}
+
+_CODING_KEYWORDS = frozenset({
+    "code", "fichier", "file", "fonction", "function", "composant", "component",
+    "bug", "fix", "erreur", "error", "npm", "pnpm", "yarn", "git", "migration",
+    "supabase", "next", "react", "vue", "svelte", "angular", "typescript", "python",
+    "shell", "terminal", "build", "deploy", "css", "html", "sql", "api", "endpoint",
+})
+
+_SUMMARY_MARKER = "[COMPRESSED SESSION MEMORY]"
 _MAX_TOOL_MSG_CHARS = 3_000
 _MAX_TOOL_ROUNDS    = 12
 
@@ -81,31 +97,74 @@ def _estimate_tokens(messages: List) -> int:
     total = 0
     for m in messages:
         content = m.content if isinstance(m.content, str) else str(m.content)
-        total += len(content) // 3
+        total += max(1, len(content) // 3)
+        for tc in getattr(m, "tool_calls", []) or []:
+            total += len(str(tc)) // 3
+        total += 4
     return total
 
 
+def _backend_policy(backend: str) -> dict:
+    return _BACKEND_POLICY.get(
+        backend,
+        {"ratio": 0.6, "keep_recent": 10},
+    )
+
 def _usable_budget(backend: str) -> int:
-    return _CONTEXT_LIMITS.get(backend, 128_000) - _COMPACTION_BUFFER
+    policy = _backend_policy(backend)
+    return int(_CONTEXT_LIMITS.get(backend, 128_000) * policy["ratio"])
+
 
 
 def _should_compress(messages: List, backend: str) -> bool:
-    return _estimate_tokens(messages) > _usable_budget(backend)
+    effective = [
+        m for m in messages
+        if not (isinstance(m, SystemMessage) and _SUMMARY_MARKER in str(m.content))
+    ]
+    return _estimate_tokens(effective) > _usable_budget(backend)
 
 
 # ── Context helpers ────────────────────────────────────────────────────────────
 
 def _cap_tool_messages(messages: List) -> List:
     out = []
+
     for m in messages:
-        if isinstance(m, ToolMessage) and isinstance(m.content, str) and len(m.content) > _MAX_TOOL_MSG_CHARS:
+        if (
+            isinstance(m, ToolMessage)
+            and isinstance(m.content, str)
+            and len(m.content) > _MAX_TOOL_MSG_CHARS
+        ):
+            content = m.content.strip()
+
+            head_size = int(_MAX_TOOL_MSG_CHARS * 0.75)
+            tail_size = _MAX_TOOL_MSG_CHARS - head_size
+
+            content = (
+                content[:head_size]
+                + "\n...[truncated]...\n"
+                + content[-tail_size:]
+            )
+
             m = ToolMessage(
-                content=m.content[:_MAX_TOOL_MSG_CHARS] + "\n…[tronqué]",
+                content=content,
                 tool_call_id=m.tool_call_id,
                 name=getattr(m, "name", None),
             )
+
         out.append(m)
+
     return out
+
+def _is_coding_session(messages: List) -> bool:
+    """Detect if the session is code-related based on message content."""
+    for m in messages:
+        if isinstance(m, HumanMessage):
+            content = str(m.content).lower()
+            if any(kw in content for kw in _CODING_KEYWORDS):
+                return True
+    return False
+
 
 
 def _drop_smartest(messages: List) -> List | None:
@@ -131,76 +190,201 @@ def _drop_smartest(messages: List) -> List | None:
     return None
 
 
+def _sanitize_messages_for_mistral(messages: List) -> List:
+    """Mistral rejects an AIMessage containing tool_calls if it does not have all of its corresponding ToolMessages. 
+       Removes AIMessages with orphaned tool_calls."""
+    answered_ids: set[str] = set()
+    for m in messages:
+        if isinstance(m, ToolMessage):
+            answered_ids.add(m.tool_call_id)
+        
+    result = []
+    for m in messages:
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+            all_answered = all(
+                tc["id"] in answered_ids
+                for tc in m.tool_calls
+            )
+            if not all_answered:
+                continue
+        result.append(m)
+    return result
+
 
 def _compress_context(messages: List, llm, backend: str = "ollama_cloud") -> tuple[List, List]:
-    """Summarise ALL conversation messages into a single dense HumanMessage.
-
-    Returns (compressed_messages, replaced_messages) where replaced_messages
-    are the original messages that were summarised — the caller should issue
-    RemoveMessage for each to actually persist the compression in LangGraph.
+    """Compress old context while preserving recent raw messages.
+    Removes old summaries, compresses old conversation, keeps recent messages raw.
+    Uses a coding-specific prompt or a general one based on session content.
     """
-    system_msg = messages[0] if messages and isinstance(messages[0], SystemMessage) else None
-    conversation = [m for m in messages if not isinstance(m, SystemMessage)]
+    # Collect old summaries to remove from LangGraph state
+    old_summaries = [
+        m for m in messages
+        if isinstance(m, SystemMessage) and _SUMMARY_MARKER in str(m.content)
+    ]
 
-    if not conversation:
+    clean_messages = [m for m in messages if m not in old_summaries]
+
+    system_msg = (
+        clean_messages[0]
+        if clean_messages and isinstance(clean_messages[0], SystemMessage)
+        else None
+    )
+
+    conversation = [
+        m for m in clean_messages
+        if not isinstance(m, SystemMessage)
+    ]
+
+    keep_recent = _backend_policy(backend)["keep_recent"]
+
+    if len(conversation) <= keep_recent:
+        # Nothing to compress — but still remove old summaries if any
+        if old_summaries:
+            return clean_messages, old_summaries
         return messages, []
 
-    # Build full transcript of everything
+    old = conversation[:-keep_recent]
+    recent = conversation[-keep_recent:]
+
+    last_human = next(
+        (m for m in reversed(conversation) if isinstance(m, HumanMessage)),
+        None,
+    )
+    if last_human and last_human not in recent:
+        recent = [last_human] + recent[:-1]
+
+    # Build transcript of old messages
     transcript_parts = []
-    for m in conversation:
+    for m in old:
         content = m.content if isinstance(m.content, str) else str(m.content)
         if isinstance(m, HumanMessage):
             transcript_parts.append(f"[USER]: {content[:4000]}")
         elif isinstance(m, AIMessage):
             if content.strip():
-                transcript_parts.append(f"[ASSISTANT]: {content[:4000]}")
+                transcript_parts.append(f"[ASSISTANT]: {content[:2500]}")
             for tc in getattr(m, "tool_calls", []) or []:
-                args_str = str(tc.get("args", {}))[:1500]
+                args_str = str(tc.get("args", {}))[:1200]
                 transcript_parts.append(f"[TOOL CALL] {tc.get('name', '?')}({args_str})")
         elif isinstance(m, ToolMessage):
             name = getattr(m, "name", "tool") or "tool"
-            transcript_parts.append(f"[TOOL RESULT] {name}: {content[:3000]}")
+            transcript_parts.append(f"[TOOL RESULT] {name}: {content[:2000]}")
 
     transcript = "\n".join(transcript_parts)
 
+    # Select prompt based on session type
+    is_coding = _is_coding_session(conversation)
+
+    if is_coding:
+        prompt = f"""
+You are the memory module of a coding AI agent.
+
+Compress the old context below to free tokens without losing task continuity.
+
+Rules:
+- Be dense, technical, and structured.
+- Do NOT retell the conversation.
+- Preserve exact paths, filenames, commands, errors, and decisions.
+- Clearly distinguish completed work from remaining work.
+- If information is unknown, write "unknown".
+
+Required format:
+
+# User Objective
+...
+
+# Current State
+- cwd:
+- backend:
+- mode:
+- git branch:
+- status:
+
+# Plan
+## Completed
+- ...
+## Remaining
+- ...
+
+# Important Files
+## Read
+- path: useful content
+## Modified/Created
+- path: exact change
+## To Modify
+- path: intention
+
+# Executed Commands
+- command → useful result
+
+# Errors / Blockers
+- error → cause → status
+
+# Technical Decisions
+- decision → reason
+
+# Exact Resume Point
+Describe precisely what the agent should do next.
+
+OLD CONTEXT:
+{transcript}
+"""
+    else:
+        prompt = f"""
+You are a memory assistant. Compress the conversation below into a dense summary
+that preserves all key information needed to continue the conversation.
+
+Rules:
+- Be concise and factual.
+- Preserve decisions, conclusions, and action items.
+- Keep user preferences and constraints.
+- Note what was asked and what was answered.
+- If something is unknown or unclear, say so.
+
+Required format:
+
+# Conversation Summary
+Brief overview of the conversation.
+
+# Key Facts & Decisions
+- ...
+
+# User Preferences & Constraints
+- ...
+
+# Current Task / Next Step
+What the user is trying to accomplish and where things stand.
+
+# Unresolved Questions
+- ...
+
+OLD CONTEXT:
+{transcript}
+"""
+
     try:
-        prompt = (
-            "Tu es un assistant de mémoire pour un agent de code. "
-            "Voici la transcription COMPLÈTE d'une session à compresser.\n\n"
-            "Génère un résumé DENSE et TECHNIQUE qui permettra à l'agent de continuer "
-            "comme si de rien n'était. Préserve ABSOLUMENT :\n"
-            "1. La tâche demandée par l'utilisateur (objectif global)\n"
-            "2. Le plan d'action — étapes complétées ✓ et restantes ○\n"
-            "3. Chaque fichier lu, modifié ou créé — chemin exact + contenu clé\n"
-            "4. Le répertoire de travail courant (dernier shell_cd)\n"
-            "5. Erreurs rencontrées et solutions appliquées (ou en suspens)\n"
-            "6. Dépendances installées, commandes exécutées et leurs résultats\n"
-            "7. Choix techniques et pourquoi\n"
-            "8. Ce qui était en cours exactement au moment de la coupure\n\n"
-            f"TRANSCRIPTION COMPLÈTE :\n{transcript}\n\n"
-            "Réponds avec le résumé structuré. Chemins exacts, noms de variables, "
-            "valeurs de config — pas de généralités."
-        )
         summary_response = llm.invoke([HumanMessage(content=prompt)])
         summary_content = summary_response.content
+
         if isinstance(summary_content, list):
             summary_content = " ".join(
                 p.get("text", "") if isinstance(p, dict) else str(p)
                 for p in summary_content
             )
-        summary_msg = HumanMessage(
-            content=f"[CONTEXTE COMPRESSÉ — continue la tâche à partir d'ici]\n{summary_content}"
+
+        summary_msg = SystemMessage(
+            content=f"{_SUMMARY_MARKER}\n{summary_content}"
         )
-        compressed = ([system_msg] if system_msg else []) + [summary_msg]
-        return compressed, conversation
+
+        compressed = ([system_msg] if system_msg else []) + [summary_msg] + recent
+        # Return old conversation messages + old summaries as "removed"
+        return compressed, old + old_summaries
+
     except Exception:
-        # Fallback: drop oldest tool round
         dropped = _drop_smartest(messages) or messages
         kept_ids = {id(m) for m in dropped}
         removed = [m for m in messages if id(m) not in kept_ids]
-        return dropped, removed
-
-
+        return dropped, removed + old_summaries    
+    
 # ── Cached ToolNode ────────────────────────────────────────────────────────────
 
 class CachedToolNode:
@@ -276,7 +460,7 @@ class CachedToolNode:
 # ── Orchestrator ───────────────────────────────────────────────────────────────
 
 from src.orchestrator.state import GlobalState
-from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini
+from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini, make_llm_mistral
 from src.llm.prompts import build_system_prompt
 from src.orchestrator.registry import build_all_tools
 from src.infra.checkpoint import build_checkpointer
@@ -307,6 +491,7 @@ def _chat_node_factory():
         "ollama_cloud": make_llm_ollama_cloud,
         "ollama":       make_llm,
         "gemini":       make_llm_gemini,
+        "mistral":      make_llm_mistral,
     }
     tools = build_all_tools()
     retriever = ToolRetriever(tools)
@@ -314,6 +499,12 @@ def _chat_node_factory():
     def chatbot(state: GlobalState):
         from src.infra.settings import settings
         from src.ui.plan_mode import is_active as _is_plan_mode, BLOCKED_TOOLS
+
+        global _compressed_this_turn
+        last = state["messages"][-1] if state["messages"] else None
+        if isinstance(last, HumanMessage):
+            _compressed_this_turn = False
+
         backend = settings.llm_backend
         factory = _factories.get(backend, make_llm_ollama_cloud)
 
@@ -368,9 +559,8 @@ def _chat_node_factory():
 
         # Proactive compression before calling the LLM (once per user turn max)
         working = messages
-        global _compressed_this_turn
         _state_removals: list = []   # original msgs replaced by summary → RemoveMessage
-        _summary_msg = None          # the summary HumanMessage to persist
+        _summary_msg = None           # compressed SystemMessage to persist
 
         if _should_compress(working, backend) and not _compressed_this_turn:
             _compressed_this_turn = True
@@ -379,12 +569,22 @@ def _chat_node_factory():
             plain_llm = factory()
             working = _cap_tool_messages(working)
             working, _state_removals = _compress_context(working, plain_llm, backend)
-            # The summary msg is the first HumanMessage in the compressed list
+            before_tokens = _estimate_tokens(messages)
+            after_tokens = _estimate_tokens(working)
+            freed = before_tokens - after_tokens
+            _console.print(
+                f"[dim]  ↩  compression: -{freed:,} tokens estimés "
+                f"({before_tokens:,} → {after_tokens:,})[/dim]"
+            )
+            # Find compressed summary SystemMessage
             _summary_msg = next(
-                (m for m in working if isinstance(m, HumanMessage)
-                 and "[CONTEXTE COMPRESSÉ" in str(m.content)),
+                (m for m in working if isinstance(m, SystemMessage)
+                and _SUMMARY_MARKER in str(m.content)),
                 None,
             )
+
+        if backend == "mistral":
+            working = _sanitize_messages_for_mistral(working)
 
         capped = False
         compressed = False
@@ -417,10 +617,20 @@ def _chat_node_factory():
                         _on_compress()
                     plain_llm = factory()
                     working, removed = _compress_context(working, plain_llm, backend)
+                    before_tokens = _estimate_tokens(messages)
+                    after_tokens = _estimate_tokens(working)
+                    freed = before_tokens - after_tokens
+                    _console.print(
+                        f"[dim]  ↩  compression: -{freed:,} tokens estimés "
+                        f"({before_tokens:,} → {after_tokens:,})[/dim]"
+                    )
                     _state_removals.extend(r for r in removed if r not in _state_removals)
                     _summary_msg = next(
-                        (m for m in working if isinstance(m, HumanMessage)
-                         and "[CONTEXTE COMPRESSÉ" in str(m.content)),
+                        (
+                            m for m in working
+                            if isinstance(m, SystemMessage)
+                            and _SUMMARY_MARKER in str(m.content)
+                        ),
                         _summary_msg,
                     )
                     _console.print("[dim]  ↩  contexte compressé — reprise…[/dim]")

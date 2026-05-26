@@ -10,6 +10,34 @@ _HOME = Path.home()
 _cwd: Path = _HOME  # répertoire de travail courant de la session
 _bg_procs: dict[str, subprocess.Popen] = {}  # label → processus background actif
 
+_shell_stream_callback = None
+
+
+def set_shell_stream_callback(fn) -> None:
+    global _shell_stream_callback
+    _shell_stream_callback = fn
+
+
+def _emit_shell_stream(line: str) -> None:
+    if _shell_stream_callback:
+        try:
+            _shell_stream_callback(line)
+        except Exception:
+            pass
+
+
+def _compact_shell_output(text: str, max_chars: int = 10_000) -> str:
+    import re
+
+    text = re.sub(r"^\s*(✓\s*)?Download https?://.*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+    lines = [l for l in text.splitlines() if l.strip()]
+    if len(lines) > 80:
+        lines = lines[:40] + [f"...[{len(lines) - 80} lines omitted]..."] + lines[-40:]
+
+    return "\n".join(lines)[:max_chars]
+
 
 def get_cwd() -> Path:
     return _cwd
@@ -146,20 +174,61 @@ def shell_run(
         except Exception as e:
             return {"status": "error", "stdout": "", "stderr": str(e), "exit_code": -1, "cwd": str(work_dir)}
 
+    cmd_lower = command.lower()
+
+    if any(x in cmd_lower for x in ("deno check", "deno test", "deno task", "deno cache")):
+        timeout = max(timeout, 180)
+
+    if any(x in cmd_lower for x in ("npm install", "pnpm install", "yarn install", "npm audit", "pnpm audit")):
+        timeout = max(timeout, 180)
+
+    timeout = min(timeout, 300)
     command = _wrap_rtk(command)
+
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             command,
             shell=True,
             cwd=str(work_dir),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=timeout,
+            bufsize=1,
             env=env,
         )
-        stderr = result.stderr[:5_000]
-        # exit 127 = command not found — enrich stderr so the model can diagnose
-        if result.returncode == 127 and not stderr.strip():
+
+        output_lines: list[str] = []
+
+        try:
+            stdout = proc.stdout
+            if stdout:
+                for line in stdout:
+                    clean = line.rstrip("\n")
+                    output_lines.append(clean)
+                    _emit_shell_stream(clean)
+
+            exit_code = proc.wait(timeout=timeout)
+
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                pass
+
+            stdout_text = _compact_shell_output("\n".join(output_lines))
+            return {
+                "status": "timeout",
+                "stdout": stdout_text,
+                "stderr": f"Timeout après {timeout}s",
+                "exit_code": -1,
+                "cwd": str(work_dir),
+            }
+
+        stdout_text = _compact_shell_output("\n".join(output_lines))
+        stderr = ""
+
+        if exit_code == 127 and not stdout_text.strip():
             cmd_token = command.strip().split()[0] if command.strip() else command
             stderr = (
                 f"exit 127: commande introuvable — '{cmd_token}' n'est pas dans le PATH "
@@ -167,19 +236,12 @@ def shell_run(
                 f"Essaie : which {cmd_token.split('/')[-1]}  ou utilise le nom court (pnpm, npm, npx…) "
                 f"sans chemin absolu."
             )
+
         return {
-            "status": "ok" if result.returncode == 0 else "error",
-            "stdout": result.stdout[:10_000],
-            "stderr": stderr,
-            "exit_code": result.returncode,
-            "cwd": str(work_dir),
-        }
-    except subprocess.TimeoutExpired:
-        return {
-            "status": "timeout",
-            "stdout": "",
-            "stderr": f"Timeout après {timeout}s",
-            "exit_code": -1,
+            "status": "ok" if exit_code == 0 else "error",
+            "stdout": stdout_text,
+            "stderr": stderr[:5_000],
+            "exit_code": exit_code,
             "cwd": str(work_dir),
         }
     except Exception as e:
