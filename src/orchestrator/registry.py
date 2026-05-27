@@ -60,7 +60,8 @@ from src.agents.weather.tools import get_weather_by_city
 from src.agents.gmail.tools import gmail_search, gmail_edit_draft, gmail_confirm_send, gmail_send_email, gmail_summarize
 from src.agents.google_drive.tools import drive_find_file_id, drive_list_files, drive_delete_file, drive_get_file_metadata, drive_read_file
 from src.agents.google_doc.tools import google_docs_create, google_docs_update, google_docs_read
-from src.agents.slides.tools import create_slides
+# TODO: restore once src/agents/slides/tools.py is rebuilt
+# from src.agents.slides.tools import create_slides
 from src.agents.filesystem.tools import local_find_file, local_read_file, local_list_directory, local_grep, local_glob
 from src.agents.google_calendar.tools import (
     calendar_list_events, calendar_create_event, calendar_update_event,
