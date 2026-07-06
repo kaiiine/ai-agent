@@ -25,16 +25,25 @@ class Settings(BaseSettings):
     # GROQ
     groq_model: str = "openai/gpt-oss-20b"
     groq_api_key: str | None = None
+    groq_api_keys: str = ""          # GROQ_API_KEYS=key1,key2,...
 
     # Gemini
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
     gemini_coding_model: str = "gemini-2.5-flash"  # specialist can use a stronger model
+    gemini_api_keys: str = ""        # GEMINI_API_KEYS=key1,key2,...
 
     # Mistral
     mistral_api_key: str | None = None
     mistral_model: str = "mistral-small-2603"
     mistral_coding_model: str = "codestral-2508"
+    mistral_api_keys: str = ""       # MISTRAL_API_KEYS=key1,key2,...
+
+    # Multi-clés ollama cloud
+    ollama_cloud_api_keys: str = ""  # OLLAMA_CLOUD_API_KEYS=key1,key2,key3,key4,key5
+
+    # Ordre de fallback inter-providers : FALLBACK_ORDER=ollama_cloud,gemini,mistral
+    fallback_order: str = "ollama_cloud,gemini,mistral"
 
     # Search
     search_backend: str = "tavily"

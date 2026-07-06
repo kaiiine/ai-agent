@@ -8,9 +8,14 @@ from typing import Callable, Optional
 
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
 from src.agents.coding.prompts.base import BASE_PROMPT
+from src.agents.memory.persistent import _persist_session_memory
 
 # Module-level progress callback set by the streaming UI
 _progress_cb: Optional[Callable[[str, dict, Optional[dict]], Optional[dict]]] = None
+
+# Retriever cache — Chroma embed is expensive (~100 docs), rebuild only when tool set changes
+_retriever_cache: Optional[object] = None
+_retriever_tool_names: tuple = ()
 
 
 def set_progress_callback(cb: Optional[Callable[[str, dict, Optional[dict]], Optional[dict]]]) -> None:
@@ -26,7 +31,7 @@ def _get_coding_llm():
 def _get_coding_tools():
     from src.agents.coding.tools import (
         dev_plan_create, dev_plan_step_done, dev_explain, find_git_repos,
-        propose_file_change, browser_screenshot, load_skill,
+        propose_file_change, browser_screenshot, load_skill, project_graph_query,
     )
     from src.agents.filesystem.tools import (
         local_find_file, local_read_file, local_list_directory,
@@ -47,7 +52,7 @@ def _get_coding_tools():
     )
     return [
         dev_plan_create, dev_plan_step_done, dev_explain,
-        find_git_repos, propose_file_change, browser_screenshot, load_skill,
+        find_git_repos, propose_file_change, browser_screenshot, load_skill, project_graph_query,
         local_find_file, local_read_file, local_list_directory,
         local_grep, local_glob,
         shell_run, shell_cd, shell_pwd, shell_ls, shell_kill_bg,
@@ -68,10 +73,22 @@ _PROGRESS_TOOLS = {
     "shell_ls", "shell_pwd", "url_fetch", "web_research_report", "web_search_news",
     "git_status", "git_log", "git_diff",
     "notebook_read", "notebook_edit_cell", "notebook_insert_cell", "notebook_run",
-    "load_skill",
+    "load_skill", "project_graph_query",
 }
 _SHELL_PREVIEW_TOOLS = {"shell_run", "shell_cd"}
 _MAX_ITERATIONS = 35
+_phase_max_iterations: int | None = None  # override pour /build
+_phase_abort: bool = False               # set by loop-detection in build_runner
+
+
+def set_phase_max_iterations(n: int | None) -> None:
+    global _phase_max_iterations
+    _phase_max_iterations = n
+
+
+def _abort_phase() -> None:
+    global _phase_abort
+    _phase_abort = True
 # Tools exempt from the repetition guard: writes, planning, and shell (may legitimately retry)
 _REPETITION_EXEMPT = frozenset({
     "dev_plan_create", "dev_plan_step_done", "dev_explain",
@@ -281,13 +298,30 @@ def _run(task: str) -> str:
     from src.agents.coding.tool_retriever import CodingToolRetriever, retrieval_query
     from src.infra.settings import settings as _settings
 
-    llm = _get_coding_llm()
+    # Key pool — multi-clés, multi-providers avec fallback automatique
+    from src.llm.key_pool import get_pool as _get_pool, get_fallback_order as _get_fbo
+    from src.llm.models import make_coding_llm_with_key as _make_llm_key
+    _pool = _get_pool()
+    _fallback_order = _get_fbo()
+    _current_provider: str = _settings.llm_backend
+    _current_key: str = _pool.next_healthy(_current_provider) or ""
+    if _current_key:
+        llm = _make_llm_key(_current_provider, _current_key)
+    else:
+        llm = _get_coding_llm()
+
     all_tools = _get_coding_tools()
     tool_map = {t.name: t for t in all_tools}  # full map — every tool remains callable
 
-    retriever = CodingToolRetriever(all_tools, k=6)
+    # Re-use cached retriever — rebuilding Chroma embeds ~100 docs on every call otherwise
+    global _retriever_cache, _retriever_tool_names
+    _names = tuple(t.name for t in all_tools)
+    if _retriever_cache is None or _retriever_tool_names != _names:
+        _retriever_cache = CodingToolRetriever(all_tools, k=8)
+        _retriever_tool_names = _names
+    retriever = _retriever_cache
 
-    _budget = _CONTEXT_CHAR_BUDGET.get(_settings.llm_backend, _CONTEXT_CHAR_BUDGET_DEFAULT)
+    _budget = _CONTEXT_CHAR_BUDGET.get(_current_provider, _CONTEXT_CHAR_BUDGET_DEFAULT)
 
     from src.agents.coding.task_enricher import enrich_task
     enriched_task = enrich_task(task)
@@ -307,7 +341,18 @@ def _run(task: str) -> str:
         except Exception:
             pass
 
-    for _ in range(_MAX_ITERATIONS):
+    try:
+        from src.agents.coding.skill_retriever import warmup as _skill_warmup
+        _skill_warmup()
+    except Exception:
+        pass
+
+    global _phase_abort
+    _phase_abort = False  # reset at start of each run
+    _iter_limit = _phase_max_iterations if _phase_max_iterations is not None else _MAX_ITERATIONS
+    for _ in range(_iter_limit):
+        if _phase_abort:
+            return "Tâche interrompue (boucle détectée — phase abandonnée par le système)."
         total_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
         # Guard: never compress with only system+task — transcript would be empty → infinite loop
         if total_chars > _budget and len(messages) > 3:
@@ -335,14 +380,38 @@ def _run(task: str) -> str:
                     else:
                         return "Contexte trop volumineux même après compression. Démarrez un nouveau thread avec /new."
                 elif any(k in err for k in _RATE_LIMIT_MARKERS):
-                    wait = 30 * (attempt + 1)  # 30s, 60s, 90s
-                    if _progress_cb:
-                        try:
-                            _progress_cb("specialist:rate_limit", {"wait": wait}, None)
-                        except Exception:
-                            pass
-                    _time.sleep(wait)
-                    continue
+                    # Essaie la prochaine clé/provider avant de dormir
+                    _next = _pool.next_provider_and_key(
+                        _current_provider, _current_key, _fallback_order
+                    )
+                    if _next:
+                        _prev_provider = _current_provider
+                        _current_provider, _current_key = _next
+                        _settings.llm_backend = _current_provider
+                        _budget = _CONTEXT_CHAR_BUDGET.get(_current_provider, _CONTEXT_CHAR_BUDGET_DEFAULT)
+                        llm = _make_llm_key(_current_provider, _current_key)
+                        _bound_llm = llm.bind_tools(_active_tools)
+                        invoker = llm if _plan_complete else _bound_llm
+                        if _progress_cb:
+                            try:
+                                _progress_cb("specialist:backend_switch", {
+                                    "from": _prev_provider,
+                                    "to": _current_provider,
+                                    "key": _current_key[:10] + "...",
+                                }, None)
+                            except Exception:
+                                pass
+                        continue  # réessaie immédiatement avec la nouvelle clé
+                    else:
+                        # Toutes les clés épuisées — courte pause avant abandon
+                        wait = min(30, 10 * (attempt + 1))
+                        if _progress_cb:
+                            try:
+                                _progress_cb("specialist:rate_limit", {"wait": wait, "all_exhausted": True}, None)
+                            except Exception:
+                                pass
+                        _time.sleep(wait)
+                        continue
                 elif any(k in err for k in _SERVER_ERR_MARKERS):
                     if attempt < 2:
                         _time.sleep(2 ** attempt)  # 1s, 2s backoff
@@ -368,7 +437,9 @@ def _run(task: str) -> str:
                 plan_complete = all(s.done for s in dev_plan.steps) if dev_plan.steps else False
                 if plan_complete or not dev_plan.steps:
                     trace = _build_specialist_trace(messages)
-                    return trace + (_clean_output(response.content) or "Task completed")
+                    _result = _clean_output(response.content) or "Task completed"
+                    _persist_session_memory(messages, enriched_task, _result, _settings.llm_backend)
+                    return trace + _result
                 else:
                     if _text_only_retries < 2:
                         _text_only_retries += 1
@@ -380,7 +451,9 @@ def _run(task: str) -> str:
                     else:
                         _text_only_retries = 0
                         trace = _build_specialist_trace(messages)
-                        return trace + (_clean_output(response.content) or "Task completed")
+                        _result = _clean_output(response.content) or "Task completed"
+                        _persist_session_memory(messages, enriched_task, _result, _settings.llm_backend)
+                        return trace + _result
         else:
             messages.append(response)
 
@@ -501,4 +574,5 @@ def _run(task: str) -> str:
                 _plan_complete = True
 
     trace = _build_specialist_trace(messages)
+    _persist_session_memory(messages, enriched_task, "Tâche interrompue.", _settings.llm_backend)
     return trace + "Tâche interrompue (limite d'itérations atteinte)."  # end of _run
