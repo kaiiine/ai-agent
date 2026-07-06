@@ -145,14 +145,6 @@ WEB INTEGRATION:
   export_to="<project>/public/diagrams/<name>.html" → standalone HTML ready to embed.\
 """
 
-_SLIDES = """\
-━━ SLIDE PRESENTATIONS ━━
-Whenever the user asks for a presentation, slideshow, slides, PowerPoint, pitch deck \
-or "summarise as slides" → call create_presentation(topic="...", export_to="...") IMMEDIATELY.
-❌ Never delegate a presentation to run_coding_agent.
-❌ Never call create_slides directly — use create_presentation.\
-"""
-
 _MEMORY = """\
 ━━ PROJECT MEMORY ━━
 When you discover a non-obvious fact about the project or make an important change: \
@@ -298,8 +290,6 @@ def build_system_prompt(
         parts.append(_JIRA)
     if any(x.startswith("gmail_") for x in t):
         parts.append(_EMAIL)
-    if "create_presentation" in t or "create_slides" in t:
-        parts.append(_SLIDES)
     if "mermaid_diagram" in t:
         parts.append(_MERMAID)
     if "save_study_file" in t:

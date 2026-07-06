@@ -39,9 +39,6 @@ TOOL_GROUPS: dict[str, list[str]] = {
     "docs": [
         "google_docs_create", "google_docs_update", "google_docs_read",
     ],
-    "slides": [
-        "create_presentation", "create_slides",
-    ],
     "slack": [
         "slack_find_user", "slack_list_channels", "slack_read_channel",
         "slack_get_mentions", "slack_list_dms", "slack_send_message",
