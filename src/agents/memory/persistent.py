@@ -351,10 +351,10 @@ def _build_session_summary(messages: list, enriched_task: str, result_text: str)
     return "\n".join(lines)
 
 
-def _do_persist(messages: list, enriched_task: str, result_text: str, backend: str) -> None:
+def _do_persist(messages: list, enriched_task: str, result_text: str, backend: str,
+                axon: "Path | None" = None) -> None:
     """Exécuté dans un thread daemon. Échoue silencieusement."""
     try:
-        axon = _axon_dir()
         if axon is None:
             return
         mdir = axon / "memory"
@@ -453,8 +453,9 @@ def _do_persist(messages: list, enriched_task: str, result_text: str, backend: s
 def _persist_session_memory(messages: list, enriched_task: str,
                              result_text: str, backend: str) -> None:
     """Lance la persistance en arrière-plan (non-bloquant)."""
+    axon = _axon_dir()  # capturé avant le spawn — CWD peut changer dans le thread
     threading.Thread(
         target=_do_persist,
-        args=(messages, enriched_task, result_text, backend),
+        args=(messages, enriched_task, result_text, backend, axon),
         daemon=True,
     ).start()

@@ -1,5 +1,9 @@
+import os
 import re
+import subprocess
+import sys
 import uuid
+from pathlib import Path
 from rich.pretty import Pretty
 from rich.panel import Panel
 from rich.text import Text
@@ -29,10 +33,12 @@ _COMMANDS = [
     ("/exo",               "exercices interactifs HTML/JS (QCM, ouvert…) depuis PDF(s) — /attach tes cours"),
     ("/spec [prompt]",     "wizard interactif de spécification — l'IA pose des questions guidées"),
     ("/build [projet]",   "exécute spec.md par phases — 60-70% moins de tokens qu'une session unique"),
+    ("/graph [projet]",   "génère GRAPH_REPORT.md + graph.json + notes Obsidian via graphify (subprocess direct)"),
     ("/clear",             "efface l'écran et réaffiche l'en-tête"),
     ("/new",               "démarre un nouveau thread de conversation"),
     ("/history",           "liste les threads passés et permet d'en reprendre un (flèches ↑↓)"),
     ("/help",              "affiche cette liste de commandes"),
+    ("/keys [reset]",       "affiche l'état des clés API (multi-comptes) · /keys reset pour tout remettre sain"),
     ("/backend <b>",       "change le backend LLM — groq · ollama · ollama_cloud · gemini · mistral"),
     ("/model <nom>",       "change le modèle du backend actif (ex: llama3.1:8b, openai/gpt-oss-20b)"),
     ("/temp <val>",        "change la température (ex: /temp 0.7)"),
@@ -306,6 +312,49 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
     if cmd == "/history":
         return _handle_history(cfg, state, console)
 
+    if cmd.startswith("/keys"):
+        from src.llm.key_pool import get_pool
+        from rich.table import Table
+        pool = get_pool()
+        parts = cmd.split(maxsplit=1)
+        arg = parts[1].strip().lower() if len(parts) > 1 else ""
+
+        if arg == "reset":
+            pool.reset_all()
+            return command_panel("toutes les clés remises en état sain")
+
+        if arg.startswith("reset "):
+            provider = arg.split(None, 1)[1]
+            pool.reset_provider(provider)
+            return command_panel(f"clés {provider} remises en état sain")
+
+        rows = pool.status()
+        if not rows:
+            return command_panel(
+                "aucune clé configurée.\n"
+                "Ajouter dans .env :\n"
+                "  OLLAMA_CLOUD_API_KEYS=key1,key2,key3\n"
+                "  GEMINI_API_KEYS=key1,key2\n"
+                "  FALLBACK_ORDER=ollama_cloud,gemini,mistral",
+                error=False,
+            )
+        t = Table(show_header=True, header_style="bold", box=_BOX, border_style="dim")
+        t.add_column("Provider", style="dim")
+        t.add_column("Clé", style="dim")
+        t.add_column("État")
+        t.add_column("Cooldown")
+        for r in rows:
+            if r["healthy"]:
+                state_str = "[green]✓[/green]"
+                cooldown  = ""
+            else:
+                secs = r["cooldown_left"]
+                h, m = divmod(secs // 60, 60)
+                cooldown = f"{h}h {m:02d}m" if h else f"{m}m"
+                state_str = "[red]✗[/red]"
+            t.add_row(r["provider"], r["key_short"], state_str, cooldown)
+        return Panel(t, box=_BOX, border_style="dim", title="clés API")
+
     if cmd.startswith("/backend"):
         from src.infra.settings import settings
         from src.ui.picker import pick
@@ -412,8 +461,6 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
 
     if cmd == "/undo":
         from src.agents.coding.pending import snapshots
-        from rich.text import Text
-        from rich.rule import Rule
         from .panels import ACCENT
         if not snapshots:
             return command_panel("rien à annuler — aucune modification récente")
@@ -444,7 +491,74 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         except Exception as e:
             return command_panel(f"erreur dump : {e}", error=True)
         return Panel(Pretty(state["messages"], expand_all=True), box=_BOX, border_style="dim", title="dump")
-    
+
+    if cmd.startswith("/graph"):
+        from src.agents.shell.tools import get_cwd
+        from src.utils.paths import get_projects_dir
+
+        raw_path = cmd[len("/graph"):].strip()
+        if raw_path:
+            project_path = Path(raw_path).expanduser()
+            if not project_path.is_absolute():
+                candidate = get_projects_dir() / raw_path
+                project_path = candidate
+        else:
+            project_path = Path(get_cwd())
+
+        if not project_path.is_dir():
+            return command_panel(f"dossier introuvable : {project_path}", error=True)
+
+        graphify_repo = Path.home() / "Documents" / "projets-perso" / "graphify"
+        env = {**os.environ, "PYTHONPATH": str(graphify_repo)}
+
+        out_dir = project_path / "graphify-out"
+
+        if console:
+            t = Text()
+            t.append("  ⚙  ", style="bold color(214)")
+            t.append(f"graphify extract · {project_path.name}…", style="dim")
+            console.print(t)
+
+        # Step 1: extract (AST + semantic)
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "graphify", "extract", str(project_path)],
+                env=env, capture_output=True, text=True, timeout=300,
+            )
+        except subprocess.TimeoutExpired:
+            return command_panel("graphify extract timeout (5 min) — projet trop volumineux ?", error=True)
+        except Exception as e:
+            return command_panel(f"graphify erreur : {e}", error=True)
+
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "")[-600:].strip()
+            return command_panel(f"graphify extract erreur (exit {proc.returncode}) :\n{err}", error=True)
+
+        # Step 2: cluster-only → generates GRAPH_REPORT.md
+        if console:
+            t2 = Text()
+            t2.append("  ⚙  ", style="bold color(214)")
+            t2.append(f"graphify cluster · {project_path.name}…", style="dim")
+            console.print(t2)
+
+        try:
+            proc2 = subprocess.run(
+                [sys.executable, "-m", "graphify", "cluster-only", str(project_path), "--no-viz"],
+                env=env, capture_output=True, text=True, timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            return command_panel("graphify cluster timeout — extract OK, relance /graph pour le rapport", error=True)
+        except Exception as e:
+            return command_panel(f"graphify cluster erreur : {e}", error=True)
+
+        generated = []
+        if (out_dir / "GRAPH_REPORT.md").exists():
+            generated.append("GRAPH_REPORT.md")
+        if (out_dir / "graph.json").exists():
+            generated.append("graph.json")
+        files = " · ".join(generated) if generated else "graph généré"
+        return command_panel(f"✓  {files}  →  {out_dir}")
+
     if cmd == "/compact":
         if not graph:
             return command_panel("pas de graph actif", error=True)

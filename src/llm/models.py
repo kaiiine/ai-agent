@@ -14,13 +14,24 @@ def make_llm():
 
 def make_llm_ollama_cloud():
     """
-    Ollama Cloud — deux modes :
-    - si OLLAMA_API_KEY est défini dans .env
-    - sinon → modèle cloud local 
-      le modèle doit se terminer par `-cloud` 
+    Ollama Cloud — utilise le key pool si disponible, sinon clé unique legacy.
     """
+    try:
+        from src.llm.key_pool import get_pool
+        key = get_pool().next_healthy("ollama_cloud")
+        if key:
+            model = settings.ollama_cloud_model.removesuffix("-cloud")
+            return ChatOllama(
+                model=model,
+                base_url="https://ollama.com",
+                headers={"Authorization": f"Bearer {key}"},
+                temperature=settings.temperature,
+            )
+    except Exception:
+        pass
+
+    # Fallback : clé unique depuis settings
     if settings.ollama_api_key:
-        # API distante ollama.com — modèle sans suffixe -cloud
         model = settings.ollama_cloud_model.removesuffix("-cloud")
         return ChatOllama(
             model=model,
@@ -28,12 +39,7 @@ def make_llm_ollama_cloud():
             headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
             temperature=settings.temperature,
         )
-    else:
-        cloud_model = settings.ollama_cloud_model
-        return ChatOllama(
-            model=cloud_model,
-            temperature=settings.temperature,
-        )
+    return ChatOllama(model=settings.ollama_cloud_model, temperature=settings.temperature)
 
 
 def _ollama_unload(model: str, base_url: str = "http://localhost:11434") -> None:
@@ -49,15 +55,74 @@ def _ollama_unload(model: str, base_url: str = "http://localhost:11434") -> None
         pass
 
 
+def make_coding_llm_with_key(provider: str, key: str):
+    """
+    Crée un LLM de coding pour un provider et une clé spécifiques.
+    Utilisé par le key pool pour basculer entre clés/providers sans relancer la session.
+    """
+    if provider in ("ollama_cloud", "ollama"):
+        if provider == "ollama" and not key:
+            return ChatOllama(
+                model=settings.coding_model_local,
+                temperature=0.0,
+                num_ctx=settings.coding_num_ctx_local,
+            )
+        coding_model = settings.coding_model.removesuffix("-cloud")
+        return ChatOllama(
+            model=coding_model,
+            base_url="https://ollama.com",
+            headers={"Authorization": f"Bearer {key}"},
+            temperature=0.0,
+        )
+    elif provider == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=settings.gemini_coding_model,
+            google_api_key=key,
+            temperature=0.0,
+            max_output_tokens=32768,
+        )
+    elif provider == "mistral":
+        from langchain_mistralai import ChatMistralAI
+        return ChatMistralAI(
+            model=settings.mistral_coding_model,
+            mistral_api_key=key,
+            temperature=0.0,
+        )
+    elif provider == "groq":
+        return ChatGroq(
+            api_key=key,
+            model=settings.groq_model,
+            temperature=0.0,
+            max_tokens=8192,
+            streaming=True,
+        )
+    else:
+        return make_coding_llm()
+
+
 def make_coding_llm():
-    """Coding specialist — uses dedicated coding model with VRAM swap on local ollama."""
+    """Coding specialist — utilise le key pool pour choisir la première clé saine."""
+    # Local ollama : pas de key pool
     if settings.llm_backend == "ollama":
         return ChatOllama(
             model=settings.coding_model_local,
             temperature=0.0,
             num_ctx=settings.coding_num_ctx_local,
         )
-    elif settings.llm_backend == "groq":
+
+    # Pour tous les backends cloud, essaie d'abord via key pool
+    try:
+        from src.llm.key_pool import get_pool
+        pool = get_pool()
+        key = pool.next_healthy(settings.llm_backend)
+        if key:
+            return make_coding_llm_with_key(settings.llm_backend, key)
+    except Exception:
+        pass
+
+    # Fallback : comportement legacy (clé unique depuis settings)
+    if settings.llm_backend == "groq":
         return ChatGroq(
             api_key=settings.groq_api_key,
             model=settings.groq_model,
@@ -80,7 +145,7 @@ def make_coding_llm():
             temperature=0.0,
         )
     else:
-        # Mirror make_llm_ollama_cloud() connection logic but with coding_model
+        # ollama_cloud
         coding_model = settings.coding_model
         if settings.ollama_api_key:
             return ChatOllama(
@@ -90,6 +155,43 @@ def make_coding_llm():
                 temperature=0.0,
             )
         return ChatOllama(model=coding_model, temperature=0.0)
+
+
+def make_orchestrator_llm_with_key(provider: str, key: str):
+    """
+    Crée un LLM orchestrateur pour un provider/clé spécifiques.
+    Utilisé par le key pool pour basculer après 429, sans toucher aux modèles coding.
+    """
+    if provider in ("ollama_cloud", "ollama"):
+        if provider == "ollama" and not key:
+            return ChatOllama(model=settings.ollama_model, temperature=settings.temperature, num_ctx=131_072)
+        model = settings.ollama_cloud_model.removesuffix("-cloud")
+        return ChatOllama(
+            model=model,
+            base_url="https://ollama.com",
+            headers={"Authorization": f"Bearer {key}"},
+            temperature=settings.temperature,
+        )
+    elif provider == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=settings.gemini_model,
+            google_api_key=key,
+            temperature=settings.temperature,
+            max_output_tokens=8192,
+            streaming=True,
+            thinking_budget=0,
+        )
+    elif provider == "mistral":
+        from langchain_mistralai import ChatMistralAI
+        return ChatMistralAI(model=settings.mistral_model, mistral_api_key=key, temperature=0.0)
+    elif provider == "groq":
+        return ChatGroq(
+            api_key=key, model=settings.groq_model,
+            temperature=settings.temperature, max_tokens=8192, streaming=True,
+        )
+    else:
+        return make_llm_ollama_cloud()
 
 
 def make_llm_groq():
@@ -104,7 +206,19 @@ def make_llm_groq():
 
 
 def make_llm_gemini():
-    """Google Gemini — gratuit, 1M tokens de contexte."""
+    """Google Gemini — key pool first, then single-key fallback."""
+    try:
+        from src.llm.key_pool import get_pool
+        key = get_pool().next_healthy("gemini")
+        if key:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            return ChatGoogleGenerativeAI(
+                model=settings.gemini_model, google_api_key=key,
+                temperature=settings.temperature, max_output_tokens=8192,
+                streaming=True, thinking_budget=0,
+            )
+    except Exception:
+        pass
     from langchain_google_genai import ChatGoogleGenerativeAI
     return ChatGoogleGenerativeAI(
         model=settings.gemini_model,
@@ -112,13 +226,19 @@ def make_llm_gemini():
         temperature=settings.temperature,
         max_output_tokens=8192,
         streaming=True,
-        thinking_budget=0, 
+        thinking_budget=0,
     )
 
+
 def make_llm_mistral():
-    """Mistral - free, 1M context tokens"""
+    """Mistral — key pool first, then single-key fallback."""
+    try:
+        from src.llm.key_pool import get_pool
+        key = get_pool().next_healthy("mistral")
+        if key:
+            from langchain_mistralai import ChatMistralAI
+            return ChatMistralAI(model=settings.mistral_model, mistral_api_key=key, temperature=0.0)
+    except Exception:
+        pass
     from langchain_mistralai import ChatMistralAI
-    return ChatMistralAI(
-        model=settings.mistral_model,
-        temperature=0.0,
-    )
+    return ChatMistralAI(model=settings.mistral_model, temperature=0.0)
