@@ -1399,6 +1399,22 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             _handle_exo(graph, state, cfg)
             return
 
+        if user_message.startswith("/spec"):
+            from src.ui.spec import run_spec_wizard
+            parts = user_message.split(maxsplit=1)
+            initial = parts[1].strip() if len(parts) > 1 else ""
+            run_spec_wizard(initial, console)
+            return
+
+        if user_message.startswith("/build"):
+            from src.agents.coding.build_runner import run_build
+            parts = user_message.split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                console.print(command_panel("usage : /build <nom-du-projet>", error=True))
+                return
+            run_build(parts[1].strip(), console)
+            return
+
         from .commands import handle_slash
         result = handle_slash(user_message, state, cfg, graph, console)
         if result:

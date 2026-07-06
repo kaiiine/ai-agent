@@ -43,6 +43,10 @@ pypdf
 # mcp
 mcp[cli]
 
+# API server (Zed / Cursor / Continue.dev)
+fastapi
+uvicorn[standard]
+
 # Headless browser (visual audit + screenshot)
 playwright
 

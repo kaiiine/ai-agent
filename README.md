@@ -7,8 +7,8 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-orange?style=flat-square&logo=python&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-blue?style=flat-square)
 ![Ollama](https://img.shields.io/badge/Ollama-local%20%2B%20cloud-black?style=flat-square)
-![Gemini](https://img.shields.io/badge/Gemini-2.0%20Flash-4285F4?style=flat-square&logo=google)
-![Tests](https://img.shields.io/badge/tests-392%20passing-brightgreen?style=flat-square)
+![Gemini](https://img.shields.io/badge/Gemini-2.5%20Flash-4285F4?style=flat-square&logo=google)
+![Mistral](https://img.shields.io/badge/Mistral-small%202603-FF7000?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
 </div>
@@ -47,6 +47,7 @@ axon
 › Go to my project X and fix the bug in auth.ts
 › Search for papers on hybrid RAGs on arxiv
 › /attach lecture.pdf  then  /fiche
+› /build my-project
 › look at @src/agents/jira/tools.py and optimize _fmt_issue
 ```
 
@@ -65,6 +66,7 @@ axon
 │   Semantic ToolRetriever (nomic-embed-text) → k=7 tools             │
 │   CachedToolNode (TTL + invalidation) · Cloud redaction             │
 │   Proactive context compression (85% → summarize or prune)          │
+│   Key pool rotation (multi-account, auto-fallback across providers) │
 └─────────────────────────────────────────────────────────────────────┘
                              │
           ┌──────────────────┼──────────────────────┐
@@ -73,9 +75,9 @@ axon
    │ Agents  │     │  Shell / Git    │    │  Coding Specialist     │
    │ Google  │     │  Filesystem     │    │  Dedicated LLM + HITL  │
    │ Slack   │     │  System         │    │  propose_file_change   │
-   │ Jira    │     └─────────────────┘    │  SnapshotStore (/undo) │
-   │ Arxiv…  │                            └────────────────────────┘
-   └─────────┘
+   │ Jira    │     └─────────────────┘    │  Phase-based /build    │
+   │ Arxiv…  │                            │  SnapshotStore (/undo) │
+   └─────────┘                            └────────────────────────┘
 ```
 
 ---
@@ -86,10 +88,23 @@ Switchable on the fly via `/backend` or in `configs/base.yaml`:
 
 | Backend | Default model | Context | Notes |
 |---------|---------------|---------|-------|
-| `ollama_cloud` | `kimi-k2:1t-cloud` | 128 000 | **Recommended** — very powerful |
-| `gemini` | `gemini-2.0-flash` | **1 000 000** | Free, massive context window |
-| `groq` | `llama-3.3-70b-versatile` | 131 072 | Fast, Groq API |
+| `ollama_cloud` | `minimax-m2.5:cloud` | 128 000 | **Recommended** — powerful, multi-account pool |
+| `gemini` | `gemini-2.5-flash` | **1 000 000** | Free, massive context window |
+| `mistral` | `mistral-small-2603` | 128 000 | Free tier, 1M context |
 | `ollama` | `qwen2.5:7b` | 131 072 | 100% local (GPU) |
+
+### Multi-key rotation
+
+Axon cycles through all your API keys automatically — within a provider before switching to the next:
+
+```env
+OLLAMA_CLOUD_API_KEYS=key1,key2,key3,key4,key5   # exhausted in order
+GEMINI_API_KEYS=key1,key2,key3
+MISTRAL_API_KEY=key1
+FALLBACK_ORDER=ollama_cloud,gemini,mistral        # configurable
+```
+
+On 429: key1 → key2 → … → keyN → switch to next provider. Cooldown state persisted in `~/.axon/key_pool_state.json`.
 
 ---
 
@@ -110,10 +125,41 @@ dev_plan_create → analysis → dev_explain → propose_file_change
 - **`/mode ask`** (default): approval required for each file
 - **`/mode auto`**: writes directly without confirmation
 - **`/undo`**: restores all files modified since the last round (automatic snapshot)
-- **Per-stack prompts**: Next.js · Angular · Vue · Svelte · Three.js · Python · Rust · Go · Node.js · Java · Systems — loaded automatically by manifest detection or via `load_skill()`
-- **Task enrichment**: repos and files mentioned in the task are pre-read before the LLM starts — no wasted round-trips
-- **Semantic tool selection**: only the 6 most relevant tools are exposed per turn (Chroma embeddings), with full group expansion (e.g. `git_status` → whole git group)
-- **Configurable local context**: `CODING_NUM_CTX_LOCAL=16384` (default) — tune to your GPU VRAM
+- **Per-stack skills**: Next.js · Angular · Vue · Svelte · Three.js · Python · Rust · Go · Node.js · Java · Systems — loaded automatically by manifest detection or via `load_skill()`
+- **Task enrichment**: repos and files mentioned in the task are pre-read before the LLM starts
+- **Semantic tool selection**: only the 6 most relevant tools are exposed per turn (Chroma embeddings)
+
+### `/build` — Phase-based project builder
+
+Builds an entire project from a `spec.md` by splitting it into independent phases, each run as a separate specialist session. Avoids context overflow on large projects.
+
+```bash
+› /build my-project    # reads ~/Documents/projets-perso/my-project/spec.md
+```
+
+Each phase is retried on failure. Progress streams live. Token budget is auto-tuned per backend.
+
+### Persistent project memory
+
+**`AXON.md`** — user instructions injected into the system prompt of every thread on this repo.
+
+```markdown
+# AXON.md
+- Stack: FastAPI + PostgreSQL + React 18 + TypeScript
+- Tests: pytest only, no DB mocks
+```
+
+**`.axon/memory/`** — Axon writes here automatically after each session:
+
+| File | Content |
+|------|---------|
+| `journal.md` | Session log (task, tools used, result) |
+| `decisions.md` | Architecture decisions with rationale |
+| `learnings.md` | Technical discoveries |
+| `blockers.md` | Recurring errors and their fixes |
+| `evals.md` | Code quality assessments |
+
+Injected into future sessions on the same repo. Browsable in Obsidian (auto-config generated).
 
 ### Study sheets & exercises
 
@@ -121,39 +167,28 @@ dev_plan_create → analysis → dev_explain → propose_file_change
 › /attach lecture-security.pdf
 › /fiche          # → fiche_lecture-security.html (opens in browser)
 › /exo            # → interactive MCQ + open questions
-
-# Or in natural language with an attached PDF:
-› /attach lecture.pdf
-› make me a complete study sheet from this
 ```
 
-- **`/fiche`**: single-page HTML sheet covering all concepts, formulas, tables, pitfalls and summary
-- **`/exo`**: interactive exercises with instant MCQ feedback, open questions, final score, replay button
-- Axon Slate Glass design: glassmorphism, dark/light toggle in header, light (parchment) mode by default
-- Filename generated from the attached PDF name, native print support (`window.print()`)
-- Auto-detection: writing "sheet" / "study" with an attached PDF triggers `/fiche` automatically
+- **`/fiche`**: single-page HTML covering all concepts, formulas, tables, pitfalls and summary
+- **`/exo`**: interactive exercises with instant feedback, final score, replay
+- Auto-detection: writing "sheet" / "study" with an attached PDF triggers `/fiche`
+
+### Presentations & slides
+
+```bash
+› Create a presentation on microservices architecture
+```
+
+Generates professional Reveal.js (HTML) slides with alternating dark/light theme. Export to PPTX available if `python-pptx` is installed.
 
 ### Plan mode (`Ctrl+T`)
 
-Switches to read-only — all write tools are removed. The LLM analyses, reasons and proposes without acting. Switch back to BUILD with `Ctrl+T`.
+Switches to read-only — all write tools removed. The LLM analyses and proposes without acting.
 
 ```
 ·············· ◆ PLAN ················
  PLAN   Analyse my project and propose an auth architecture refactor
 ```
-
-### Persistent project memory
-
-**`AXON.md`** — user instructions injected into the system prompt of every thread on this repo. You write it, Axon reads it.
-
-```markdown
-# AXON.md
-- Stack: FastAPI + PostgreSQL + React 18 + TypeScript
-- Tests: pytest only, no DB mocks
-- Never use `assert` in production
-```
-
-**`.axon/memory.md`** — Axon writes here automatically via `axon_note` when it makes a significant change (architecture decision, major refactor…). Injected into all future threads on this repo.
 
 ### `@mention` files
 
@@ -165,25 +200,76 @@ Switches to read-only — all write tools are removed. The LLM analyses, reasons
 
 ### Mermaid diagrams
 
-```
-› Create an architecture diagram of my FastAPI app with Redis and PostgreSQL
-```
-
-Generates flowcharts, sequence diagrams, class diagrams, ER diagrams, C4 containers… rendered as a self-contained HTML file and exported to `public/diagrams/`.
-
-Supported types: `graph LR/TD` · `sequenceDiagram` · `classDiagram` · `erDiagram` · `C4Container`
+Generates flowcharts, sequence diagrams, class diagrams, ER diagrams, C4 containers — rendered as self-contained HTML exported to `public/diagrams/`.
 
 ### Jupyter notebooks
 
-```
-› Go to my notebook analysis.ipynb and fill in the TODO cells
+Native notebook editing: reads cells with indices, edits cell-by-cell with HITL review, inserts new cells, runs and checks outputs. Never corrupts `.ipynb` JSON.
+
+---
+
+## IDE integration (Zed, Cursor, Continue.dev)
+
+Axon exposes two independent servers for IDE use:
+
+### MCP server — tools for any LLM
+
+Exposes all Axon tools (filesystem, git, shell, search…) to Copilot, Claude, or any MCP-compatible LLM.
+
+```bash
+python src/mcp_server.py
 ```
 
-Native notebook editing — reads cells with indices, edits cell-by-cell with HITL review, inserts new cells, runs the notebook and checks outputs. Never corrupts `.ipynb` JSON.
+**Zed** (`~/.config/zed/settings.json`):
+```json
+"context_servers": {
+  "axon": {
+    "command": {
+      "path": "/path/to/venv/bin/python",
+      "args": ["/path/to/ai-agent/src/mcp_server.py"]
+    }
+  }
+}
+```
 
-- `notebook_read` · `notebook_edit_cell` · `notebook_insert_cell` · `notebook_run`
-- Automatic `.venv` dependency resolution before execution
-- HITL diff review per cell (same approve/reject/refine flow as file changes)
+**Claude Desktop** (`~/.config/claude/claude_desktop_config.json`):
+```json
+"mcpServers": {
+  "axon": {
+    "command": "/path/to/venv/bin/python",
+    "args": ["/path/to/ai-agent/src/mcp_server.py"]
+  }
+}
+```
+
+### API server — Axon as the AI
+
+Makes Axon itself the talking LLM in your IDE (OpenAI-compatible).
+
+```bash
+python src/api_server.py    # → http://127.0.0.1:8765/v1
+```
+
+**Zed** (`~/.config/zed/settings.json`):
+```json
+"language_models": {
+  "openai": {
+    "api_url": "http://127.0.0.1:8765/v1",
+    "available_models": [
+      {"name": "axon", "max_tokens": 128000, "max_output_tokens": 8192}
+    ]
+  }
+}
+```
+
+**Continue.dev** (`config.json`):
+```json
+{"models": [{"title": "Axon", "provider": "openai", "model": "axon",
+             "apiBase": "http://127.0.0.1:8765/v1", "apiKey": "axon"}]}
+```
+
+Slash commands available from Zed (prefix with a space to bypass Zed's own `/` picker):
+` /keys` · ` /backend gemini` · ` /model` · ` /graph` · ` /build project` · ` /help`
 
 ---
 
@@ -198,9 +284,9 @@ Native notebook editing — reads cells with indices, edits cell-by-cell with HI
 | **Google Workspace** | Gmail (HITL), Calendar, Drive, Docs, Slides |
 | **Slack** | read channels/DMs, send (HITL), search |
 | **Jira** | read, create, transitions, bulk (Epic→Story→Task), workload |
-| **Code** | coding specialist HITL, plan, propose_file_change, download_asset |
+| **Code** | coding specialist HITL, plan, propose_file_change, /build phases |
 | **Notebooks** | notebook_read, notebook_edit_cell, notebook_insert_cell, notebook_run |
-| **Visuals** | Mermaid (diagrams → HTML), `/fiche`, `/exo` (HTML sheets) |
+| **Visuals** | Mermaid (diagrams → HTML), slides (Reveal.js + PPTX), /fiche, /exo |
 
 ---
 
@@ -216,14 +302,18 @@ Native notebook editing — reads cells with indices, edits cell-by-cell with HI
 | `/exo` | Generate interactive exercises from attached PDFs |
 | `/letter` | Generate a cover letter (CV + job offer) |
 | `/upgrade` | Improve an existing letter |
-| `/backend <b>` | Switch backend: `gemini` · `groq` · `ollama` · `ollama_cloud` |
+| `/spec` | Interactive wizard to generate a `spec.md` for a new project |
+| `/build <project>` | Build a project phase by phase from its `spec.md` |
+| `/backend <b>` | Switch backend: `gemini` · `ollama` · `ollama_cloud` · `mistral` |
 | `/model <name>` | Change model (interactive picker if no argument) |
 | `/temp <val>` | Change temperature (e.g. `/temp 0.7`) |
 | `/mode <ask\|auto>` | File edit mode — ask (approval) / auto (direct) |
 | `/lang <fr\|en\|auto>` | Force response language |
+| `/keys` | Show API key pool status (provider, health, cooldown) |
 | `/new` | Start a new thread |
 | `/history` | List past threads and resume one |
 | `/branch` | Fork the current thread to explore another approach |
+| `/compact` | Manually compress the current session context |
 | `/undo` | Restore all files modified since the last round |
 | `/save` | Save the session transcript |
 | `/config` | Show current configuration |
@@ -251,10 +341,12 @@ Native notebook editing — reads cells with indices, edits cell-by-cell with HI
 USER_NAME=First Last
 
 # LLM — at least one required
-GEMINI_API_KEY=AIzaSy...          # Free — https://aistudio.google.com/apikey
-GROQ_API_KEY=gsk_...              # https://console.groq.com
-OLLAMA_API_KEY=ollama_...         # Optional (Ollama Cloud)
-OLLAMA_HOST=http://127.0.0.1:11434
+OLLAMA_API_KEY=key                    # Single Ollama Cloud key
+OLLAMA_CLOUD_API_KEYS=k1,k2,k3,k4,k5 # Multi-key pool (auto-rotation)
+GEMINI_API_KEY=AIzaSy...              # Free — https://aistudio.google.com/apikey
+GEMINI_API_KEYS=k1,k2,k3              # Multi-key pool
+MISTRAL_API_KEY=...                   # https://console.mistral.ai
+FALLBACK_ORDER=ollama_cloud,gemini,mistral
 
 # Web search
 TAVILY_API_KEY=tvly-...
@@ -276,27 +368,26 @@ Google (Gmail · Calendar · Drive · Docs · Slides) uses OAuth2 via `gcp-oauth
 ### `configs/base.yaml`
 
 ```yaml
-llm_backend: "ollama_cloud"        # gemini | ollama | ollama_cloud | groq
+llm_backend: "ollama_cloud"        # gemini | ollama | ollama_cloud | mistral
 
 ollama:
   model: "qwen2.5:7b"
   temperature: 0.0
 
-groq:
-  model: "llama-3.3-70b-versatile"
-
-coding_model: "qwen3-coder-next:cloud"  # coding specialist (ollama_cloud)
+coding_model: "qwen3-coder-next:cloud"  # coding specialist
 
 gemini:
-  model: "gemini-2.5-flash"             # orchestrator
-  coding_model: "gemini-2.5-flash"      # coding specialist (separate quota)
+  model: "gemini-2.5-flash"
+  coding_model: "gemini-2.5-flash"
+
+mistral:
+  model: "mistral-small-2603"
+  coding_model: "codestral-2508"
 
 search:
   backend: "tavily"
   max_results: 10
 ```
-
-`CODING_NUM_CTX_LOCAL` (`.env`) — KV cache size for local Ollama coding model. Default `16384` (~3 GB VRAM). Increase to `32768` if your GPU has headroom.
 
 ### Ollama models (if using local backend)
 
@@ -310,7 +401,7 @@ ollama pull qwen2.5:7b          # Local backend (optional)
 ## Tests
 
 ```bash
-venv/bin/python -m pytest test/ -q   # 363 tests
+venv/bin/python -m pytest test/ -q
 ```
 
 ---
@@ -327,11 +418,16 @@ ai-agent/
 └── src/
     ├── ui/                        # Terminal (streaming, commands, completer, attachments)
     ├── orchestrator/              # LangGraph graph, tool registry, tool retriever
-    ├── llm/                       # LLM factories, adaptive prompt
+    ├── llm/                       # LLM factories, key pool, adaptive prompt
+    ├── api/                       # OpenAI-compatible API server (models, streaming, commands)
+    ├── api_server.py              # FastAPI entry point (port 8765)
+    ├── mcp_server.py              # MCP stdio server (Zed, Claude Desktop, Cursor)
     ├── infra/                     # Settings, cache, redactor, browser, auth
     └── agents/
-        ├── coding/                # HITL specialist, propose_file_change, per-stack prompts
+        ├── coding/                # HITL specialist, /build phases, per-stack skills
         │   └── prompts/           # nextjs · angular · vue · svelte · threedee · python · …
+        ├── memory/                # Persistent session memory (.axon/memory/)
+        ├── slides/                # Reveal.js + PPTX renderer
         ├── mermaid/               # Diagram generation (flowchart, sequence, ER, C4…)
         ├── notebook/              # Jupyter HITL editing (read/edit/insert/run)
         ├── study/                 # HTML study sheets & exercises

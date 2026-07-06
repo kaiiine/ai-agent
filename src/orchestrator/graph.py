@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langgraph.graph import StateGraph, START
+from langgraph.graph import START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from rich.console import Console as RichConsole
 
@@ -13,14 +13,14 @@ _console = RichConsole()
 
 # ── Context budget constants ───────────────────────────────────────────────────
 _CONTEXT_LIMITS: dict[str, int] = {
-    "ollama":       131_072,
+    "ollama": 131_072,
     "ollama_cloud": 128_000,
-    "groq":         131_072,
-    "gemini":     1_000_000,
+    "groq": 131_072,
+    "gemini": 1_000_000,
 }
 _COMPACTION_BUFFER = 20_000
-_PRUNE_PROTECT     = 40_000
-_PRUNE_MINIMUM     = 12_000
+_PRUNE_PROTECT = 40_000
+_PRUNE_MINIMUM = 12_000
 _BACKEND_POLICY = {
     "ollama": {"ratio": 0.40, "keep_recent": 6},
     "ollama_cloud": {"ratio": 0.70, "keep_recent": 12},
@@ -29,16 +29,47 @@ _BACKEND_POLICY = {
     "groq": {"ratio": 0.65, "keep_recent": 12},
 }
 
-_CODING_KEYWORDS = frozenset({
-    "code", "fichier", "file", "fonction", "function", "composant", "component",
-    "bug", "fix", "erreur", "error", "npm", "pnpm", "yarn", "git", "migration",
-    "supabase", "next", "react", "vue", "svelte", "angular", "typescript", "python",
-    "shell", "terminal", "build", "deploy", "css", "html", "sql", "api", "endpoint",
-})
+_CODING_KEYWORDS = frozenset(
+    {
+        "code",
+        "fichier",
+        "file",
+        "fonction",
+        "function",
+        "composant",
+        "component",
+        "bug",
+        "fix",
+        "erreur",
+        "error",
+        "npm",
+        "pnpm",
+        "yarn",
+        "git",
+        "migration",
+        "supabase",
+        "next",
+        "react",
+        "vue",
+        "svelte",
+        "angular",
+        "typescript",
+        "python",
+        "shell",
+        "terminal",
+        "build",
+        "deploy",
+        "css",
+        "html",
+        "sql",
+        "api",
+        "endpoint",
+    }
+)
 
 _SUMMARY_MARKER = "[COMPRESSED SESSION MEMORY]"
 _MAX_TOOL_MSG_CHARS = 3_000
-_MAX_TOOL_ROUNDS    = 12
+_MAX_TOOL_ROUNDS = 12
 
 # ── Compile callback ───────────────────────────────────────────────────────────
 _compile_callback = None
@@ -79,6 +110,7 @@ def _on_compress() -> None:
 
 # ── Tool-round counter ────────────────────────────────────────────────────────
 
+
 def _consecutive_tool_rounds(messages: List) -> int:
     """Count total AI→Tool rounds since the last HumanMessage (not just consecutive).
     This catches loops where the LLM interleaves text between tool calls to reset the counter."""
@@ -92,6 +124,7 @@ def _consecutive_tool_rounds(messages: List) -> int:
 
 
 # ── Token estimation ───────────────────────────────────────────────────────────
+
 
 def _estimate_tokens(messages: List) -> int:
     total = 0
@@ -110,21 +143,23 @@ def _backend_policy(backend: str) -> dict:
         {"ratio": 0.6, "keep_recent": 10},
     )
 
+
 def _usable_budget(backend: str) -> int:
     policy = _backend_policy(backend)
     return int(_CONTEXT_LIMITS.get(backend, 128_000) * policy["ratio"])
 
 
-
 def _should_compress(messages: List, backend: str) -> bool:
     effective = [
-        m for m in messages
+        m
+        for m in messages
         if not (isinstance(m, SystemMessage) and _SUMMARY_MARKER in str(m.content))
     ]
     return _estimate_tokens(effective) > _usable_budget(backend)
 
 
 # ── Context helpers ────────────────────────────────────────────────────────────
+
 
 def _cap_tool_messages(messages: List) -> List:
     out = []
@@ -141,9 +176,7 @@ def _cap_tool_messages(messages: List) -> List:
             tail_size = _MAX_TOOL_MSG_CHARS - head_size
 
             content = (
-                content[:head_size]
-                + "\n...[truncated]...\n"
-                + content[-tail_size:]
+                content[:head_size] + "\n...[truncated]...\n" + content[-tail_size:]
             )
 
             m = ToolMessage(
@@ -156,6 +189,7 @@ def _cap_tool_messages(messages: List) -> List:
 
     return out
 
+
 def _is_coding_session(messages: List) -> bool:
     """Detect if the session is code-related based on message content."""
     for m in messages:
@@ -164,7 +198,6 @@ def _is_coding_session(messages: List) -> bool:
             if any(kw in content for kw in _CODING_KEYWORDS):
                 return True
     return False
-
 
 
 def _drop_smartest(messages: List) -> List | None:
@@ -185,40 +218,46 @@ def _drop_smartest(messages: List) -> List | None:
     # No complete tool round found — drop oldest non-system, non-human message
     for i in range(start, len(messages)):
         if not isinstance(messages[i], HumanMessage):
-            return messages[:i] + messages[i + 1:]
+            return messages[:i] + messages[i + 1 :]
 
     return None
 
 
 def _sanitize_messages_for_mistral(messages: List) -> List:
-    """Mistral rejects an AIMessage containing tool_calls if it does not have all of its corresponding ToolMessages. 
-       Removes AIMessages with orphaned tool_calls."""
-    answered_ids: set[str] = set()
-    for m in messages:
-        if isinstance(m, ToolMessage):
-            answered_ids.add(m.tool_call_id)
-        
-    result = []
-    for m in messages:
+    """Mistral requires strict tool_call/tool_result pairing.
+    Removes AIMessages with unanswered tool_calls AND ToolMessages
+    that became orphaned (e.g. after context compression dropped their parent AIMessage)."""
+    all_response_ids = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
+
+    valid_call_ids: set[str] = set()
+    removed_ai: set[int] = set()
+    for i, m in enumerate(messages):
         if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
-            all_answered = all(
-                tc["id"] in answered_ids
-                for tc in m.tool_calls
-            )
-            if not all_answered:
-                continue
-        result.append(m)
-    return result
+            tc_ids = [tc["id"] for tc in m.tool_calls]
+            if all(tid in all_response_ids for tid in tc_ids):
+                valid_call_ids.update(tc_ids)
+            else:
+                removed_ai.add(i)
+
+    return [
+        m
+        for i, m in enumerate(messages)
+        if i not in removed_ai
+        and not (isinstance(m, ToolMessage) and m.tool_call_id not in valid_call_ids)
+    ]
 
 
-def _compress_context(messages: List, llm, backend: str = "ollama_cloud") -> tuple[List, List]:
+def _compress_context(
+    messages: List, llm, backend: str = "ollama_cloud"
+) -> tuple[List, List]:
     """Compress old context while preserving recent raw messages.
     Removes old summaries, compresses old conversation, keeps recent messages raw.
     Uses a coding-specific prompt or a general one based on session content.
     """
     # Collect old summaries to remove from LangGraph state
     old_summaries = [
-        m for m in messages
+        m
+        for m in messages
         if isinstance(m, SystemMessage) and _SUMMARY_MARKER in str(m.content)
     ]
 
@@ -230,10 +269,7 @@ def _compress_context(messages: List, llm, backend: str = "ollama_cloud") -> tup
         else None
     )
 
-    conversation = [
-        m for m in clean_messages
-        if not isinstance(m, SystemMessage)
-    ]
+    conversation = [m for m in clean_messages if not isinstance(m, SystemMessage)]
 
     keep_recent = _backend_policy(backend)["keep_recent"]
 
@@ -264,7 +300,9 @@ def _compress_context(messages: List, llm, backend: str = "ollama_cloud") -> tup
                 transcript_parts.append(f"[ASSISTANT]: {content[:2500]}")
             for tc in getattr(m, "tool_calls", []) or []:
                 args_str = str(tc.get("args", {}))[:1200]
-                transcript_parts.append(f"[TOOL CALL] {tc.get('name', '?')}({args_str})")
+                transcript_parts.append(
+                    f"[TOOL CALL] {tc.get('name', '?')}({args_str})"
+                )
         elif isinstance(m, ToolMessage):
             name = getattr(m, "name", "tool") or "tool"
             transcript_parts.append(f"[TOOL RESULT] {name}: {content[:2000]}")
@@ -371,9 +409,7 @@ OLD CONTEXT:
                 for p in summary_content
             )
 
-        summary_msg = SystemMessage(
-            content=f"{_SUMMARY_MARKER}\n{summary_content}"
-        )
+        summary_msg = SystemMessage(content=f"{_SUMMARY_MARKER}\n{summary_content}")
 
         compressed = ([system_msg] if system_msg else []) + [summary_msg] + recent
         # Return old conversation messages + old summaries as "removed"
@@ -383,9 +419,11 @@ OLD CONTEXT:
         dropped = _drop_smartest(messages) or messages
         kept_ids = {id(m) for m in dropped}
         removed = [m for m in messages if id(m) not in kept_ids]
-        return dropped, removed + old_summaries    
-    
+        return dropped, removed + old_summaries
+
+
 # ── Cached ToolNode ────────────────────────────────────────────────────────────
+
 
 class CachedToolNode:
     """Wraps LangGraph's ToolNode with session-level result caching.
@@ -394,7 +432,8 @@ class CachedToolNode:
     """
 
     def __init__(self, tools: list) -> None:
-        from src.infra.tools_cache import session_cache, CACHEABLE_TOOLS
+        from src.infra.tools_cache import CACHEABLE_TOOLS, session_cache
+
         self._inner = ToolNode(tools=tools)
         self._cache = session_cache
         self._cacheable = CACHEABLE_TOOLS
@@ -414,7 +453,9 @@ class CachedToolNode:
             if hit is None:
                 cached_msgs = []
                 break
-            cached_msgs.append(ToolMessage(content=hit, tool_call_id=tc["id"], name=name))
+            cached_msgs.append(
+                ToolMessage(content=hit, tool_call_id=tc["id"], name=name)
+            )
 
         if cached_msgs:
             return {"messages": cached_msgs}
@@ -429,13 +470,17 @@ class CachedToolNode:
             tc = tc_by_id.get(msg.tool_call_id)
             if tc and tc["name"] in self._cacheable:
                 from src.infra.tools_cache import CACHE_TTLS
-                self._cache.set(tc["name"], tc.get("args", {}), msg.content, CACHE_TTLS[tc["name"]])
+
+                self._cache.set(
+                    tc["name"], tc.get("args", {}), msg.content, CACHE_TTLS[tc["name"]]
+                )
             if tc:
                 self._cache.on_tool_executed(tc["name"])
 
         # Redact sensitive data before it enters the LLM context on cloud backends
+        from src.infra.redactor import is_sensitive_path, redact, should_redact
         from src.infra.settings import settings
-        from src.infra.redactor import should_redact, redact, is_sensitive_path
+
         if should_redact(settings.llm_backend):
             cleaned: list[ToolMessage] = []
             for msg in result.get("messages", []):
@@ -459,11 +504,18 @@ class CachedToolNode:
 
 # ── Orchestrator ───────────────────────────────────────────────────────────────
 
-from src.orchestrator.state import GlobalState
-from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini, make_llm_mistral
+from src.infra.checkpoint import build_checkpointer
+from src.llm.models import (
+    make_llm,
+    make_llm_gemini,
+    make_llm_groq,
+    make_llm_mistral,
+    make_llm_ollama_cloud,
+    make_orchestrator_llm_with_key,
+)
 from src.llm.prompts import build_system_prompt
 from src.orchestrator.registry import build_all_tools
-from src.infra.checkpoint import build_checkpointer
+from src.orchestrator.state import GlobalState
 from src.orchestrator.tool_retriever import ToolRetriever
 
 
@@ -471,15 +523,20 @@ def _ensure_system_prompt(
     messages: List, selected_tools: List, today: str, plan_mode: bool = False
 ) -> List:
     import os
+
     user_name = os.getenv("USER_NAME", "l'utilisateur")
     tool_names = [t.name for t in selected_tools]
     system_msg = SystemMessage(
-        content=build_system_prompt(tool_names, today, user_name, plan_mode=plan_mode, lang=_lang_pref)
+        content=build_system_prompt(
+            tool_names, today, user_name, plan_mode=plan_mode, lang=_lang_pref
+        )
     )
     if not messages:
         return [system_msg]
     first = messages[0]
-    role0 = first.get("type") if isinstance(first, dict) else getattr(first, "type", None)
+    role0 = (
+        first.get("type") if isinstance(first, dict) else getattr(first, "type", None)
+    )
     if role0 == "system":
         return [system_msg] + messages[1:]
     return [system_msg] + messages
@@ -487,18 +544,19 @@ def _ensure_system_prompt(
 
 def _chat_node_factory():
     _factories = {
-        "groq":         make_llm_groq,
+        "groq": make_llm_groq,
         "ollama_cloud": make_llm_ollama_cloud,
-        "ollama":       make_llm,
-        "gemini":       make_llm_gemini,
-        "mistral":      make_llm_mistral,
+        "ollama": make_llm,
+        "gemini": make_llm_gemini,
+        "mistral": make_llm_mistral,
     }
     tools = build_all_tools()
     retriever = ToolRetriever(tools)
 
     def chatbot(state: GlobalState):
         from src.infra.settings import settings
-        from src.ui.plan_mode import is_active as _is_plan_mode, BLOCKED_TOOLS
+        from src.ui.plan_mode import BLOCKED_TOOLS
+        from src.ui.plan_mode import is_active as _is_plan_mode
 
         global _compressed_this_turn
         last = state["messages"][-1] if state["messages"] else None
@@ -508,8 +566,12 @@ def _chat_node_factory():
         backend = settings.llm_backend
         factory = _factories.get(backend, make_llm_ollama_cloud)
 
-        last_human = next((m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), None)
+        last_human = next(
+            (m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            None,
+        )
         last_message = state["messages"][-1]
+
         def _content_to_str(content) -> str:
             if isinstance(content, str):
                 return content
@@ -523,10 +585,18 @@ def _chat_node_factory():
         if last_human:
             query = _content_to_str(last_human.content)
             if len(query.split()) < 8:
-                human_msgs = [_content_to_str(m.content) for m in state["messages"] if isinstance(m, HumanMessage)]
+                human_msgs = [
+                    _content_to_str(m.content)
+                    for m in state["messages"]
+                    if isinstance(m, HumanMessage)
+                ]
                 query = " ".join(human_msgs[-3:])
         else:
-            query = _content_to_str(last_message.content) if hasattr(last_message, "content") else str(last_message)
+            query = (
+                _content_to_str(last_message.content)
+                if hasattr(last_message, "content")
+                else str(last_message)
+            )
         selected_tools = retriever.get(query)
 
         global _last_selected_tools
@@ -536,6 +606,7 @@ def _chat_node_factory():
         plan_mode = _is_plan_mode()
         if plan_mode:
             from src.orchestrator.tool_retriever import TOOL_GROUPS
+
             _read_groups = ("filesystem", "search", "git", "drive", "arxiv", "time")
             _tools_by_name = {t.name: t for t in tools}
             _selected_names = {t.name for t in selected_tools}
@@ -548,19 +619,23 @@ def _chat_node_factory():
         # Tool-round cap — force text response after _MAX_TOOL_ROUNDS consecutive rounds
         force_text = _consecutive_tool_rounds(state["messages"]) >= _MAX_TOOL_ROUNDS
         if force_text:
-            _console.print(f"[dim]  ↩  {_MAX_TOOL_ROUNDS} rounds atteints — synthèse forcée[/dim]")
+            _console.print(
+                f"[dim]  ↩  {_MAX_TOOL_ROUNDS} rounds atteints — synthèse forcée[/dim]"
+            )
             llm_with_tools = factory()
         else:
             llm_with_tools = factory().bind_tools(selected_tools)
 
         messages = state["messages"]
         today = datetime.now().strftime("%Y-%m-%d")
-        messages = _ensure_system_prompt(messages, selected_tools, today, plan_mode=plan_mode)
+        messages = _ensure_system_prompt(
+            messages, selected_tools, today, plan_mode=plan_mode
+        )
 
         # Proactive compression before calling the LLM (once per user turn max)
         working = messages
-        _state_removals: list = []   # original msgs replaced by summary → RemoveMessage
-        _summary_msg = None           # compressed SystemMessage to persist
+        _state_removals: list = []  # original msgs replaced by summary → RemoveMessage
+        _summary_msg = None  # compressed SystemMessage to persist
 
         if _should_compress(working, backend) and not _compressed_this_turn:
             _compressed_this_turn = True
@@ -578,8 +653,12 @@ def _chat_node_factory():
             )
             # Find compressed summary SystemMessage
             _summary_msg = next(
-                (m for m in working if isinstance(m, SystemMessage)
-                and _SUMMARY_MARKER in str(m.content)),
+                (
+                    m
+                    for m in working
+                    if isinstance(m, SystemMessage)
+                    and _SUMMARY_MARKER in str(m.content)
+                ),
                 None,
             )
 
@@ -589,6 +668,24 @@ def _chat_node_factory():
         capped = False
         compressed = False
 
+        # Key pool tracking pour rotation sur 429
+        _orch_provider = backend
+        try:
+            from src.llm.key_pool import get_pool as _get_pool
+
+            _orch_key = _get_pool().next_healthy(backend) or ""
+        except Exception:
+            _orch_key = ""
+
+        _RATE_LIMIT_MARKERS = (
+            "429",
+            "too many requests",
+            "resource_exhausted",
+            "rate limit",
+            "quota exceeded",
+            "session usage limit",
+        )
+
         while True:
             try:
                 response = llm_with_tools.invoke(working)
@@ -596,19 +693,48 @@ def _chat_node_factory():
                 usage = getattr(response, "usage_metadata", None)
                 if usage:
                     from src.ui.token_gauge import update_usage
+
                     update_usage(usage)
 
                 break
 
             except Exception as e:
                 err = str(e).lower()
+
+                # rotation vers la prochaine clef
+                if any(k in err for k in _RATE_LIMIT_MARKERS):
+                    try:
+                        from src.llm.key_pool import get_fallback_order as _gfo
+                        from src.llm.key_pool import get_pool as _kp
+
+                        _nxt = _kp().next_provider_and_key(
+                            _orch_provider, _orch_key, _gfo()
+                        )
+                        if _nxt:
+                            _orch_provider, _orch_key = _nxt
+                            settings.llm_backend = _orch_provider
+                            _new_llm = make_orchestrator_llm_with_key(
+                                _orch_provider, _orch_key
+                            )
+                            llm_with_tools = (
+                                _new_llm
+                                if force_text
+                                else _new_llm.bind_tools(selected_tools)
+                            )
+                            continue
+                    except Exception:
+                        pass
+                    raise
+
                 if "context" not in err and "length" not in err and "token" not in err:
                     raise
 
                 if not capped:
                     capped = True
                     working = _cap_tool_messages(working)
-                    _console.print("[dim]  ↩  contexte trop long — tronquage des résultats tools…[/dim]")
+                    _console.print(
+                        "[dim]  ↩  contexte trop long — tronquage des résultats tools…[/dim]"
+                    )
 
                 elif not compressed:
                     compressed = True
@@ -624,10 +750,13 @@ def _chat_node_factory():
                         f"[dim]  ↩  compression: -{freed:,} tokens estimés "
                         f"({before_tokens:,} → {after_tokens:,})[/dim]"
                     )
-                    _state_removals.extend(r for r in removed if r not in _state_removals)
+                    _state_removals.extend(
+                        r for r in removed if r not in _state_removals
+                    )
                     _summary_msg = next(
                         (
-                            m for m in working
+                            m
+                            for m in working
                             if isinstance(m, SystemMessage)
                             and _SUMMARY_MARKER in str(m.content)
                         ),
@@ -640,14 +769,21 @@ def _chat_node_factory():
                     if reduced is None or len(reduced) <= 1:
                         raise
                     working = reduced
-                    _console.print(f"[dim]  ↩  drop tool round ({len(working)} messages restants)…[/dim]")
+                    _console.print(
+                        f"[dim]  ↩  drop tool round ({len(working)} messages restants)…[/dim]"
+                    )
 
         # Persist compression to LangGraph state so subsequent chatbot calls
         # start with the compressed history, not the original bloated one.
         from langchain_core.messages import RemoveMessage
+
         result: list = []
         if _state_removals:
-            result += [RemoveMessage(id=m.id) for m in _state_removals if getattr(m, "id", None)]
+            result += [
+                RemoveMessage(id=m.id)
+                for m in _state_removals
+                if getattr(m, "id", None)
+            ]
             if _summary_msg:
                 result.append(_summary_msg)
         result.append(response)

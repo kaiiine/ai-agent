@@ -103,6 +103,18 @@ _STOPWORDS = frozenset({
     "me", "tu", "il", "elle", "nous", "vous", "ils", "elles",
 })
 
+# Detects standalone filenames mentioned in a task ("script.py", "config.json", etc.)
+# but NOT filenames that are already part of an absolute path (handled by _PATH_RE).
+_CODE_EXTENSIONS = (
+    "py", "js", "ts", "tsx", "jsx", "json", "yaml", "yml", "toml", "sh",
+    "go", "rs", "java", "kt", "swift", "rb", "php", "css", "html", "vue",
+    "svelte", "md", "txt", "env",
+)
+_FILENAME_RE = re.compile(
+    r"(?<![/\w.])(\w[\w._-]*\.(?:" + "|".join(_CODE_EXTENSIONS) + r"))(?![/\w])",
+    re.IGNORECASE,
+)
+
 
 _SPEC_SECTION_RE = re.compile(r'^##\s+\S', re.MULTILINE)
 _MIN_SPEC_CHARS = 500
@@ -197,7 +209,7 @@ def _read_file_content(path: Path) -> Optional[str]:
 
 
 def _read_repo_content(path: Path) -> Optional[str]:
-    """Read README + manifests + directory tree from a repo directory."""
+    """Read GRAPH_REPORT.md (preferred) or README + manifests + directory tree from a repo directory."""
     if not path.is_dir():
         return None
 
@@ -208,18 +220,36 @@ def _read_repo_content(path: Path) -> Optional[str]:
     if tree:
         sections.append(f"Structure :\n{tree}")
 
-    # README
-    for name in _README_NAMES:
-        readme = path / name
-        if readme.exists():
-            try:
-                raw = readme.read_text(encoding="utf-8", errors="replace")
-                sections.append(
-                    f"{name} :\n```\n{_truncate(raw, _MAX_README_CHARS, name)}\n```"
-                )
-            except Exception:
-                pass
-            break
+    # GRAPH_REPORT.md — injected with priority when available (replaces README for architecture context)
+    # graphify writes output to <project>/graphify-out/ by default
+    graph_report = path / "graphify-out" / "GRAPH_REPORT.md"
+    if not graph_report.exists():
+        graph_report = path / "GRAPH_REPORT.md"  # fallback: root-level
+    has_graph_report = False
+    if graph_report.exists():
+        try:
+            raw = graph_report.read_text(encoding="utf-8", errors="replace")
+            sections.append(
+                f"GRAPH_REPORT.md (architecture complète) :\n```\n{_truncate(raw, _MAX_README_CHARS, 'GRAPH_REPORT.md')}\n```"
+            )
+            has_graph_report = True
+        except Exception:
+            pass
+
+    # README — skipped if GRAPH_REPORT.md was injected (avoids duplication)
+    # If no GRAPH_REPORT.md, use README as fallback
+    if not has_graph_report:
+        for name in _README_NAMES:
+            readme = path / name
+            if readme.exists():
+                try:
+                    raw = readme.read_text(encoding="utf-8", errors="replace")
+                    sections.append(
+                        f"{name} :\n```\n{_truncate(raw, _MAX_README_CHARS, name)}\n```"
+                    )
+                except Exception:
+                    pass
+                break
 
     # Manifests (all found, individually capped)
     for name in _MANIFEST_NAMES:
@@ -266,10 +296,48 @@ def _find_project_dir(name: str) -> Optional[Path]:
 
 # ── Resolution ────────────────────────────────────────────────────────────────
 
+def _find_file_in_scope(filename: str) -> Optional[Path]:
+    """
+    Locate a bare filename (e.g. 'script.py') without a path.
+    Search order: cwd → cwd parents (3 levels) → project roots (shallow, depth 4).
+    Returns the first match to avoid loading many results.
+    """
+    try:
+        from src.agents.shell.tools import _cwd as shell_cwd
+        bases: list[Path] = []
+        cwd = Path(shell_cwd)
+        for _ in range(4):  # cwd + 3 parents
+            bases.append(cwd)
+            if cwd.parent == cwd:
+                break
+            cwd = cwd.parent
+        for root in _PROJECT_ROOTS:
+            bases.append(root)
+
+        needle = filename.lower()
+        for base in bases:
+            try:
+                for p in base.rglob(filename):
+                    if p.is_file() and p.name.lower() == needle:
+                        # Skip noise dirs
+                        parts = set(p.parts)
+                        if parts & _SKIP_DIRS:
+                            continue
+                        return p
+                    # rglob depth guard: skip deep hits from project roots
+                    if base in _PROJECT_ROOTS and len(p.relative_to(base).parts) > 4:
+                        break
+            except (PermissionError, OSError):
+                continue
+    except Exception:
+        pass
+    return None
+
+
 def _resolve(ref: str) -> Optional[tuple[str, str]]:
     """
     Try to resolve a reference string to (label, content).
-    Tries: absolute path → expanduser path → project name lookup.
+    Tries: absolute path → expanduser path → project name lookup → bare filename.
     """
     # 1. Direct path (absolute or ~)
     p = Path(ref).expanduser().resolve()
@@ -289,6 +357,14 @@ def _resolve(ref: str) -> Optional[tuple[str, str]]:
         if content:
             return str(found), content
 
+    # 3. Bare filename (e.g. "script.py") — scoped search around cwd
+    if "." in ref and "/" not in ref and "\\" not in ref:
+        located = _find_file_in_scope(ref)
+        if located:
+            content = _read_file_content(located)
+            if content:
+                return str(located), f"📄 {located}\n```\n{content}\n```"
+
     return None
 
 
@@ -305,6 +381,17 @@ def enrich_task(task: str) -> str:
     """
     refs = _extract_references(task)
     spec_result = _extract_inline_spec(task)
+
+    # Also detect bare filenames (e.g. "script.py", "config.json") not caught by _PATH_RE.
+    # Cap at 3 filenames to avoid context bloat; skip if already in refs.
+    _existing_refs_lower = {r.lower() for r in refs}
+    _filename_matches = _FILENAME_RE.findall(task)
+    for fname in _filename_matches:
+        if len(refs) >= _MAX_SOURCES:
+            break
+        if fname.lower() not in _existing_refs_lower:
+            refs.append(fname)
+            _existing_refs_lower.add(fname.lower())
 
     # When a spec is detected, strip it from task — the spec_prefix carries
     # the preview; keeping the full spec in task would double it in context.

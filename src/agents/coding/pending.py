@@ -237,6 +237,10 @@ def reset_specialist_state() -> None:
     snapshots.clear()
     try:
         from src.infra.tools_cache import session_cache
-        session_cache.clear()
+        # Invalide uniquement les caches filesystem/git (potentiellement périmés entre phases).
+        # Les résultats de recherche web (TTL 300s) sont préservés : pas besoin de les refaire.
+        # Les fichiers modifiés pendant la phase sont déjà invalidés par on_tool_executed()
+        # au moment de chaque propose_file_change — aucun risque de lire un fichier périmé.
+        session_cache.invalidate_filesystem()
     except Exception:
         pass

@@ -50,11 +50,13 @@ _FALLBACK_PHASES = [
 def decompose(spec_text: str, backend: str) -> list[Phase]:
     """Appelle le LLM pour décomposer spec_text en phases. Fallback sur 4 phases génériques."""
     try:
-        from src.llm.models import make_llm_ollama_cloud, make_llm_groq, make_llm_gemini, make_llm_mistral
+        from src.llm.models import make_llm_ollama_cloud, make_llm_gemini, make_llm_mistral
         from langchain_core.messages import SystemMessage, HumanMessage
+        # groq exclu : service défaillant — utilise ollama_cloud en fallback
         _factories = {
-            "groq": make_llm_groq, "ollama_cloud": make_llm_ollama_cloud,
-            "gemini": make_llm_gemini, "mistral": make_llm_mistral,
+            "ollama_cloud": make_llm_ollama_cloud,
+            "gemini": make_llm_gemini,
+            "mistral": make_llm_mistral,
         }
         llm = _factories.get(backend, make_llm_ollama_cloud)()
         budget = _BACKEND_BUDGET.get(backend, _BACKEND_BUDGET["ollama_cloud"])
