@@ -325,46 +325,52 @@ show_status() {
 }
 
 config_menu() {
-    step "Configuration des intégrations"
-    show_status
+    while true; do
+        step "Configuration des intégrations"
+        show_status
 
-    echo -e "  ${WHITE}Que veux-tu configurer ?${NC}"
-    echo ""
-    echo -e "  ${ORANGE}1${NC}  Tavily       ${DIM}(recherche web — recommandé)${NC}"
-    echo -e "  ${ORANGE}2${NC}  Gemini       ${DIM}(LLM gratuit — 1M tokens — recommandé)${NC}"
-    echo -e "  ${ORANGE}3${NC}  Groq         ${DIM}(LLM cloud rapide)${NC}"
-    echo -e "  ${ORANGE}4${NC}  Ollama Cloud ${DIM}(optionnel)${NC}"
-    echo -e "  ${ORANGE}5${NC}  Slack"
-    echo -e "  ${ORANGE}6${NC}  Google       ${DIM}(Gmail · Calendar · Drive · Docs · Slides)${NC}"
-    echo -e "  ${ORANGE}7${NC}  Jira         ${DIM}(gestion de tickets et projets)${NC}"
-    echo -e "  ${ORANGE}8${NC}  Dossier de projets  ${DIM}(pour que l'IA trouve tes repos plus vite)${NC}"
-    echo -e "  ${ORANGE}a${NC}  Tout configurer"
-    echo -e "  ${ORANGE}q${NC}  Ignorer"
-    echo ""
+        echo -e "  ${WHITE}Que veux-tu configurer ?${NC}"
+        echo ""
+        echo -e "  ${ORANGE}1${NC}  Tavily       ${DIM}(recherche web — recommandé)${NC}"
+        echo -e "  ${ORANGE}2${NC}  Gemini       ${DIM}(LLM gratuit — 1M tokens — recommandé)${NC}"
+        echo -e "  ${ORANGE}3${NC}  Groq         ${DIM}(LLM cloud rapide)${NC}"
+        echo -e "  ${ORANGE}4${NC}  Ollama Cloud ${DIM}(optionnel)${NC}"
+        echo -e "  ${ORANGE}5${NC}  Slack${NC}"
+        echo -e "  ${ORANGE}6${NC}  Google       ${DIM}(Gmail · Calendar · Drive · Docs · Slides)${NC}"
+        echo -e "  ${ORANGE}7${NC}  Jira         ${DIM}(gestion de tickets et projets)${NC}"
+        echo -e "  ${ORANGE}8${NC}  Dossier de projets  ${DIM}(pour que l'IA trouve tes repos plus vite)${NC}"
+        echo -e "  ${ORANGE}a${NC}  Tout configurer"
+        echo -e "  ${ORANGE}q${NC}  Quitter le menu"
+        echo ""
 
-    read -rp "  $(echo -e "${ORANGE}>${NC}") Choix : " choice
+        read -rp "  $(echo -e "${ORANGE}>${NC}") Choix : " choice
 
-    case "$choice" in
-        1) config_tavily ;;
-        2) config_gemini ;;
-        3) config_groq ;;
-        4) config_ollama_cloud ;;
-        5) config_slack ;;
-        6) config_google ;;
-        7) config_jira ;;
-        8) config_projects_dir ;;
-        a|A)
-            config_tavily
-            config_gemini
-            config_groq
-            config_ollama_cloud
-            config_slack
-            config_google
-            config_jira
-            config_projects_dir
-            ;;
-        *) info "Configuration ignorée — tu pourras la faire plus tard dans .env" ;;
-    esac
+        case "$choice" in
+            1) config_tavily ;;
+            2) config_gemini ;;
+            3) config_groq ;;
+            4) config_ollama_cloud ;;
+            5) config_slack ;;
+            6) config_google ;;
+            7) config_jira ;;
+            8) config_projects_dir ;;
+            a|A)
+                config_tavily
+                config_gemini
+                config_groq
+                config_ollama_cloud
+                config_slack
+                config_google
+                config_jira
+                config_projects_dir
+                ;;
+            q|Q)
+                info "Configuration terminée."
+                break
+                ;;
+            *) warn "Choix invalide — entre un numéro, 'a' ou 'q' pour quitter." ;;
+        esac
+    done
 }
 
 # ──────────────────────────────────────────────────────────────
