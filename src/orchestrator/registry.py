@@ -70,7 +70,11 @@ from src.agents.slack.tools import (
     slack_list_channels, slack_read_channel, slack_get_mentions,
     slack_list_dms, slack_send_message, slack_search_messages, slack_find_user,
 )
-from src.agents.shell.tools import notify, clipboard_read, clipboard_write
+from src.agents.shell.tools import (
+    shell_run, shell_cd, shell_pwd, shell_ls,
+    notify, clipboard_read, clipboard_write,
+)
+from src.agents.clarify.tools import ask_clarification
 from src.agents.git.tools import (
     git_status, git_log, git_diff, git_suggest_commit,
     git_add, git_commit, git_checkout, git_stash,
@@ -185,9 +189,14 @@ def build_all_tools() -> List[BaseTool]:
         slack_search_messages,
         slack_find_user,
         # === SHELL / SYSTÈME ===
+        shell_run,
+        shell_cd,
+        shell_pwd,
+        shell_ls,
         notify,
         clipboard_read,
         clipboard_write,
+        ask_clarification,
         # === GIT + WEB ===
         git_status,
         git_log,

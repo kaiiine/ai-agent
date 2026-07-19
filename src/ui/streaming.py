@@ -1817,6 +1817,46 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                         _thinking_thread[0] = new_t
                     else:
                         _thinking_thread.append(new_t)
+                elif tool_name == "ask_clarification":
+                    import json as _json
+                    try:
+                        content = msg.content
+                        if not isinstance(content, str):
+                            content = _json.dumps(content)
+                        payload = _json.loads(content)
+                        questions = payload.get("questions", []) if isinstance(payload, dict) else []
+                    except Exception:
+                        questions = []
+                    _safe_stop(live, stop_thinking, _thinking_thread[0] if _thinking_thread else None)
+                    from .review import ask_user_questions
+                    try:
+                        answers = ask_user_questions(questions)
+                    except Exception as _qe:
+                        console.print(Text(f"  erreur questionnaire : {_qe}", style="red"))
+                        answers = {}
+                    # Remplace le ToolMessage placeholder par les vraies réponses dans l'état du graph
+                    try:
+                        from langchain_core.messages import ToolMessage as _TM
+                        updated = _TM(
+                            content=_json.dumps({"answers": answers}),
+                            tool_call_id=msg.tool_call_id,
+                            name="ask_clarification",
+                            id=getattr(msg, "id", None),
+                        )
+                        graph.update_state(config, {"messages": [updated]})
+                    except Exception:
+                        pass
+                    stop_thinking.clear()
+                    try:
+                        live.start(refresh=False)
+                    except Exception:
+                        pass
+                    new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
+                    new_t.start()
+                    if _thinking_thread:
+                        _thinking_thread[0] = new_t
+                    else:
+                        _thinking_thread.append(new_t)
                 elif tool_name == "run_coding_agent":
                     # Stop coding-specialist thinking thread, restart for orchestrator response
                     stop_thinking.set()
@@ -1869,17 +1909,14 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                     saw_any_token = False
                     plan_rendered = False
                     last_node = "chatbot"
-                    # Stop thinking thread first so it can't draw after the re-anchor
                     stop_thinking.set()
                     if _thinking_thread:
                         _thinking_thread[0].join(timeout=0.2)
-                    # Re-anchor Live from current cursor (after all coding-agent console.prints)
-                    try:
-                        live.update(Text(""))
-                        live.stop()
-                        live.start(refresh=False)
-                    except Exception:
-                        pass
+                    # Efface le panel sans stop/start — évite de committer le contenu
+                    # partiel dans le scrollback à chaque appel d'outil.
+                    # Le stop/start (re-ancrage) n'est nécessaire que pour run_coding_agent
+                    # qui imprime dans le console ; il est géré séparément plus haut.
+                    live.update(Text(""))
                 compile_mode.clear()
                 stop_thinking.set()
 

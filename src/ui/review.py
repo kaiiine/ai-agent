@@ -633,3 +633,107 @@ def review_plan() -> Tuple[str, str | None]:
     t.append("révision du plan en cours…", style="dim")
     console.print(t)
     return ("refine", refinement)
+
+
+# ── Clarification questionnaire ───────────────────────────────────────────────
+
+def _prompt_input(label: str) -> str:
+    """Single-line prompt via prompt_toolkit, fallback to input()."""
+    if _supports_raw_tty():
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.styles import Style as PtStyle
+        try:
+            session = PromptSession(style=PtStyle.from_dict({"prompt": f"bold {_ACCENT_PT}"}))
+            return session.prompt(label).strip()
+        except (EOFError, KeyboardInterrupt):
+            return ""
+    try:
+        return input(label).strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
+
+
+def _ask_with_choices(question: str, choices: list[str], q_num: int, total: int) -> str:
+    """Arrow-key picker for one question. Appends 'Autre (préciser)' automatically."""
+    AUTRE = "Autre (préciser)"
+    all_choices = list(choices) + [AUTRE]
+    raw: List[Tuple[str, str]] = [(c, c) for c in all_choices]
+
+    t = Text()
+    t.append(f"  {q_num}/{total}  ", style=f"dim {ACCENT}")
+    t.append(question, style="bold")
+    console.print(t)
+    console.print()
+
+    if _supports_raw_tty():
+        selected = _run_raw_selector(raw, on_cancel=AUTRE)
+    else:
+        selected = _fallback_selector(raw)
+
+    if selected == AUTRE:
+        console.print()
+        val = _prompt_input("  préciser › ")
+        t2 = Text()
+        t2.append("  ✓  ", style="bold green")
+        t2.append(val or "—", style="dim")
+        console.print(t2)
+        console.print()
+        return val
+
+    t2 = Text()
+    t2.append("  ✓  ", style="bold green")
+    t2.append(selected, style="dim")
+    console.print(t2)
+    console.print()
+    return selected
+
+
+def ask_user_questions(questions: list) -> dict:
+    """Shows a questionnaire. Each item is a str or {"question": "...", "choices": [...]}.
+    Returns {question: answer, ...} and optional "_extra" key."""
+    answers: dict[str, str] = {}
+    total = len(questions)
+
+    console.print()
+    console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+    t = Text()
+    t.append("  ")
+    t.append("Question" if total == 1 else "Questions", style=f"bold {ACCENT}")
+    t.append(f"  ({total})", style=f"dim {ACCENT}")
+    console.print(t)
+    console.print()
+
+    for i, q in enumerate(questions, 1):
+        if isinstance(q, dict):
+            text = q.get("question", str(q))
+            choices = q.get("choices", [])
+        else:
+            text = str(q)
+            choices = []
+
+        if choices:
+            answer = _ask_with_choices(text, choices, i, total)
+        else:
+            t2 = Text()
+            t2.append(f"  {i}/{total}  ", style=f"dim {ACCENT}")
+            t2.append(text, style="bold")
+            console.print(t2)
+            console.print()
+            answer = _prompt_input("  › ")
+            t3 = Text()
+            t3.append("  ✓  ", style="bold green")
+            t3.append(answer or "—", style="dim")
+            console.print(t3)
+            console.print()
+
+        answers[text] = answer
+
+    console.print(Text("  Autre chose à préciser ? (optionnel)", style="dim"))
+    extra = _prompt_input("  + › ")
+    if extra:
+        answers["_extra"] = extra
+
+    console.print()
+    console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+    console.print()
+    return answers

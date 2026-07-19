@@ -6,7 +6,7 @@ workflow tools regardless of the query.
 """
 from __future__ import annotations
 
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
@@ -187,7 +187,7 @@ class CodingToolRetriever:
         results = self._store.as_retriever(
             search_kwargs={"k": self._k}
         ).invoke(query)
-        seed_names = {r.metadata["tool_name"] for r in results}
+        seed_names = {r.metadata["tool_name"] for r in results if "tool_name" in r.metadata}
 
         # 2. Group expansion
         selected: set[str] = set(_ALWAYS_INCLUDED)

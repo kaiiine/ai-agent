@@ -215,3 +215,4 @@ models/
 .axon/
 .claude/
 .vscode/
+graphify-out/

@@ -1,5 +1,7 @@
 # src/orchestrator/tool_retriever.py
-from langchain_community.vectorstores import Chroma
+from pathlib import Path
+
+from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 
@@ -81,7 +83,7 @@ _TOOL_TO_GROUP: dict[str, str] = {
 }
 
 # Tools toujours inclus
-_ALWAYS_INCLUDED = {"get_current_time"}
+_ALWAYS_INCLUDED = {"get_current_time", "ask_clarification"}
 
 # ── Multi-vector anchors ───────────────────────────────────────
 # Pour les méta-outils dont la description parle de "déléguer" plutôt
@@ -89,6 +91,36 @@ _ALWAYS_INCLUDED = {"get_current_time"}
 # couvrant les différentes façons dont un utilisateur peut formuler sa demande.
 # Chaque anchor est un document séparé dans Chroma → N chances d'être trouvé.
 _TOOL_ANCHORS: dict[str, list[str]] = {
+    "shell_run": [
+        # ── Demandes explicites d'exécution ──────────────────────────────
+        "lance cette commande pour moi",
+        "exécute cette commande",
+        "fais tourner ce script",
+        "lance les commandes nécessaires",
+        "fais le toi même via le terminal",
+        "run this command",
+        "execute this",
+        "run it yourself",
+
+        # ── Inspection générale système ───────────────────────────────────
+        "regarde toi-même sur mon système",
+        "vérifie par toi-même",
+        "inspecte ma machine",
+        "dis-moi ce que tu vois",
+        "explore mon système",
+        "fais les vérifications nécessaires",
+        "qu'est-ce qui se passe sur mon système",
+        "analyse ma machine par toi-même",
+        "regarde sur mon ordinateur",
+        "dis-moi ce qui se passe chez moi",
+        "regarde toi même tu peux faire les commandes",
+        "look at my system yourself",
+        "check what's happening on my machine",
+        "analyze my system",
+        "investigate on my computer",
+        "tell me what you find on my system",
+        "go look yourself",
+    ],
     "run_coding_agent": [
         # ── Modifications & corrections ───────────────────────
         "modifier du code dans un projet local",
@@ -348,31 +380,43 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
 }
 
 
+_CACHE_DIR  = Path.home() / ".axon" / "tool_store"
+_CACHE_HASH = _CACHE_DIR / "fingerprint.txt"
+
+
+def _fingerprint(tools: list) -> str:
+    import hashlib, json
+    entries = [(t.name, (t.description or "")[:200]) for t in sorted(tools, key=lambda t: t.name)]
+    anchors = {k: v for k, v in sorted(_TOOL_ANCHORS.items())}
+    return hashlib.sha256(
+        json.dumps(entries + [anchors], sort_keys=True).encode()
+    ).hexdigest()[:16]
+
+
 class ToolRetriever:
     def __init__(self, tools: list, k: int = 7):
-        """
-        k : nombre de documents récupérés par similarité.
-        Les méta-outils sont indexés avec plusieurs vecteurs sémantiques
-        (multi-vector anchors) pour améliorer leur rappel sans les forcer.
-        """
         embeddings = OllamaEmbeddings(model="nomic-embed-text")
+        current_hash = _fingerprint(tools)
+        cache_valid = (
+            _CACHE_DIR.exists()
+            and _CACHE_HASH.exists()
+            and _CACHE_HASH.read_text().strip() == current_hash
+        )
 
-        docs = []
-        for t in tools:
-            # Document principal
-            docs.append(Document(
-                page_content=f"{t.name}: {t.description}",
-                metadata={"tool_name": t.name},
-            ))
-            # Ancres sémantiques supplémentaires (un doc par intention)
-            for anchor in _TOOL_ANCHORS.get(t.name, []):
-                docs.append(Document(
-                    page_content=anchor,
-                    metadata={"tool_name": t.name},
-                ))
+        if cache_valid:
+            self._store = Chroma(persist_directory=str(_CACHE_DIR), embedding_function=embeddings)
+        else:
+            docs = []
+            for t in tools:
+                docs.append(Document(page_content=f"{t.name}: {t.description}", metadata={"tool_name": t.name}))
+                for anchor in _TOOL_ANCHORS.get(t.name, []):
+                    docs.append(Document(page_content=anchor, metadata={"tool_name": t.name}))
+
+            _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            self._store = Chroma.from_documents(docs, embeddings, persist_directory=str(_CACHE_DIR))
+            _CACHE_HASH.write_text(current_hash)
 
         self._tools = tools
-        self._store = Chroma.from_documents(docs, embeddings)
         self._k = k
 
     def get(self, query: str) -> list:
@@ -386,6 +430,8 @@ class ToolRetriever:
             group = _TOOL_TO_GROUP.get(name)
             if group:
                 groups_needed.add(group)
+
+        groups_needed.add("shell")
 
         # 3. Construit la liste finale
         selected_names: set[str] = set(_ALWAYS_INCLUDED)

@@ -83,6 +83,25 @@ _DESTRUCTIVE_PREFIXES = (
 # Écriture de fichiers — doit passer par propose_file_change dans le coding specialist
 _WRITE_PATTERNS = ("sed -i", "cat >", "cat >>", "tee /", "echo > /", "echo >> /")
 
+_RM_CATASTROPHIC_TARGETS = (
+    ".", "./", "..", "../", "/", "~", "~/", "*",
+    "$home", "${home}", "$pwd", "${pwd}",
+)
+
+
+def _is_catastrophic_rm(cmd: str) -> bool:
+    """Détecte rm sur des cibles qui détruiraient le système ou le dossier courant."""
+    import re
+    c = cmd.strip()
+    # Normalise : rm [-options] <target>
+    m = re.match(r"^(?:sudo\s+)?rm\s+(-[a-zA-Z]+\s+)*(.+)$", c)
+    if not m:
+        return False
+    target = m.group(2).strip().lower().rstrip("/")
+    # Ajoute /  pour matcher "rm -rf /" → target=""
+    bare = target if target else "/"
+    return bare in {t.rstrip("/") or "/" for t in _RM_CATASTROPHIC_TARGETS}
+
 
 def _is_file_write(cmd: str) -> bool:
     c = cmd.strip()
@@ -124,6 +143,13 @@ def shell_run(
     Returns:
         {"status": "ok"|"error"|"timeout", "stdout": "...", "stderr": "...", "exit_code": N, "cwd": "..."}
     """
+    if _is_catastrophic_rm(command):
+        return {
+            "status": "blocked",
+            "command": command,
+            "message": "Commande bloquée : rm sur le dossier courant (.), racine (/), home (~) ou wildcard (*) est interdit, même avec confirmation.",
+        }
+
     if _is_destructive(command) and not confirmed:
         return {
             "status": "requires_confirmation",
