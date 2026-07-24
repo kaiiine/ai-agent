@@ -1414,6 +1414,65 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 return
             run_build(parts[1].strip(), console)
             return
+        
+        if user_message == "cron" or user_message.startswith("/cron"):
+            from src.agents.cron.store import get_tasks, get_logs, deactivate_task
+            from rich.table import Table
+            from rich import box as rbox
+
+            parts = user_message.split(maxsplit=2)
+            sub = parts[1] if len(parts) > 1 else ""
+
+            if sub == "stop" and len(parts) > 2:
+                ok = deactivate_task(parts[2].strip())
+                console.print(command_panel(
+                    f"tâche {parts[2].strip()} désactivée" if ok else "ID introuvable",
+                    error=not ok,
+                ))
+
+            elif sub == "log" and len(parts) > 2:
+                logs = get_logs(parts[2].strip(), nb=10)
+                if not logs:
+                    console.print(command_panel("aucun log pour cette tâche"))
+                else:
+                    tbl = Table(box=rbox.SIMPLE_HEAD, padding=(0, 1))
+                    tbl.add_column("Date", style="dim", no_wrap=True)
+                    tbl.add_column("Status", no_wrap=True)
+                    tbl.add_column("Notifié", no_wrap=True)
+                    tbl.add_column("Message", style="dim")
+                    for entry in logs:
+                        s = entry["status"]
+                        style = "green" if s == "ok" else "red" if s == "error" else "dim"
+                        tbl.add_row(
+                            entry["ts"][:16],
+                            f"[{style}]{s}[/{style}]",
+                            "✓" if entry.get("notified") else "—",
+                            (entry.get("message") or entry.get("result_summary") or "")[:60],
+                        )
+                    console.print(tbl)
+
+            else:  # /cron sans argument → liste
+                tasks = get_tasks(active_only=True)
+                if not tasks:
+                    console.print(command_panel("aucune tâche planifiée active"))
+                else:
+                    tbl = Table(box=rbox.SIMPLE_HEAD, padding=(0, 1))
+                    tbl.add_column("ID", style=f"dim {ACCENT}", no_wrap=True)
+                    tbl.add_column("Description")
+                    tbl.add_column("Fréquence", style="dim")
+                    tbl.add_column("Dernier run", style="dim")
+                    for t in tasks:
+                        freq = f"{t['interval_sec'] // 60} min" if not t.get("run_at") else t["run_at"][:16]
+                        tbl.add_row(
+                            t["id"],
+                            t["description"],
+                            freq,
+                            (t.get("last_run") or "jamais")[:16],
+                        )
+                    console.print(tbl)
+            return
+
+
 
         from .commands import handle_slash
         result = handle_slash(user_message, state, cfg, graph, console)

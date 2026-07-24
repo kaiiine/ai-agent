@@ -73,6 +73,9 @@ TOOL_GROUPS: dict[str, list[str]] = {
     "memory": [
         "axon_note",
     ],
+    "cron": [
+        "schedule_task", "list_cron_tasks", "stop_cron_task"
+    ]
 }
 
 # Index inverse : tool_name → group_name
@@ -377,6 +380,15 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "crise ou conflit en cours",
         "décision gouvernementale récente",
     ],
+    "schedule_task": [
+        "surveille toutes les X minutes",
+        "rappelle-moi dans",
+        "chaque matin / soir",
+        "notifie-moi si",
+        "vérifie périodiquement",
+        "alerte si",
+        "tâche planifiée cron",
+    ],
 }
 
 
@@ -395,6 +407,8 @@ def _fingerprint(tools: list) -> str:
 
 class ToolRetriever:
     def __init__(self, tools: list, k: int = 7):
+        from src.ui.boot import report_step
+        report_step("index sémantique…")
         embeddings = OllamaEmbeddings(model="nomic-embed-text")
         current_hash = _fingerprint(tools)
         cache_valid = (

@@ -4,10 +4,8 @@ from rich.console import Console
 from rich.rule import Rule
 from rich.text import Text
 
-from src.orchestrator.graph import build_orchestrator
 from src.ui.config import SessionConfig
 from src.ui.panels import banner, command_panel, final_panel, ACCENT
-from src.ui.streaming import stream_once
 from src.infra.checkpoint import (
     load_last_thread, save_last_thread, get_recent_messages,
     load_thread_cwd, save_thread_cwd,
@@ -109,8 +107,8 @@ def _show_resume(thread_id: str) -> None:
     console.print()
 
 
-def run_cli():
-    graph = build_orchestrator()
+def run_cli(graph):
+    from src.ui.streaming import stream_once
     cfg   = SessionConfig()
     state = {"messages": []}
 

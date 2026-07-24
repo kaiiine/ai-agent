@@ -80,3 +80,6 @@ psutil
 
 # Translator
 langbly
+
+# Cron
+apscheduler>=3.10

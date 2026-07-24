@@ -15,11 +15,11 @@ from src.utils.paths import get_projects_dir
 _ACCENT = "color(214)"
 
 _QUESTION_DOMAINS = [
-    "concept & positionnement — concept précis, cible, différenciation unique",
-    "direction artistique — ambiance exacte (3 adjectifs), 2-3 références visuelles (sites/artistes/films), niveau luxe/minimal/expérimental, couleurs, typo, motion, traitement image",
-    "stack technique — choisir une stack complète définitive ; backend, base de données et CMS seulement si nécessaires — zéro alternative, décision ferme",
-    "UX & interactions clés — parcours galerie (masonry ? lightbox ? fiche œuvre ? navigation clavier ?), microinteractions, ce qui doit être fluide",
-    "contenu & données — arborescence complète, modèle de données (entités + champs importants), ce qui est hors-scope pour la v1",
+    "concept & positionnement — concept précis, cible principale, différenciation unique par rapport à l'existant",
+    "direction artistique — ambiance exacte (3 adjectifs), références visuelles concrètes (sites/films/artistes), palette, typo, motion, niveau luxe/minimal/expérimental",
+    "stack technique — décision ferme et complète : framework frontend, backend si nécessaire, base de données si nécessaire, hébergement ; zéro alternative",
+    "UX & interactions clés — expérience principale (scroll-driven ? démo interactive ? video hero ?), microinteractions importantes, ce qui doit être fluide et mémorable",
+    "contenu & arborescence — liste complète des pages/sections, ce qui est inclus en v1, ce qui est explicitement hors-scope",
 ]
 
 _QUESTION_SYSTEM = """\
@@ -164,7 +164,7 @@ def _ask_llm_for_question(initial_prompt: str, qa_pairs: list[dict], llm, domain
             history += f"- {qa['q']} → {qa['a']}\n"
 
     domain_hint = f"\n\nDomaine à couvrir maintenant : {domain}" if domain else ""
-    user_content = f"Projet : {initial_prompt}{history}{domain_hint}"
+    user_content = f"Projet : {_resolve_file_refs(initial_prompt)}{history}{domain_hint}"
     response = llm.invoke([SystemMessage(content=_QUESTION_SYSTEM), HumanMessage(content=user_content)])
     text = response.content if hasattr(response, "content") else str(response)
     return _parse_json_response(text)
@@ -177,11 +177,75 @@ def _collect_custom(prompt_text: str = "Votre réponse") -> str:
         return ""
 
 
+def _read_dir(path) -> str | None:
+    """Read README.md or AXON.md from a directory, return content or None."""
+    from pathlib import Path
+    p = Path(path)
+    for candidate in ('README.md', 'readme.md', 'AXON.md'):
+        f = p / candidate
+        if f.is_file():
+            try:
+                return f.read_text(encoding='utf-8', errors='replace')[:6000]
+            except Exception:
+                pass
+    return None
+
+
+def _resolve_file_refs(text: str) -> str:
+    """Detect file/dir references in text (absolute paths + project names), inject contents."""
+    import re
+    from pathlib import Path
+
+    already_read: set[str] = set()
+    found: list[str] = []
+
+    def _inject(p: Path, label: str) -> None:
+        key = str(p.resolve())
+        if key in already_read:
+            return
+        already_read.add(key)
+        try:
+            if p.is_file() and p.suffix in ('.md', '.txt', '.yaml', '.yml', '.toml', '.json', '.py', '.ts'):
+                content = p.read_text(encoding='utf-8', errors='replace')[:6000]
+                found.append(f"\n\n[Contenu de {label}]\n{content}\n[/Contenu]")
+            elif p.is_dir():
+                content = _read_dir(p)
+                if content:
+                    found.append(f"\n\n[Contenu de {label}/README]\n{content}\n[/Contenu]")
+        except Exception:
+            pass
+
+    # 1. Chemins absolus : /home/... ou ~/...
+    for m in re.finditer(r'(~?/[\w./\-]+)', text):
+        raw = m.group(1).replace('~', str(Path.home()))
+        _inject(Path(raw), m.group(1))
+
+    # 2. Noms de projets connus dans le répertoire projets
+    try:
+        projects_dir = get_projects_dir()
+        # Cherche les mots du texte qui correspondent à un sous-dossier
+        words = re.findall(r'[\w][\w\-\.]{2,}', text)
+        for word in set(words):
+            candidate = projects_dir / word
+            if candidate.is_dir():
+                _inject(candidate, word)
+    except Exception:
+        pass
+
+    # 3. Mention explicite de "readme" sans chemin → essaie le cwd
+    if re.search(r'\breadme\b', text, re.IGNORECASE) and not found:
+        _inject(Path.cwd(), 'cwd')
+
+    return text + ''.join(found)
+
+
 def _generate_spec(initial_prompt: str, qa_pairs: list[dict], llm) -> str:
     from langchain_core.messages import SystemMessage, HumanMessage
 
-    qa_text = "\n".join(f"- {qa['q']} → {qa['a']}" for qa in qa_pairs)
-    user_content = f"Prompt initial : {initial_prompt}\n\nDétails collectés :\n{qa_text}"
+    resolved_pairs = [{"q": qa["q"], "a": _resolve_file_refs(qa["a"])} for qa in qa_pairs]
+    qa_text = "\n".join(f"- {qa['q']} → {qa['a']}" for qa in resolved_pairs)
+    resolved_prompt = _resolve_file_refs(initial_prompt)
+    user_content = f"Prompt initial : {resolved_prompt}\n\nDétails collectés :\n{qa_text}"
     response = llm.invoke([SystemMessage(content=_SPEC_SYSTEM), HumanMessage(content=user_content)])
     return response.content if hasattr(response, "content") else str(response)
 
