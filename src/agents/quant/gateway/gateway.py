@@ -1,0 +1,127 @@
+"""Point d'entrée public de la gateway — la seule chose qu'axon-quant importe.
+
+axon-quant ne manipule que des canonical_id ; toute la traduction vers/depuis
+les IDs providers (identity_resolver), le fallback (fallback_chain) et la
+normalisation restent internes à ce module (PRD §4.3quater, F12).
+"""
+
+from __future__ import annotations
+from datetime import date
+
+from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
+from src.agents.quant.gateway.core.identity_data import LEAGUES, TEAMS, LEAGUE_TEAMS
+from src.agents.quant.gateway.core.provider_registry import REGISTRY
+from src.agents.quant.gateway.core.fallback_chain import fetch_league_data
+from src.agents.quant.gateway.core.errors import NoDataAvailableError
+
+_resolver = IdentityResolver(LEAGUES + TEAMS)
+
+
+def current_season() -> str:
+    """Convention saison foot européen : "2025" = août 2025 → mai 2026."""
+    today = date.today()
+    year = today.year if today.month >= 7 else today.year - 1
+    return str(year)
+
+
+def _team_league(team_canonical_id: str) -> str | None:
+    for league_id, team_ids in LEAGUE_TEAMS.items():
+        if team_canonical_id in team_ids:
+            return league_id
+    return None
+
+
+def _provider_league_ids(league_canonical_id: str) -> dict[str, str]:
+    ids = {}
+    for provider_name in REGISTRY:
+        provider_id = _resolver.resolve(league_canonical_id, provider_name)
+        if provider_id:
+            ids[provider_name] = provider_id
+    return ids
+
+
+def search_team(name: str) -> dict | None:
+    """Cherche une équipe par nom parmi les ligues couvertes en v1 (Ligue 1, Premier League)."""
+    entity = _resolver.find_by_name(name)
+    if entity is None:
+        return None
+    return {"canonical_id": entity.canonical_id, "name": entity.canonical_name}
+
+
+def recent_form(canonical_team_id: str, last: int = 10, season: str | None = None) -> list[dict]:
+    """Forme récente, dérivée localement d'un fetch batch par ligue (jamais par équipe — F13).
+
+    En période de trêve estivale, peu ou pas de matchs "FINISHED" existent
+    encore pour la saison à venir — pas un bug, un vrai manque de données.
+    """
+    league_id = _team_league(canonical_team_id)
+    if league_id is None:
+        raise NoDataAvailableError(
+            f"Équipe {canonical_team_id} hors des ligues couvertes en v1 (Ligue 1, Premier League)"
+        )
+
+    season = season or current_season()
+    envelope = fetch_league_data(
+        sport="football",
+        endpoint="fixtures",
+        provider_league_ids=_provider_league_ids(league_id),
+        league_canonical_id=league_id,
+        season=season,
+        resolver=_resolver,
+    )
+
+    finished = [
+        m for m in envelope.payload.matches
+        if m.status == "FINISHED"
+        and canonical_team_id in (m.home_team_id, m.away_team_id)
+        and m.goals_home is not None
+        and m.goals_away is not None
+    ]
+    finished.sort(key=lambda m: m.kickoff, reverse=True)
+
+    form = []
+    for match in finished[:last]:
+        is_home = match.home_team_id == canonical_team_id
+        form.append({
+            "date": match.kickoff.date().isoformat(),
+            "opponent_id": match.away_team_id if is_home else match.home_team_id,
+            "goals_home": match.goals_home,
+            "goals_away": match.goals_away,
+            "is_home": is_home,
+            "league_id": league_id,
+            "season": season,
+        })
+    return form
+
+
+def standings_strength(league_canonical_id: str, season: str | None = None) -> dict[str, float]:
+    """Proxy de force par équipe depuis le classement : 1er → 1.3, dernier → 0.7.
+
+    ⚠ Classement ACTUEL de la saison, pas celui à la date de chaque match de
+    forme — acceptable en usage live, à reconstruire en point-in-time strict
+    avant tout backtest (même limitation que documentée avant cette gateway).
+    """
+    season = season or current_season()
+    envelope = fetch_league_data(
+        sport="football",
+        endpoint="standings",
+        provider_league_ids=_provider_league_ids(league_canonical_id),
+        league_canonical_id=league_canonical_id,
+        season=season,
+        resolver=_resolver,
+    )
+    rows = envelope.payload.standings
+    if len(rows) < 2:
+        return {}
+    n = len(rows)
+    return {row.team_id: round(1.3 - 0.6 * (row.rank - 1) / (n - 1), 3) for row in rows}
+
+
+def opponent_ratings_for_form(form: list[dict]) -> dict[str, float]:
+    """Construit {opponent_canonical_id: force} pour une forme donnée. {} si indisponible."""
+    if not form:
+        return {}
+    try:
+        return standings_strength(form[0]["league_id"], form[0]["season"])
+    except Exception:
+        return {}
