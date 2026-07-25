@@ -30,9 +30,9 @@ from src.agents.quant.gateway.registries.competition_registry import get_competi
 from src.agents.quant.gateway.registries.provider_coverage_registry import (
     usable_providers, get_coverage, CoverageStatus,
 )
+from src.agents.quant.gateway.canonical.envelope import CanonicalEnvelope, resolve_freshness_basis
 from src.agents.quant.gateway.normalizers.canonical_models import (
     CanonicalPayload,
-    DataEnvelope,
     match_to_dict,
     match_from_dict,
     standing_to_dict,
@@ -134,6 +134,50 @@ def _split_matches(canonical: CanonicalPayload) -> dict[str, CanonicalPayload]:
     }
 
 
+def _envelope(
+    *, sport: str, competition_id: str, season: str, data_type: str, schema_version: str,
+    payload: CanonicalPayload, provider: str, provider_entity_id: str | None,
+    event_time: datetime | None, published_time: datetime | None,
+    fetched_at: datetime, ingested_at: datetime, data_quality: float, stale: bool = False,
+) -> CanonicalEnvelope:
+    """Construit la CanonicalEnvelope avec la fraîcheur RÉELLE.
+
+    effective_time suit resolve_freshness_basis : published_time → event_time →
+    fetched_at (dégradé, signalé). freshness_basis/freshness_degraded exposent
+    lequel a servi — plus jamais un fetched_at déguisé en vraie fraîcheur.
+    """
+    effective_time, basis, degraded = resolve_freshness_basis(published_time, event_time, fetched_at)
+    return CanonicalEnvelope(
+        canonical_id=competition_id,
+        sport=sport,
+        competition_id=competition_id,
+        season=season,
+        data_type=data_type,
+        schema_version=schema_version,
+        payload=payload,
+        provider=provider,
+        provider_entity_id=provider_entity_id,
+        event_time=event_time,
+        published_time=published_time,
+        available_to_model_time=fetched_at,
+        fetched_at=fetched_at,
+        ingested_at=ingested_at,
+        data_quality=data_quality,
+        freshness_score=quality.freshness_score(effective_time, datetime.now(timezone.utc), data_type),
+        freshness_basis=basis,
+        freshness_degraded=degraded,
+        stale=stale,
+    )
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def _iso_or_none(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
 def fetch_league_data(
     sport: str,
     data_type: str,                    # "RESULTS" | "STANDINGS" | "FIXTURES" (§5.2)
@@ -142,7 +186,7 @@ def fetch_league_data(
     resolver: IdentityResolver,
     date_from: str | None = None,
     date_to: str | None = None,
-) -> DataEnvelope:
+) -> CanonicalEnvelope:
     """Récupère les données d'une compétition via le premier provider éligible.
 
     Ne lève jamais d'exception réseau vers l'appelant : si tous les providers
@@ -159,20 +203,14 @@ def fetch_league_data(
     cache_key = f"{sport}:{data_type}:{league_canonical_id}:{season}:{date_from}:{date_to}"
     cached = cache_get(cache_key, data_type)
     if cached is not None:
-        canonical = _deserialize(cached["canonical"])
-        cached_fetched_at = datetime.fromisoformat(cached["fetched_at"])
-        effective_time = canonical.published_time or canonical.event_time or cached_fetched_at
         log_decision(sport, data_type, league_canonical_id, season, cached["provider"], "CACHE_HIT", [])
-        return DataEnvelope(
-            payload=canonical,
-            provider=cached["provider"],
-            event_time=canonical.event_time,
-            published_time=canonical.published_time,
-            available_to_model_time=cached_fetched_at,
-            fetched_at=cached_fetched_at,
-            ingested_at=datetime.now(timezone.utc),
+        return _envelope(
+            sport=sport, competition_id=league_canonical_id, season=season, data_type=data_type,
+            schema_version=schema_version, payload=_deserialize(cached["canonical"]),
+            provider=cached["provider"], provider_entity_id=cached.get("provider_entity_id"),
+            event_time=_parse_dt(cached.get("event_time")), published_time=_parse_dt(cached.get("published_time")),
+            fetched_at=datetime.fromisoformat(cached["fetched_at"]), ingested_at=datetime.now(timezone.utc),
             data_quality=quality.data_quality(cached["provider"], data_type),
-            freshness_score=quality.freshness_score(effective_time, datetime.now(timezone.utc), data_type),
         )
 
     module_normalizers = module.normalizers()
@@ -235,23 +273,24 @@ def fetch_league_data(
                 )
 
             served = snapshots[data_type]
-            effective_time = served.published_time or served.event_time or fetched_at
             cache_set(
                 cache_key, data_type,
-                {"canonical": _serialize(served), "provider": provider_name, "fetched_at": fetched_at.isoformat()},
+                {
+                    "canonical": _serialize(served), "provider": provider_name,
+                    "provider_entity_id": provider_competition_id,
+                    "fetched_at": fetched_at.isoformat(),
+                    "event_time": _iso_or_none(served.event_time),
+                    "published_time": _iso_or_none(served.published_time),
+                },
             )
             log_decision(sport, data_type, league_canonical_id, season, provider_name, "LIVE_FETCH", errors)
 
-            return DataEnvelope(
-                payload=served,
-                provider=provider_name,
-                event_time=served.event_time,
-                published_time=served.published_time,
-                available_to_model_time=fetched_at,
-                fetched_at=fetched_at,
-                ingested_at=ingested_at,
-                data_quality=data_quality_score,
-                freshness_score=quality.freshness_score(effective_time, fetched_at, data_type),
+            return _envelope(
+                sport=sport, competition_id=league_canonical_id, season=season, data_type=data_type,
+                schema_version=schema_version, payload=served,
+                provider=provider_name, provider_entity_id=provider_competition_id,
+                event_time=served.event_time, published_time=served.published_time,
+                fetched_at=fetched_at, ingested_at=ingested_at, data_quality=data_quality_score,
             )
         except PayloadValidationError as e:
             errors.append(f"{provider_name}: schema_violation ({e})")
@@ -279,17 +318,13 @@ def fetch_league_data(
         )
 
     log_decision(sport, data_type, league_canonical_id, season, snapshot["provider"], "STALE_FALLBACK", errors)
-    canonical = _deserialize(snapshot["payload"])
-    fetched_at = datetime.fromisoformat(snapshot["fetched_at"])
-    return DataEnvelope(
-        payload=canonical,
-        provider=snapshot["provider"],
-        event_time=canonical.event_time,
-        published_time=canonical.published_time,
-        available_to_model_time=fetched_at,
-        fetched_at=fetched_at,
-        ingested_at=datetime.now(timezone.utc),
-        data_quality=quality.data_quality(snapshot["provider"], data_type),
-        freshness_score=quality.freshness_score(fetched_at, datetime.now(timezone.utc), data_type),
-        stale=True,
+    # event_time/published_time viennent des COLONNES du store (pas du payload
+    # sérialisé, qui ne les porte pas) — la fraîcheur reste donc réelle en stale.
+    return _envelope(
+        sport=sport, competition_id=league_canonical_id, season=season, data_type=data_type,
+        schema_version=stored_schema, payload=_deserialize(snapshot["payload"]),
+        provider=snapshot["provider"], provider_entity_id=snapshot.get("provider_entity_id"),
+        event_time=_parse_dt(snapshot.get("event_time")), published_time=_parse_dt(snapshot.get("published_time")),
+        fetched_at=datetime.fromisoformat(snapshot["fetched_at"]), ingested_at=datetime.now(timezone.utc),
+        data_quality=quality.data_quality(snapshot["provider"], data_type), stale=True,
     )

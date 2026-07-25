@@ -16,6 +16,16 @@ from src.agents.quant.gateway.sports.football.canonical_facts import (
 )
 
 
+def _parse(iso: str) -> datetime:
+    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+
+
+def _max_published(values: list[str | None]) -> datetime | None:
+    """published_time du batch = mise à jour la plus récente parmi les items."""
+    times = [_parse(v) for v in values if v]
+    return max(times) if times else None
+
+
 class FootballDataOrgNormalizer:
     def normalize_fixtures(
         self, raw: RawProviderResponse, resolver: IdentityResolver, league_id: str, season: str
@@ -38,7 +48,11 @@ class FootballDataOrgNormalizer:
                 goals_home=full_time.get("home"),
                 goals_away=full_time.get("away"),
             ))
-        return CanonicalPayload(kind="fixtures", matches=matches)
+        # published_time = mise à jour la plus récente des matchs (champ lastUpdated).
+        # event_time reste None : un batch n'a pas d'événement unique — le coup
+        # d'envoi de CHAQUE match est capturé au niveau fait (CanonicalMatch.kickoff).
+        published = _max_published([m.get("lastUpdated") for m in raw.payload.get("matches", [])])
+        return CanonicalPayload(kind="fixtures", matches=matches, published_time=published)
 
     def normalize_standings(
         self, raw: RawProviderResponse, resolver: IdentityResolver, league_id: str
@@ -54,4 +68,8 @@ class FootballDataOrgNormalizer:
                 rows.append(CanonicalStandingRow(
                     team_id=team_id, rank=row["position"], played=row["playedGames"], points=row["points"],
                 ))
-        return CanonicalPayload(kind="standings", standings=rows)
+        # football-data.org ne fournit AUCUN horodatage sur les classements (ni par
+        # ligne, ni au niveau réponse) → published_time None. La fraîcheur retombera
+        # donc en dégradée (freshness_degraded=True), ce qui est honnête : on ne sait
+        # pas quand ce classement a été calculé. (api_sports, lui, fournit `update`.)
+        return CanonicalPayload(kind="standings", standings=rows, published_time=None)

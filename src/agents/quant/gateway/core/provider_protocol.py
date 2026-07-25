@@ -1,7 +1,7 @@
 """Contrat commun à tous les fournisseurs de données sportives.
 
 Un provider transporte des données BRUTES (payload JSON tel quel) — il ne
-construit jamais un DataEnvelope lui-même. La normalisation, la résolution
+construit jamais une CanonicalEnvelope lui-même. La normalisation, la résolution
 d'identité et le scoring qualité sont la responsabilité de la gateway, après
 l'appel provider (voir gateway.py).
 """

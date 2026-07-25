@@ -4,16 +4,16 @@
 ajoute l'identité de la donnée (canonical_id, sport, competition_id, season,
 data_type, schema_version) et la provenance fine (provider_entity_id).
 
-Additif en Vague 0 : coexiste avec `DataEnvelope` jusqu'à la bascule (étape C7).
-Aucun appelant de production ne construit encore cette enveloppe — seuls les
-tests l'instancient. Le câblage réel se fait à C5/C7.
+Câblée à C7 : fallback_chain ne renvoie plus que des CanonicalEnvelope.
 
-⚠ État avant C4 : tant que C4 n'est pas fait, les normalizers ne fixent pas
-event_time / published_time. Une fois cette enveloppe câblée, ces deux champs
-seront donc systématiquement None et `freshness_degraded` systématiquement True.
-Ce n'est PAS un vrai signal de fraîcheur avant C4 — juste la structure qui
-l'accueillera. Le vrai peuplement (event_time/published_time depuis les payloads
-providers, freshness non dégradée) est le travail de C4.
+Peuplement réel des horodatages (C7) :
+- published_time est extrait des payloads providers, de façon complémentaire :
+  football-data.org horodate les MATCHS (lastUpdated), api_sports horodate les
+  CLASSEMENTS (update). Quand le provider ne fournit rien pour ce data_type,
+  published_time est None et `freshness_degraded=True` (signalé, jamais masqué).
+- event_time reste None au niveau enveloppe : un batch (compétition entière) n'a
+  pas d'événement unique — le coup d'envoi de chaque match est capturé au niveau
+  FAIT (CanonicalMatch.kickoff), pas ici.
 """
 
 from __future__ import annotations

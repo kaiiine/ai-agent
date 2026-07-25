@@ -1,7 +1,7 @@
 """Exceptions typées de la gateway.
 
 Aucune exception non gérée ne doit remonter jusqu'à axon-quant (PRD §7) —
-soit une DataEnvelope (éventuellement stale=True), soit une de ces erreurs.
+soit une CanonicalEnvelope (éventuellement stale=True), soit une de ces erreurs.
 """
 
 
