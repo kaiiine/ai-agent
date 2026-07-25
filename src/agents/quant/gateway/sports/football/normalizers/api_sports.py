@@ -1,22 +1,24 @@
-"""Normalizer API-Sports → modèle canonique."""
+"""Normalizer API-Sports → faits canoniques football.
+
+Déplacé depuis normalizers/api_sports.py (v1). Déplacement pur : logique
+inchangée, seuls les imports pointent vers sports/football/canonical_facts.
+"""
 
 from __future__ import annotations
 from datetime import datetime
 
 from src.agents.quant.gateway.core.provider_protocol import RawProviderResponse
 from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
-from src.agents.quant.gateway.normalizers.canonical_models import (
-    CanonicalPayload,
+from src.agents.quant.gateway.normalizers.canonical_models import CanonicalPayload
+from src.agents.quant.gateway.sports.football.canonical_facts import (
     CanonicalMatch,
     CanonicalStandingRow,
 )
 
-
-
-# API-Sports utilise des codes courts (FT, NS, PST...) — la gateway normalise vers
-# un vocabulaire commun aux providers (celui de football-data.org : FINISHED,
+# API-Sports utilise des codes courts (FT, NS, PST...) — on normalise vers le
+# vocabulaire commun aux providers (celui de football-data.org : FINISHED,
 # SCHEDULED, POSTPONED, CANCELLED...), sinon un filtre comme recent_form()
-# écrirait un `if provider == ...` caché derrière une simple comparaison de statut.
+# écrirait un `if provider == ...` caché derrière une comparaison de statut.
 _STATUS_MAP = {
     "FT": "FINISHED", "AET": "FINISHED", "PEN": "FINISHED",
     "NS": "SCHEDULED", "TBD": "SCHEDULED",

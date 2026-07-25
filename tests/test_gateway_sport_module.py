@@ -37,9 +37,13 @@ class _FakeFootballModule:
         return stored_schema_version == self.schema_version
 
 
-def test_registry_is_empty_in_wave0():
-    # Vague 0 : aucun sport encore installé (football arrive à C1).
-    assert SPORT_MODULES == {}
+def test_registry_contains_football_after_c1():
+    # C1 : football installé et discoverable (pipeline le câble à C5).
+    assert "football" in SPORT_MODULES
+    module = get_sport_module("football")
+    assert module.sport == "football"
+    assert module.schema_version == "football/1.0"
+    assert module.entity_types() == {"team"}
 
 
 def test_get_sport_module_raises_on_unknown():

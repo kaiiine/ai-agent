@@ -1,12 +1,16 @@
-"""Normalizer football-data.org → modèle canonique."""
+"""Normalizer football-data.org → faits canoniques football.
+
+Déplacé depuis normalizers/football_data_org.py (v1). Déplacement pur : logique
+inchangée, seuls les imports pointent vers sports/football/canonical_facts.
+"""
 
 from __future__ import annotations
 from datetime import datetime
 
 from src.agents.quant.gateway.core.provider_protocol import RawProviderResponse
 from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
-from src.agents.quant.gateway.normalizers.canonical_models import (
-    CanonicalPayload,
+from src.agents.quant.gateway.normalizers.canonical_models import CanonicalPayload
+from src.agents.quant.gateway.sports.football.canonical_facts import (
     CanonicalMatch,
     CanonicalStandingRow,
 )

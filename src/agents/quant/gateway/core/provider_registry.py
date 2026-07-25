@@ -8,8 +8,11 @@ from typing import Any
 
 from src.agents.quant.gateway.providers.football_data_org_provider import FootballDataOrgProvider
 from src.agents.quant.gateway.providers.api_sports_provider import ApiSportsProvider
-from src.agents.quant.gateway.normalizers.football_data_org import FootballDataOrgNormalizer
-from src.agents.quant.gateway.normalizers.api_sports import ApiSportsNormalizer
+# Normalizers déplacés sous sports/football/ (C1). Ce couplage core -> sport est
+# transitoire : à C5, fallback_chain obtiendra les normalizers via get_sport_module,
+# et provider_registry n'en portera plus.
+from src.agents.quant.gateway.sports.football.normalizers.football_data_org import FootballDataOrgNormalizer
+from src.agents.quant.gateway.sports.football.normalizers.api_sports import ApiSportsNormalizer
 
 
 @dataclass(frozen=True)

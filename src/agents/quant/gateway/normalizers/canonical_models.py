@@ -1,34 +1,34 @@
-"""Modèles canoniques — mêmes champs, mêmes unités, quel que soit le provider d'origine."""
+"""Conteneurs de transport génériques + shim de transition (Vague 0).
+
+Les faits canoniques football (CanonicalMatch, CanonicalStandingRow + helpers)
+ont été déplacés vers sports/football/canonical_facts.py (étape C1). Ils sont
+ré-exportés ici pour ne pas casser les importeurs existants (fallback_chain,
+protocol) pendant la transition — la bascule finale vers CanonicalEnvelope se
+fait à C7.
+
+CanonicalPayload et DataEnvelope restent ici : conteneurs génériques encore
+utilisés par le pipeline v1.
+"""
 
 from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-
-@dataclass(frozen=True)
-class CanonicalMatch:
-    canonical_match_id: str
-    league_id: str          # canonical_id de la ligue, ex. "league:ligue1"
-    season: str
-    home_team_id: str       # canonical_id, ex. "team:psg"
-    away_team_id: str
-    kickoff: datetime
-    status: str              # "SCHEDULED" | "FINISHED" | "POSTPONED" | ...
-    goals_home: int | None
-    goals_away: int | None
-
-
-@dataclass(frozen=True)
-class CanonicalStandingRow:
-    team_id: str
-    rank: int
-    played: int
-    points: int
+# Ré-export des faits déplacés (transition C1) — fallback_chain et les normalizers
+# continuent d'importer ces symboles depuis ce module sans changement.
+from src.agents.quant.gateway.sports.football.canonical_facts import (  # noqa: F401
+    CanonicalMatch,
+    CanonicalStandingRow,
+    match_to_dict,
+    match_from_dict,
+    standing_to_dict,
+    standing_from_dict,
+)
 
 
 @dataclass(frozen=True)
 class CanonicalPayload:
-    """Sortie d'un normalizer — ce que la gateway enveloppe ensuite dans un DataEnvelope."""
+    """Sortie d'un normalizer — ce que la gateway enveloppe ensuite (DataEnvelope v1)."""
     kind: str  # "fixtures" | "standings"
     matches: list[CanonicalMatch] = field(default_factory=list)
     standings: list[CanonicalStandingRow] = field(default_factory=list)
@@ -36,45 +36,9 @@ class CanonicalPayload:
     published_time: datetime | None = None
 
 
-def match_to_dict(match: CanonicalMatch) -> dict:
-    return {
-        "canonical_match_id": match.canonical_match_id,
-        "league_id": match.league_id,
-        "season": match.season,
-        "home_team_id": match.home_team_id,
-        "away_team_id": match.away_team_id,
-        "kickoff": match.kickoff.isoformat(),
-        "status": match.status,
-        "goals_home": match.goals_home,
-        "goals_away": match.goals_away,
-    }
-
-
-def match_from_dict(data: dict) -> CanonicalMatch:
-    return CanonicalMatch(
-        canonical_match_id=data["canonical_match_id"],
-        league_id=data["league_id"],
-        season=data["season"],
-        home_team_id=data["home_team_id"],
-        away_team_id=data["away_team_id"],
-        kickoff=datetime.fromisoformat(data["kickoff"]),
-        status=data["status"],
-        goals_home=data["goals_home"],
-        goals_away=data["goals_away"],
-    )
-
-
-def standing_to_dict(row: CanonicalStandingRow) -> dict:
-    return {"team_id": row.team_id, "rank": row.rank, "played": row.played, "points": row.points}
-
-
-def standing_from_dict(data: dict) -> CanonicalStandingRow:
-    return CanonicalStandingRow(team_id=data["team_id"], rank=data["rank"], played=data["played"], points=data["points"])
-
-
 @dataclass(frozen=True)
 class DataEnvelope:
-    """Réponse finale servie à axon-quant — jamais un payload brut de provider."""
+    """Réponse finale v1 servie aux consommateurs — remplacée par CanonicalEnvelope à C7."""
     payload: CanonicalPayload
     provider: str
 

@@ -7,13 +7,15 @@ par `get_sport_module(sport)`, ce qui garantit :
   - GW-FR-001 : ajouter un sport ne touche pas `core/`/`cache/`
   - GW-NFR-006 : un module défaillant n'interrompt pas les autres sports
 
-Vague 0 : le registre est VIDE. Le module football y est enregistré à l'étape
-C1 (`sports/football/module.py`). Additif ici : rien dans le pipeline n'appelle
-encore `get_sport_module`.
+Le module football est enregistré ici (C1). Le pipeline ne l'appelle pas encore
+via `get_sport_module` — ce câblage se fait à C5 ; d'ici là le module est
+seulement discoverable.
 """
 
 from __future__ import annotations
 from typing import Protocol, runtime_checkable
+
+from src.agents.quant.gateway.sports.football.module import FootballModule
 
 
 class UnsupportedSportError(Exception):
@@ -65,8 +67,10 @@ class SportModule(Protocol):
         ...
 
 
-# Registre statique. Vide en Vague 0 ; peuplé sport par sport (football à C1).
-SPORT_MODULES: dict[str, SportModule] = {}
+# Registre statique, peuplé sport par sport. Football installé (C1).
+SPORT_MODULES: dict[str, SportModule] = {
+    "football": FootballModule(),
+}
 
 
 def get_sport_module(sport: str) -> SportModule:

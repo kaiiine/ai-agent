@@ -13,6 +13,7 @@ from src.agents.quant.gateway.core.identity_data import LEAGUES, TEAMS, LEAGUE_T
 from src.agents.quant.gateway.core.provider_registry import REGISTRY
 from src.agents.quant.gateway.core.fallback_chain import fetch_league_data
 from src.agents.quant.gateway.core.errors import NoDataAvailableError
+from src.agents.quant.gateway.sports.football import derived
 
 _resolver = IdentityResolver(LEAGUES + TEAMS)
 
@@ -69,29 +70,9 @@ def recent_form(canonical_team_id: str, last: int = 10, season: str | None = Non
         season=season,
         resolver=_resolver,
     )
-
-    finished = [
-        m for m in envelope.payload.matches
-        if m.status == "FINISHED"
-        and canonical_team_id in (m.home_team_id, m.away_team_id)
-        and m.goals_home is not None
-        and m.goals_away is not None
-    ]
-    finished.sort(key=lambda m: m.kickoff, reverse=True)
-
-    form = []
-    for match in finished[:last]:
-        is_home = match.home_team_id == canonical_team_id
-        form.append({
-            "date": match.kickoff.date().isoformat(),
-            "opponent_id": match.away_team_id if is_home else match.home_team_id,
-            "goals_home": match.goals_home,
-            "goals_away": match.goals_away,
-            "is_home": is_home,
-            "league_id": league_id,
-            "season": season,
-        })
-    return form
+    # Calcul dérivé (pur) délégué à sports/football/derived.py — orchestration ici,
+    # agrégation là-bas (frontière GW-FR-012).
+    return derived.recent_form(envelope.payload.matches, canonical_team_id, league_id, season, last)
 
 
 def standings_strength(league_canonical_id: str, season: str | None = None) -> dict[str, float]:
@@ -110,11 +91,7 @@ def standings_strength(league_canonical_id: str, season: str | None = None) -> d
         season=season,
         resolver=_resolver,
     )
-    rows = envelope.payload.standings
-    if len(rows) < 2:
-        return {}
-    n = len(rows)
-    return {row.team_id: round(1.3 - 0.6 * (row.rank - 1) / (n - 1), 3) for row in rows}
+    return derived.standings_strength(envelope.payload.standings)
 
 
 def opponent_ratings_for_form(form: list[dict]) -> dict[str, float]:
