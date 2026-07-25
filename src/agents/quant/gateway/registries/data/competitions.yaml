@@ -1,0 +1,23 @@
+# Competition Registry — identité SEULE des compétitions (PRD v2 §7.1, GW-FR-002).
+# AUCUN identifiant provider ici : la couverture (et le provider_competition_id)
+# vit dans provider_coverage_registry.
+#
+# canonical_id typé (ADR-008) : competition:{sport}:{scope}:{slug}
+#   - scope = code de zone football (fra, eng, eur...), cf. arbitrage Vague 0
+#   - country_code = ISO 3166-1 alpha-2 (FR, GB...), champ distinct du scope
+
+- canonical_id: "competition:football:fra:ligue1"
+  sport: football
+  name: "Ligue 1"
+  country_code: FR
+  competition_type: league
+  tier: 1
+  status: active
+
+- canonical_id: "competition:football:eng:premier_league"
+  sport: football
+  name: "Premier League"
+  country_code: GB
+  competition_type: league
+  tier: 1
+  status: active
