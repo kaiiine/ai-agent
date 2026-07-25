@@ -15,6 +15,7 @@ sinon → fetch_league_fixtures).
 """
 
 from __future__ import annotations
+import time
 from datetime import datetime, timezone
 
 from src.agents.quant.gateway.core.provider_registry import REGISTRY, FALLBACK_ORDER
@@ -53,6 +54,18 @@ def _has_quota(provider_name: str) -> bool:
 
 def _record_request(provider_name: str) -> None:
     _request_counts[provider_name] = _request_counts.get(provider_name, 0) + 1
+
+
+def _quota(provider_name: str) -> dict:
+    """Marge de quota locale + statut déclaré par le provider (GW-NFR-003)."""
+    limit = _LOCAL_QUOTA_PER_PROCESS.get(provider_name)
+    used = _request_counts.get(provider_name, 0)
+    return {
+        "local_used": used,
+        "local_limit": limit,
+        "local_remaining": (limit - used) if limit is not None else None,
+        "provider_reported": REGISTRY[provider_name].provider.get_rate_limit_status() if provider_name in REGISTRY else None,
+    }
 
 
 def _capability_for(data_type: str) -> str:
@@ -203,8 +216,7 @@ def fetch_league_data(
     cache_key = f"{sport}:{data_type}:{league_canonical_id}:{season}:{date_from}:{date_to}"
     cached = cache_get(cache_key, data_type)
     if cached is not None:
-        log_decision(sport, data_type, league_canonical_id, season, cached["provider"], "CACHE_HIT", [])
-        return _envelope(
+        env = _envelope(
             sport=sport, competition_id=league_canonical_id, season=season, data_type=data_type,
             schema_version=schema_version, payload=_deserialize(cached["canonical"]),
             provider=cached["provider"], provider_entity_id=cached.get("provider_entity_id"),
@@ -212,11 +224,16 @@ def fetch_league_data(
             fetched_at=datetime.fromisoformat(cached["fetched_at"]), ingested_at=datetime.now(timezone.utc),
             data_quality=quality.data_quality(cached["provider"], data_type),
         )
+        log_decision(sport, data_type, league_canonical_id, season, cached["provider"], "CACHE_HIT", [],
+                     cache="hit", data_quality=env.data_quality, freshness_score=env.freshness_score,
+                     freshness_degraded=env.freshness_degraded)
+        return env
 
     module_normalizers = module.normalizers()
     errors: list[str] = []
+    candidates = _eligible_providers(sport, league_canonical_id, season, data_type)
 
-    for provider_name in _eligible_providers(sport, league_canonical_id, season, data_type):
+    for provider_name in candidates:
         entry = REGISTRY[provider_name]
         coverage = get_coverage(provider_name, league_canonical_id, season, data_type)
         provider_competition_id = coverage.provider_competition_id if coverage else None
@@ -227,6 +244,7 @@ def fetch_league_data(
         try:
             _record_request(provider_name)
             fetched_at = datetime.now(timezone.utc)
+            _t0 = time.perf_counter()
 
             if data_type == "STANDINGS":
                 raw = entry.provider.fetch_standings(sport, provider_competition_id, season)
@@ -234,6 +252,7 @@ def fetch_league_data(
             else:
                 raw = entry.provider.fetch_league_fixtures(sport, provider_competition_id, season, date_from, date_to)
                 canonical = normalizer.normalize_fixtures(raw, resolver, league_canonical_id, season)
+            latency_ms = (time.perf_counter() - _t0) * 1000
 
             # GW-FR-007 : validation du payload AVANT toute écriture dans le store.
             module.validate_payload(canonical, data_type)
@@ -242,7 +261,8 @@ def fetch_league_data(
             # Vide alors que PARTIAL → légitime, retourné tel quel (pas de fallback).
             if _is_empty(canonical) and coverage.status == CoverageStatus.FULL:
                 errors.append(f"{provider_name}: unexpected_empty (couverture FULL)")
-                log_decision(sport, data_type, league_canonical_id, season, provider_name, "unexpected_empty", errors)
+                log_decision(sport, data_type, league_canonical_id, season, provider_name, "unexpected_empty",
+                             errors, candidates=candidates, latency_ms=latency_ms, quota=_quota(provider_name))
                 continue
 
             data_quality_score = quality.data_quality(provider_name, data_type)
@@ -283,15 +303,18 @@ def fetch_league_data(
                     "published_time": _iso_or_none(served.published_time),
                 },
             )
-            log_decision(sport, data_type, league_canonical_id, season, provider_name, "LIVE_FETCH", errors)
-
-            return _envelope(
+            env = _envelope(
                 sport=sport, competition_id=league_canonical_id, season=season, data_type=data_type,
                 schema_version=schema_version, payload=served,
                 provider=provider_name, provider_entity_id=provider_competition_id,
                 event_time=served.event_time, published_time=served.published_time,
                 fetched_at=fetched_at, ingested_at=ingested_at, data_quality=data_quality_score,
             )
+            log_decision(sport, data_type, league_canonical_id, season, provider_name, "LIVE_FETCH", errors,
+                         candidates=candidates, fallback_used=bool(errors), cache="miss", latency_ms=latency_ms,
+                         data_quality=env.data_quality, freshness_score=env.freshness_score,
+                         freshness_degraded=env.freshness_degraded, quota=_quota(provider_name))
+            return env
         except PayloadValidationError as e:
             errors.append(f"{provider_name}: schema_violation ({e})")
             continue
@@ -302,7 +325,8 @@ def fetch_league_data(
     # entity_id inclut la saison : un snapshot 2024 ne sert jamais de recours pour 2025.
     snapshot = last_snapshot(sport, f"{league_canonical_id}:{season}", data_type)
     if snapshot is None:
-        log_decision(sport, data_type, league_canonical_id, season, None, "NO_DATA_AVAILABLE", errors)
+        log_decision(sport, data_type, league_canonical_id, season, None, "NO_DATA_AVAILABLE", errors,
+                     candidates=candidates)
         raise NoDataAvailableError(
             f"Aucune donnée pour {sport}/{data_type}/{league_canonical_id} (saison {season}). "
             f"Providers essayés : {'; '.join(errors) if errors else 'aucun éligible'}."
@@ -311,16 +335,16 @@ def fetch_league_data(
     # GW-FR-009 : un snapshot sous schéma incompatible n'est jamais réinterprété.
     stored_schema = snapshot.get("schema_version")
     if not module.is_schema_compatible(stored_schema or ""):
-        log_decision(sport, data_type, league_canonical_id, season, snapshot["provider"], "SCHEMA_INCOMPATIBLE", errors)
+        log_decision(sport, data_type, league_canonical_id, season, snapshot["provider"], "SCHEMA_INCOMPATIBLE",
+                     errors, candidates=candidates)
         raise NoDataAvailableError(
             f"Dernier snapshot pour {sport}/{data_type}/{league_canonical_id} (saison {season}) sous "
             f"schema_version {stored_schema!r}, incompatible avec le schéma courant. Réécriture nécessaire."
         )
 
-    log_decision(sport, data_type, league_canonical_id, season, snapshot["provider"], "STALE_FALLBACK", errors)
     # event_time/published_time viennent des COLONNES du store (pas du payload
     # sérialisé, qui ne les porte pas) — la fraîcheur reste donc réelle en stale.
-    return _envelope(
+    env = _envelope(
         sport=sport, competition_id=league_canonical_id, season=season, data_type=data_type,
         schema_version=stored_schema, payload=_deserialize(snapshot["payload"]),
         provider=snapshot["provider"], provider_entity_id=snapshot.get("provider_entity_id"),
@@ -328,3 +352,7 @@ def fetch_league_data(
         fetched_at=datetime.fromisoformat(snapshot["fetched_at"]), ingested_at=datetime.now(timezone.utc),
         data_quality=quality.data_quality(snapshot["provider"], data_type), stale=True,
     )
+    log_decision(sport, data_type, league_canonical_id, season, snapshot["provider"], "STALE_FALLBACK", errors,
+                 candidates=candidates, fallback_used=True, data_quality=env.data_quality,
+                 freshness_score=env.freshness_score, freshness_degraded=env.freshness_degraded)
+    return env
