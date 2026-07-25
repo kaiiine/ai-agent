@@ -19,6 +19,11 @@ from src.agents.quant.gateway.cache.operational_cache import cache_get, cache_se
 from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
 from src.agents.quant.gateway.core.errors import NoDataAvailableError
 from src.agents.quant.gateway.core.decision_log import log_decision
+# get_sport_module est le mécanisme de découplage core->sport (GW-FR-001) : core
+# n'importe jamais un module sportif CONCRET, il passe par le registre. Utilisé
+# ici pour le schema_version (C4) ; le câblage complet des normalizers via ce
+# même point d'accès est fait à C5.
+from src.agents.quant.gateway.sports.registry import get_sport_module
 from src.agents.quant.gateway.normalizers.canonical_models import (
     CanonicalPayload,
     DataEnvelope,
@@ -138,6 +143,8 @@ def fetch_league_data(
                 errors.append(f"{provider_name}: data_quality {data_quality_score} < seuil {MIN_DATA_QUALITY}")
                 continue
 
+            ingested_at = datetime.now(timezone.utc)
+            schema_version = get_sport_module(sport).schema_version
             store_write(
                 sport=sport,
                 entity_id=f"{league_canonical_id}:{season}",
@@ -146,6 +153,12 @@ def fetch_league_data(
                 payload=_serialize(canonical),
                 request_fingerprint=f"{provider_league_id}:{season}:{date_from}:{date_to}",
                 fetched_at=fetched_at,
+                schema_version=schema_version,
+                provider_entity_id=provider_league_id,   # ID natif de la compétition chez le provider
+                event_time=canonical.event_time,          # None explicite tant que (b) n'est pas fait (C7)
+                published_time=canonical.published_time,   # idem
+                available_to_model_time=fetched_at,
+                ingested_at=ingested_at,
             )
             cache_set(
                 cache_key, endpoint,
@@ -160,7 +173,7 @@ def fetch_league_data(
                 published_time=canonical.published_time,
                 available_to_model_time=fetched_at,
                 fetched_at=fetched_at,
-                ingested_at=datetime.now(timezone.utc),
+                ingested_at=ingested_at,
                 data_quality=data_quality_score,
                 freshness_score=quality.freshness_score(effective_time, fetched_at, endpoint),
             )
@@ -176,6 +189,17 @@ def fetch_league_data(
         raise NoDataAvailableError(
             f"Aucune donnée pour {sport}/{endpoint}/{league_canonical_id} (saison {season}). "
             f"Providers essayés : {'; '.join(errors) if errors else 'aucun éligible'}."
+        )
+
+    # GW-FR-009 : un snapshot stocké sous un schéma incompatible n'est jamais
+    # réinterprété avec le schéma courant — échec explicite plutôt que silence.
+    stored_schema = snapshot.get("schema_version")
+    if not get_sport_module(sport).is_schema_compatible(stored_schema or ""):
+        log_decision(sport, endpoint, league_canonical_id, season, snapshot["provider"], "SCHEMA_INCOMPATIBLE", errors)
+        raise NoDataAvailableError(
+            f"Dernier snapshot pour {sport}/{endpoint}/{league_canonical_id} (saison {season}) sous "
+            f"schema_version {stored_schema!r}, incompatible avec le schéma courant du sport. "
+            f"Réécriture nécessaire (cf. migration des snapshots)."
         )
 
     log_decision(sport, endpoint, league_canonical_id, season, snapshot["provider"], "STALE_FALLBACK", errors)

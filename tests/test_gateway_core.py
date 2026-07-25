@@ -53,8 +53,8 @@ def test_store_dedup_content_hash(tmp_path, monkeypatch):
 
     payload = {"kind": "standings", "matches": [], "standings": [{"team_id": "team:psg", "rank": 1}]}
     now = datetime.now(timezone.utc)
-    first = store.write("football", "competition:football:fra:ligue1:2025", "standings", "football_data_org", payload, "fp", now)
-    second = store.write("football", "competition:football:fra:ligue1:2025", "standings", "football_data_org", payload, "fp", now)
+    first = store.write("football", "competition:football:fra:ligue1:2025", "standings", "football_data_org", payload, "fp", now, "football/1.0")
+    second = store.write("football", "competition:football:fra:ligue1:2025", "standings", "football_data_org", payload, "fp", now, "football/1.0")
 
     assert first.resulted_in_new_snapshot is True
     assert second.resulted_in_new_snapshot is False  # payload identique -> pas de doublon
@@ -68,8 +68,8 @@ def test_last_snapshot_is_season_scoped(tmp_path, monkeypatch):
     now = datetime.now(timezone.utc)
     p2024 = {"kind": "standings", "matches": [], "standings": [{"team_id": "team:psg", "rank": 5}]}
     p2025 = {"kind": "standings", "matches": [], "standings": [{"team_id": "team:psg", "rank": 1}]}
-    store.write("football", "competition:football:fra:ligue1:2024", "standings", "api_sports", p2024, "fp24", now)
-    store.write("football", "competition:football:fra:ligue1:2025", "standings", "football_data_org", p2025, "fp25", now)
+    store.write("football", "competition:football:fra:ligue1:2024", "standings", "api_sports", p2024, "fp24", now, "football/1.0")
+    store.write("football", "competition:football:fra:ligue1:2025", "standings", "football_data_org", p2025, "fp25", now, "football/1.0")
 
     snap_2025 = store.last_snapshot("football", "competition:football:fra:ligue1:2025", "standings")
     snap_2024 = store.last_snapshot("football", "competition:football:fra:ligue1:2024", "standings")
@@ -86,7 +86,7 @@ def test_cache_purge_preserves_store(tmp_path, monkeypatch):
 
     now = datetime.now(timezone.utc)
     payload = {"kind": "standings", "matches": [], "standings": [{"team_id": "team:psg", "rank": 1}]}
-    store.write("football", "competition:football:fra:ligue1:2025", "standings", "football_data_org", payload, "fp", now)
+    store.write("football", "competition:football:fra:ligue1:2025", "standings", "football_data_org", payload, "fp", now, "football/1.0")
 
     cache.cache_set("k1", "standings", {"x": 1})
     assert cache.cache_get("k1", "standings") == {"x": 1}
@@ -97,3 +97,74 @@ def test_cache_purge_preserves_store(tmp_path, monkeypatch):
     assert purged == 1
     assert cache.cache_get("k1", "standings") is None            # cache vidé
     assert store.last_snapshot("football", "competition:football:fra:ligue1:2025", "standings") is not None  # store intact
+
+
+# ── C4 : store point-in-time — 5 horodatages, schema_version, provider_entity_id ──
+
+def test_store_persists_schema_version_and_provenance(tmp_path, monkeypatch):
+    from src.agents.quant.gateway.core import point_in_time_store as store
+    monkeypatch.setattr(store, "STORE_DB", tmp_path / "store.db")
+
+    fetched = datetime(2026, 5, 30, 20, 20, tzinfo=timezone.utc)
+    ingested = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
+    payload = {"kind": "standings", "matches": [], "standings": [{"team_id": "team:football:fra:psg", "rank": 1}]}
+    store.write(
+        "football", "competition:football:fra:ligue1:2025", "standings", "football_data_org",
+        payload, "fp", fetched, "football/1.0",
+        provider_entity_id="FL1", event_time=None, published_time=None,
+        available_to_model_time=fetched, ingested_at=ingested,
+    )
+    snap = store.last_snapshot("football", "competition:football:fra:ligue1:2025", "standings")
+    assert snap["schema_version"] == "football/1.0"
+    assert snap["provider_entity_id"] == "FL1"
+    assert snap["event_time"] is None          # None explicite, jamais fabriqué
+    assert snap["published_time"] is None
+    assert snap["available_to_model_time"] == fetched.isoformat()
+    assert snap["ingested_at"] == ingested.isoformat()
+
+
+def test_content_hash_includes_schema_version(tmp_path, monkeypatch):
+    """GW-NFR-002 : même payload sous deux schémas différents -> deux snapshots, jamais une dédup."""
+    from src.agents.quant.gateway.core import point_in_time_store as store
+    monkeypatch.setattr(store, "STORE_DB", tmp_path / "store.db")
+
+    # Deux fetchs distincts (le schéma a changé entre les deux) — fetched_at diffère,
+    # comme en production (un fetch a un seul schema_version courant).
+    t1 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    t2 = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    payload = {"kind": "standings", "matches": [], "standings": [{"team_id": "team:football:fra:psg", "rank": 1}]}
+    e1 = store.write("football", "competition:football:fra:ligue1:2025", "standings", "football_data_org", payload, "fp", t1, "football/1.0")
+    e2 = store.write("football", "competition:football:fra:ligue1:2025", "standings", "football_data_org", payload, "fp", t2, "football/2.0")
+    assert e1.resulted_in_new_snapshot is True
+    assert e2.resulted_in_new_snapshot is True   # schema différent -> pas de dédup
+    assert e1.content_hash != e2.content_hash     # GW-NFR-002 : le hash inclut schema_version
+
+
+def test_fallback_rejects_incompatible_schema(tmp_path, monkeypatch):
+    """GW-FR-009 : le dernier snapshot sous un schéma incompatible n'est jamais réinterprété."""
+    import pytest
+    from src.agents.quant.gateway.core import point_in_time_store as store, decision_log, fallback_chain
+    from src.agents.quant.gateway.cache import operational_cache
+    from src.agents.quant.gateway.core.fallback_chain import fetch_league_data
+    from src.agents.quant.gateway.core.errors import NoDataAvailableError
+    from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
+    from src.agents.quant.gateway.core.identity_data import LEAGUES, TEAMS
+
+    monkeypatch.setattr(store, "STORE_DB", tmp_path / "store.db")
+    monkeypatch.setattr(operational_cache, "CACHE_DB", tmp_path / "cache.db")
+    monkeypatch.setattr(decision_log, "LOG_FILE", tmp_path / "log")
+    monkeypatch.setattr(fallback_chain, "_request_counts", {})
+
+    league = "competition:football:fra:ligue1"
+    season = "1999"  # aucun provider disponible pour cette saison -> chemin stale
+    payload = {"kind": "standings", "matches": [], "standings": [{"team_id": "team:football:fra:psg", "rank": 1}]}
+    store.write("football", f"{league}:{season}", "standings", "football_data_org",
+                payload, "fp", datetime.now(timezone.utc), "football/0.1")  # schéma incompatible
+
+    resolver = IdentityResolver(LEAGUES + TEAMS)
+    with pytest.raises(NoDataAvailableError):
+        fetch_league_data(
+            sport="football", endpoint="standings",
+            provider_league_ids={"football_data_org": "FL1", "api_sports": "61"},
+            league_canonical_id=league, season=season, resolver=resolver,
+        )
