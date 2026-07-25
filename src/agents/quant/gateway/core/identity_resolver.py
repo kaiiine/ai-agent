@@ -16,11 +16,25 @@ IdentityStatus = Literal["RESOLVED", "UNRESOLVED", "AMBIGUOUS", "CONFLICT"]
 
 @dataclass(frozen=True)
 class CanonicalEntity:
-    canonical_id: str              # ex. "team:psg"
+    canonical_id: str              # typé : "{entity_type}:{sport}:{scope}:{slug}", ex. "team:football:fra:psg"
     canonical_name: str
     aliases: list[str] = field(default_factory=list)
     identities: dict[str, str] = field(default_factory=dict)   # {"api_sports": "85", "football_data_org": "524"}
     valid_from: datetime | None = None
+
+
+def validate_canonical_id(canonical_id: str) -> None:
+    """Impose le format typé {entity_type}:{sport}:{scope}:{slug} (GW-FR-008).
+
+    Deux types d'entités ne peuvent jamais partager un espace de noms : le
+    préfixe entity_type est structurellement obligatoire. Validé à l'écriture
+    dans le registre — un ID plat (ex. "team:psg") est rejeté explicitement.
+    """
+    parts = canonical_id.split(":")
+    if len(parts) != 4 or not all(parts):
+        raise ValueError(
+            f"canonical_id non typé (attendu entity_type:sport:scope:slug) : {canonical_id!r}"
+        )
 
 
 class IdentityResolver:
@@ -33,6 +47,7 @@ class IdentityResolver:
         # ligue Premier League ET équipe Wolves), il faut le type pour désambiguïser.
         self._by_provider_id: dict[tuple[str, str, str], str] = {}
         for entity in entities:
+            validate_canonical_id(entity.canonical_id)   # GW-FR-008 : format typé imposé à l'écriture
             entity_type = entity.canonical_id.split(":", 1)[0]
             for provider, provider_id in entity.identities.items():
                 self._by_provider_id[(provider, entity_type, provider_id)] = entity.canonical_id

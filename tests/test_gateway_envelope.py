@@ -13,7 +13,7 @@ from src.agents.quant.gateway.canonical.envelope import (
 
 def _envelope(**overrides):
     base = dict(
-        canonical_id="team:psg",
+        canonical_id="team:football:fra:psg",
         sport="football",
         competition_id="competition:football:fra:ligue1",
         season="2025",
