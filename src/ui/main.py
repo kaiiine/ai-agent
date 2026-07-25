@@ -3,6 +3,24 @@ from __future__ import annotations
 import sys
 import os
 
+# ── 0. Commandes de diagnostic rapide — pas de boot loader / graphe pour ça ───
+if len(sys.argv) > 1 and sys.argv[1] in ("sports-status", "sports-seed"):
+    from dotenv import load_dotenv
+    load_dotenv()
+    if sys.argv[1] == "sports-seed":
+        from src.agents.quant.gateway.status import seed_coverage
+        seed_coverage()
+    else:
+        import argparse
+        parser = argparse.ArgumentParser(prog="axon sports-status")
+        parser.add_argument("--sport", default="football")
+        parser.add_argument("--competition", default=None)
+        parser.add_argument("--season", default=None)
+        args = parser.parse_args(sys.argv[2:])
+        from src.agents.quant.gateway.status import print_status
+        print_status(competition=args.competition, season=args.season)
+    sys.exit(0)
+
 # ── 1. Boot loader — démarre immédiatement ────────────────────────────────────
 from rich.console import Console as _Console
 from src.ui.boot import BootLoader, report_step

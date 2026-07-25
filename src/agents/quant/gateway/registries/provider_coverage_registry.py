@@ -111,6 +111,19 @@ def get_coverage(
         conn.close()
 
 
+def all_coverage(competition_id: str, season: str, db_path: Path | None = None) -> list[ProviderCompetitionCoverage]:
+    """Toutes les entrées de couverture connues pour une compétition/saison (diagnostic CLI)."""
+    conn = _connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM coverage WHERE competition_id=? AND season=? ORDER BY data_type, provider",
+            (competition_id, season),
+        ).fetchall()
+        return [_row_to_entry(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def usable_providers(competition_id: str, season: str, data_type: str, db_path: Path | None = None) -> list[str]:
     """Providers dont la couverture est FULL/PARTIAL pour ce couple exact.
 

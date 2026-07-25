@@ -80,6 +80,16 @@ def test_verification_method_is_validated():
         _entry(CoverageStatus.FULL, method="rumeur")
 
 
+def test_all_coverage_returns_entries_for_competition_season(tmp_path):
+    db = tmp_path / "cov.db"
+    pcr.seed(db_path=db)
+    entries = pcr.all_coverage("competition:football:fra:ligue1", "2025", db_path=db)
+    assert {e.data_type for e in entries} == {"FIXTURES", "RESULTS", "STANDINGS"}
+    # api_sports 2025 est ABSENT (tier gratuit) et présent dans le rapport (diagnostic).
+    absent = [e for e in entries if e.provider == "api_sports" and e.status == CoverageStatus.ABSENT]
+    assert len(absent) == 3
+
+
 # ── Baseline seed ───────────────────────────────────────────────────────────────
 
 def test_seed_materializes_known_coverage(tmp_path):
