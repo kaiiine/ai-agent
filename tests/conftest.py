@@ -37,12 +37,19 @@ def offline_gateway(tmp_path, monkeypatch):
     """
     from src.agents.quant.gateway.core import point_in_time_store, decision_log, fallback_chain
     from src.agents.quant.gateway.cache import operational_cache
+    from src.agents.quant.gateway.registries import provider_coverage_registry
     from src.agents.quant.gateway.providers.football_data_org_provider import FootballDataOrgProvider
 
     monkeypatch.setattr(point_in_time_store, "STORE_DB", tmp_path / "store.db")
     monkeypatch.setattr(operational_cache, "CACHE_DB", tmp_path / "cache.db")
     monkeypatch.setattr(decision_log, "LOG_FILE", tmp_path / "decisions.log")
     monkeypatch.setattr(fallback_chain, "_request_counts", {})
+
+    # Coverage registry temporaire, seedé avec la baseline vérifiée : sans lui,
+    # aucun provider n'est éligible (l'éligibilité est fondée sur la couverture).
+    coverage_db = tmp_path / "coverage.db"
+    monkeypatch.setattr(provider_coverage_registry, "COVERAGE_DB", coverage_db)
+    provider_coverage_registry.seed(db_path=coverage_db)
 
     def fake_get(self, path, params=None):
         fixture = _FDO_PATH_TO_FIXTURE.get(path)

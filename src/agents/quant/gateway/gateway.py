@@ -9,13 +9,15 @@ from __future__ import annotations
 from datetime import date
 
 from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
-from src.agents.quant.gateway.core.identity_data import LEAGUES, TEAMS, LEAGUE_TEAMS
-from src.agents.quant.gateway.core.provider_registry import REGISTRY
+from src.agents.quant.gateway.core.identity_data import TEAMS, LEAGUE_TEAMS
 from src.agents.quant.gateway.core.fallback_chain import fetch_league_data
 from src.agents.quant.gateway.core.errors import NoDataAvailableError
 from src.agents.quant.gateway.sports.football import derived
 
-_resolver = IdentityResolver(LEAGUES + TEAMS)
+# Le résolveur ne contient que des ÉQUIPES : les compétitions vivent dans
+# competition_registry (identité) + provider_coverage_registry (mapping provider),
+# jamais ici (GW-FR-002).
+_resolver = IdentityResolver(TEAMS)
 
 
 def current_season() -> str:
@@ -30,15 +32,6 @@ def _team_league(team_canonical_id: str) -> str | None:
         if team_canonical_id in team_ids:
             return league_id
     return None
-
-
-def _provider_league_ids(league_canonical_id: str) -> dict[str, str]:
-    ids = {}
-    for provider_name in REGISTRY:
-        provider_id = _resolver.resolve(league_canonical_id, provider_name)
-        if provider_id:
-            ids[provider_name] = provider_id
-    return ids
 
 
 def search_team(name: str) -> dict | None:
@@ -62,10 +55,10 @@ def recent_form(canonical_team_id: str, last: int = 10, season: str | None = Non
         )
 
     season = season or current_season()
+    # recent_form consomme les matchs JOUÉS → data_type RESULTS.
     envelope = fetch_league_data(
         sport="football",
-        endpoint="fixtures",
-        provider_league_ids=_provider_league_ids(league_id),
+        data_type="RESULTS",
         league_canonical_id=league_id,
         season=season,
         resolver=_resolver,
@@ -85,8 +78,7 @@ def standings_strength(league_canonical_id: str, season: str | None = None) -> d
     season = season or current_season()
     envelope = fetch_league_data(
         sport="football",
-        endpoint="standings",
-        provider_league_ids=_provider_league_ids(league_canonical_id),
+        data_type="STANDINGS",
         league_canonical_id=league_canonical_id,
         season=season,
         resolver=_resolver,

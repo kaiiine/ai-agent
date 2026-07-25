@@ -8,29 +8,27 @@ from typing import Any
 
 from src.agents.quant.gateway.providers.football_data_org_provider import FootballDataOrgProvider
 from src.agents.quant.gateway.providers.api_sports_provider import ApiSportsProvider
-# Normalizers déplacés sous sports/football/ (C1). Ce couplage core -> sport est
-# transitoire : à C5, fallback_chain obtiendra les normalizers via get_sport_module,
-# et provider_registry n'en portera plus.
-from src.agents.quant.gateway.sports.football.normalizers.football_data_org import FootballDataOrgNormalizer
-from src.agents.quant.gateway.sports.football.normalizers.api_sports import ApiSportsNormalizer
+
+# Un provider est une SOURCE de données cross-sport (pas un module sportif) :
+# l'importer ici ne viole pas GW-FR-001. Les NORMALIZERS, eux, sont
+# sport-spécifiques et vivent dans les SportModule — fallback_chain les obtient
+# via get_sport_module(sport).normalizers(), plus jamais depuis ce registre
+# (dette C1#1 éliminée à C5 : aucun import core -> sports/<sport>/).
 
 
 @dataclass(frozen=True)
 class ProviderEntry:
     provider: Any        # SportsDataProvider
-    normalizer: Any       # ProviderNormalizer
     doc_url: str
 
 
 REGISTRY: dict[str, ProviderEntry] = {
     "football_data_org": ProviderEntry(
         provider=FootballDataOrgProvider(),
-        normalizer=FootballDataOrgNormalizer(),
         doc_url="https://www.football-data.org/documentation/quickstart",
     ),
     "api_sports": ProviderEntry(
         provider=ApiSportsProvider(),
-        normalizer=ApiSportsNormalizer(),
         doc_url="https://www.api-football.com/documentation-v3",
     ),
 }

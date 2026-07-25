@@ -12,8 +12,10 @@ from datetime import datetime, timezone
 
 def _resolver():
     from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
-    from src.agents.quant.gateway.core.identity_data import LEAGUES, TEAMS
-    return IdentityResolver(LEAGUES + TEAMS)
+    from src.agents.quant.gateway.core.identity_data import TEAMS
+    # Depuis C5, le résolveur ne contient que des équipes (les compétitions vivent
+    # dans competition_registry + coverage_registry, plus dans l'identité).
+    return IdentityResolver(TEAMS)
 
 
 def test_identity_resolve_roundtrip():
@@ -29,14 +31,17 @@ def test_canonicalize_unknown_is_unresolved():
     assert r.canonicalize("api_sports", "999999", "team") == (None, "UNRESOLVED")
 
 
-def test_identity_typed_collision_wolves_vs_premier_league():
+def test_collision_avoided_by_registry_separation():
     """Ex-bug v1 : chez api_sports l'id '39' désigne l'équipe Wolves ET la ligue
-    Premier League. Le typage par entity_type (team vs competition) lève l'ambiguïté."""
+    Premier League. Depuis C5 la collision est impossible par SÉPARATION : les
+    compétitions ne sont plus dans le résolveur d'identité (elles vivent dans
+    competition_registry + coverage_registry). Le résolveur ne connaît que
+    l'équipe ; l'id '39' côté compétition n'y existe pas."""
     r = _resolver()
-    assert r.resolve("team:football:eng:wolves", "api_sports") == "39"
-    assert r.resolve("competition:football:eng:premier_league", "api_sports") == "39"
     assert r.canonicalize("api_sports", "39", "team") == ("team:football:eng:wolves", "RESOLVED")
-    assert r.canonicalize("api_sports", "39", "competition") == ("competition:football:eng:premier_league", "RESOLVED")
+    # La compétition n'est pas dans le résolveur -> aucune collision possible.
+    assert r.canonicalize("api_sports", "39", "competition") == (None, "UNRESOLVED")
+    assert r.resolve("competition:football:eng:premier_league", "api_sports") is None
 
 
 def test_flat_canonical_id_is_rejected():
@@ -145,26 +150,28 @@ def test_fallback_rejects_incompatible_schema(tmp_path, monkeypatch):
     import pytest
     from src.agents.quant.gateway.core import point_in_time_store as store, decision_log, fallback_chain
     from src.agents.quant.gateway.cache import operational_cache
+    from src.agents.quant.gateway.registries import provider_coverage_registry
     from src.agents.quant.gateway.core.fallback_chain import fetch_league_data
     from src.agents.quant.gateway.core.errors import NoDataAvailableError
     from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
-    from src.agents.quant.gateway.core.identity_data import LEAGUES, TEAMS
+    from src.agents.quant.gateway.core.identity_data import TEAMS
 
     monkeypatch.setattr(store, "STORE_DB", tmp_path / "store.db")
     monkeypatch.setattr(operational_cache, "CACHE_DB", tmp_path / "cache.db")
     monkeypatch.setattr(decision_log, "LOG_FILE", tmp_path / "log")
+    monkeypatch.setattr(provider_coverage_registry, "COVERAGE_DB", tmp_path / "cov.db")  # coverage vide -> aucun éligible
     monkeypatch.setattr(fallback_chain, "_request_counts", {})
 
     league = "competition:football:fra:ligue1"
-    season = "1999"  # aucun provider disponible pour cette saison -> chemin stale
+    season = "1999"
     payload = {"kind": "standings", "matches": [], "standings": [{"team_id": "team:football:fra:psg", "rank": 1}]}
-    store.write("football", f"{league}:{season}", "standings", "football_data_org",
-                payload, "fp", datetime.now(timezone.utc), "football/0.1")  # schéma incompatible
+    # Snapshot stocké sous l'axe data_type "STANDINGS", schéma incompatible.
+    store.write("football", f"{league}:{season}", "STANDINGS", "football_data_org",
+                payload, "fp", datetime.now(timezone.utc), "football/0.1")
 
-    resolver = IdentityResolver(LEAGUES + TEAMS)
+    resolver = IdentityResolver(TEAMS)
     with pytest.raises(NoDataAvailableError):
         fetch_league_data(
-            sport="football", endpoint="standings",
-            provider_league_ids={"football_data_org": "FL1", "api_sports": "61"},
+            sport="football", data_type="STANDINGS",
             league_canonical_id=league, season=season, resolver=resolver,
         )

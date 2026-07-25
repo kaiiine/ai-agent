@@ -12,29 +12,21 @@ Ne couvre que le roster ACTUEL des deux ligues — une équipe reléguée avant
 2025-2026 (Southampton, Leicester, Montpellier, Reims...) n'y est plus et
 renverra "hors des ligues couvertes" plutôt qu'une donnée obsolète.
 
-Transition GW-FR-002 : les entrées de LIGUE portent encore leurs identités
-provider (utilisées par le pipeline jusqu'à C5). Le competition_registry, lui,
-n'en porte aucune. La bascule du pipeline sur le coverage registry et le retrait
-de ces identités côté LIGUE se fait à C5.
+GW-FR-002 (résorbé à C5) : l'identité des COMPÉTITIONS vit désormais dans
+registries/competition_registry.py (sans aucun ID provider), et le mapping
+compétition→provider_competition_id dans registries/provider_coverage_registry.py.
+Les compétitions ne sont donc PLUS dans ce registre d'identités : il ne contient
+que des ENTITÉS résolues par ID provider dans le pipeline (équipes, via
+identity_resolver.canonicalize dans les normalizers). Une compétition n'a pas
+besoin d'être canonicalisée (son canonical_id est passé directement).
+
+La collision d'ID provider équipe/compétition (ex-bug Wolves/PL id 39) est ainsi
+évitée par SÉPARATION de registres — les compétitions ne partagent plus aucun
+espace de noms avec les équipes.
 """
 
 from __future__ import annotations
 from src.agents.quant.gateway.core.identity_resolver import CanonicalEntity
-
-LEAGUES: list[CanonicalEntity] = [
-    CanonicalEntity(
-        canonical_id="competition:football:fra:ligue1",
-        canonical_name="Ligue 1",
-        aliases=["Ligue 1", "L1", "Ligue 1 France"],
-        identities={"api_sports": "61", "football_data_org": "FL1"},
-    ),
-    CanonicalEntity(
-        canonical_id="competition:football:eng:premier_league",
-        canonical_name="Premier League",
-        aliases=["Premier League", "EPL", "PL"],
-        identities={"api_sports": "39", "football_data_org": "PL"},
-    ),
-]
 
 TEAMS: list[CanonicalEntity] = [
     # Ligue 1 (18 équipes, saison 2025-2026) — scope fra
