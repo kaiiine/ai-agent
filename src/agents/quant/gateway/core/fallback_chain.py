@@ -119,6 +119,21 @@ def _is_empty(canonical: CanonicalPayload) -> bool:
     return not canonical.matches and not canonical.standings
 
 
+def _split_matches(canonical: CanonicalPayload) -> dict[str, CanonicalPayload]:
+    """Scinde un payload de matchs en RESULTS (score final présent) et FIXTURES
+    (à venir, sans score). Une réponse /matches mixte devient deux snapshots
+    distincts (arbitrage Vague 0). Prédicat par score, robuste aux variantes de
+    statut (FINISHED, AWARDED... ont un score ; SCHEDULED, TIMED... n'en ont pas).
+    """
+    results = [m for m in canonical.matches if m.goals_home is not None and m.goals_away is not None]
+    fixtures = [m for m in canonical.matches if m.goals_home is None or m.goals_away is None]
+    common = dict(event_time=canonical.event_time, published_time=canonical.published_time)
+    return {
+        "RESULTS": CanonicalPayload(kind="fixtures", matches=results, **common),
+        "FIXTURES": CanonicalPayload(kind="fixtures", matches=fixtures, **common),
+    }
+
+
 def fetch_league_data(
     sport: str,
     data_type: str,                    # "RESULTS" | "STANDINGS" | "FIXTURES" (§5.2)
@@ -197,34 +212,41 @@ def fetch_league_data(
                 errors.append(f"{provider_name}: quality_below_threshold ({data_quality_score})")
                 continue
 
-            effective_time = canonical.published_time or canonical.event_time or fetched_at
             ingested_at = datetime.now(timezone.utc)
-            store_write(
-                sport=sport,
-                entity_id=f"{league_canonical_id}:{season}",
-                endpoint=data_type,
-                provider=provider_name,
-                payload=_serialize(canonical),
-                request_fingerprint=f"{provider_competition_id}:{season}:{date_from}:{date_to}",
-                fetched_at=fetched_at,
-                schema_version=schema_version,
-                provider_entity_id=provider_competition_id,
-                event_time=canonical.event_time,          # None explicite tant que (b) n'est pas fait (C7)
-                published_time=canonical.published_time,   # idem
-                available_to_model_time=fetched_at,
-                ingested_at=ingested_at,
-            )
+            # Une réponse de matchs mixte est stockée en DEUX snapshots (RESULTS +
+            # FIXTURES) ; les standings restent un seul snapshot. Chacun a son axe
+            # data_type et son content_hash. On renvoie/cache celui demandé.
+            snapshots = {"STANDINGS": canonical} if data_type == "STANDINGS" else _split_matches(canonical)
+            for snapshot_type, snapshot_payload in snapshots.items():
+                store_write(
+                    sport=sport,
+                    entity_id=f"{league_canonical_id}:{season}",
+                    data_type=snapshot_type,
+                    provider=provider_name,
+                    payload=_serialize(snapshot_payload),
+                    request_fingerprint=f"{provider_competition_id}:{season}:{date_from}:{date_to}",
+                    fetched_at=fetched_at,
+                    schema_version=schema_version,
+                    provider_entity_id=provider_competition_id,
+                    event_time=snapshot_payload.event_time,      # None explicite tant que (b) pas fait (C7)
+                    published_time=snapshot_payload.published_time,
+                    available_to_model_time=fetched_at,
+                    ingested_at=ingested_at,
+                )
+
+            served = snapshots[data_type]
+            effective_time = served.published_time or served.event_time or fetched_at
             cache_set(
                 cache_key, data_type,
-                {"canonical": _serialize(canonical), "provider": provider_name, "fetched_at": fetched_at.isoformat()},
+                {"canonical": _serialize(served), "provider": provider_name, "fetched_at": fetched_at.isoformat()},
             )
             log_decision(sport, data_type, league_canonical_id, season, provider_name, "LIVE_FETCH", errors)
 
             return DataEnvelope(
-                payload=canonical,
+                payload=served,
                 provider=provider_name,
-                event_time=canonical.event_time,
-                published_time=canonical.published_time,
+                event_time=served.event_time,
+                published_time=served.published_time,
                 available_to_model_time=fetched_at,
                 fetched_at=fetched_at,
                 ingested_at=ingested_at,
