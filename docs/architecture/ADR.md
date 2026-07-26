@@ -20,6 +20,7 @@ Chaque ADR documente **une décision structurante**, son contexte, les alternati
 | [ADR-012](#adr-012) | Structure multi-bookmaker dès le départ | Accepté |
 | [ADR-013](#adr-013) | Explicabilité obligatoire dans chaque prédiction | Accepté |
 | [ADR-014](#adr-014) | Pas de placement automatique de pari | Accepté |
+| [ADR-015](#adr-015) | Ordre des participants Winamax : slots génériques + traduction par SportModule | Accepté |
 
 ---
 
@@ -321,3 +322,42 @@ Côté betting-engine, l'équivalent est `ABSTAIN` : ne pas recommander est un r
 - 🔄 À revisiter uniquement après une période documentée de calibration positive, et avec un ADR dédié sur les aspects bankroll et conditions d'utilisation.
 
 **Statut.** Accepté, à revisiter.
+
+---
+
+## ADR-015
+### Ordre des participants Winamax : slots génériques + traduction par le SportModule
+
+**Contexte.** Le catalogue Winamax expose chaque événement avec `competitor1` / `competitor2`. Pour rattacher ces événements à des `CanonicalEvent.participants` (avec leur `role`, cf. `PRD-axon-betting-engine.md` §6.2), il faut décider comment ordonner/nommer ces deux participants. Tentation : figer `competitor1 → home`, `competitor2 → away`. Deux problèmes : (1) est-ce empiriquement fiable ? (2) « home »/« away » n'a pas de sens pour tous les sports (tennis, combats).
+
+**Vérification empirique (menée, pas supposée).** Croisement des matchs Winamax à venir avec les fixtures football-data.org (dont `homeTeam`/`awayTeam` est fiable), par date + paire d'équipes non ordonnée, sur les compétitions couvertes :
+
+| Compétition | competitor1 = homeTeam |
+|---|---|
+| Ligue 1 | 3/3 · Premier League 10/10 · Bundesliga 4/4 · Serie A 3/3 |
+| LaLiga | 7/7 · Championship 12/12 · Eredivisie 8/8 · Primeira 2/2 |
+| **Total** | **49/49 = 100,0 %** |
+
+Sur 49 matchs de 8 compétitions, `competitor1` correspond **toujours** à l'équipe à domicile, jamais inversé. Réserve honnête : échantillon de début de saison (journées 1-2, hors-saison), et le contre-check identité-based (résolution en `canonical_id`) n'a pu confirmer sur Ligue 1 (0 overlap résolu : équipes 2026-27 hors du registre 2025-26). Le résultat name-based multi-ligues fait donc foi ; une re-vérification en pleine saison est recommandée.
+
+**Décision.**
+1. **Le connecteur/normalizer Winamax préserve l'ordre BRUT en slots génériques** : `competitor1 → slot_1`, `competitor2 → slot_2`. **Aucune sémantique home/away à ce niveau** — un normalizer sport-agnostique ne suppose jamais un « domicile ».
+2. **Chaque `SportModule` traduit les slots vers `EventParticipant.role`** :
+   - football : `slot_1 → home`, `slot_2 → away` (justifié par le 100 % ci-dessus) ;
+   - tennis : `slot_1 → player_a`, `slot_2 → player_b` — **jamais** de home/away fictif ;
+   - autres sports : leur propre rôle déclaré.
+3. **Filet de repli** : le mapping football `slot_1 = home` repose sur ce 100 % empirique. Si une re-vérification (pleine saison, échantillon plus large) tombe sous 100 %, le module football **doit** basculer sur un mapping **identité-based** (résoudre les noms en `canonical_id`, prendre le home/away d'un provider de stats comme vérité) plutôt que de se fier à l'ordre brut.
+
+**Alternatives écartées.**
+- *`competitor1 = home` universel, tous sports confondus* : invente un « domicile » là où il n'existe pas (tennis) — faux modèle.
+- *Se fier à l'ordre brut sans vérification* : risquait un décalage systématique non détecté.
+- *Mapping identité-based dès le départ* : plus robuste mais exige chaque équipe résolue ; le 100 % empirique montre que l'ordre brut suffit pour le football, avec l'identité-based comme repli documenté.
+
+**Conséquences.**
+- ✅ Normalizer sport-agnostique (slots), sémantique dans le `SportModule` — cohérent avec `EventParticipant.role`.
+- ✅ Aucun home/away fictif sur les sports qui n'en ont pas.
+- ✅ Décision ancrée dans une mesure réelle (49/49), avec un critère de bascule clair si elle se dégrade.
+- ⚠️ L'actuel `odds_fetcher.py` étiquette déjà `home`/`away` en dur : provisoire, à remplacer par les slots génériques dans le futur `WinamaxNormalizer` (côté betting-engine, cf. ADR-001).
+- ⚠️ Échantillon début de saison : re-vérifier en pleine saison (déclencheur du repli identité-based).
+
+**Statut.** Accepté.
