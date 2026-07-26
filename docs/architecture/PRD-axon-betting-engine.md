@@ -1,6 +1,6 @@
 # PRD — `axon-betting-engine`
 
-**Statut :** Draft — corrige l'orientation architecturale de `PRD-axon-betting-platform.md` (obsolète, remplacé par ce document)
+**Statut :** Accepted for implementation — corrige l'orientation architecturale de `PRD-axon-betting-platform.md` (obsolète, remplacé par ce document)
 **Dépend de :** `axon-sports-data-gateway` (v1 livré + extension v2 multi-sport), consommé comme **dépendance externe** — jamais modifié depuis ce PRD, uniquement appelé via son API publique
 **Position dans la chaîne :** ce PRD est le sommet — rien d'autre dans Axon ne dépend de `axon-betting-engine`
 **Module parent :** Axon (`/home/kaine/Documents/projets-perso/ai-agent/`)
@@ -45,6 +45,7 @@ Ce PRD introduit donc `axon-betting-engine` comme projet séparé, qui **dépend
 - Ne pas intégrer d'autres bookmakers que Winamax dans ce PRD — l'architecture (`bookmakers/<nom>/` avec un contrat `BookmakerConnector`) doit le permettre plus tard sans réécriture, mais ce n'est pas un livrable ici.
 - Ne pas automatiser le placement de pari — Axon recommande, l'exécution reste manuelle. L'automatisation du pari est un chantier ultérieur distinct (bankroll, limites Winamax, questions légales à trancher séparément).
 - Ne pas construire de couverture exhaustive des marchés exotiques (corners, buteur, combinés) — ils restent `UNSUPPORTED` tant qu'aucun `MarketModel` dédié n'est validé.
+- **Live et cotes boostées ne sont PAS exclus du produit** (cf. §4.4 et §10bis pour leur traitement), mais sont explicitement **différés après la première tranche verticale pré-match** (§11). Construire un `MarketModel` pré-match calibré est le préalable : sans lui, ni le live (qui a besoin d'un modèle de référence à réviser en continu) ni les cotes boostées (qui ont besoin d'un `value_engine` fiable pour détecter qu'un boost dépasse la marge normale) n'ont de socle sur lequel s'appuyer.
 
 ---
 
@@ -138,7 +139,48 @@ Winamax catalog scan
 
 ---
 
-## 5. Les deux registres
+### 4.4 Live et cotes boostées — traitement différencié, pas une extension du même modèle
+
+Ces deux extensions sont voulues par Kaine mais ne sont **pas** de simples options à activer sur le pipeline pré-match existant — chacune casse une hypothèse structurelle du modèle de base, et doit donc être pensée comme une extension distincte du contrat.
+
+**Live.** Le pré-match repose sur `point_in_time` figé au moment de la décision (ADR-004). En live, l'état du match change en continu (score, minute, dynamique), donc la feature qui compte le plus n'est plus "la forme avant le match" mais "l'état du match maintenant". Conséquences sur le contrat :
+
+- Un `MarketModel` live n'est **pas** le même objet qu'un `MarketModel` pré-match, même sur le même marché (`MATCH_WINNER` pré-match ≠ `MATCH_WINNER` live) — le second a besoin d'un flux d'état continu en entrée (`LiveMatchState`), pas d'un simple `EventFeatureSet` figé.
+- `point_in_time` reste obligatoire, mais glisse en continu : chaque décision live a son propre point_in_time, pas un seul par match.
+- La fenêtre de décision se compte en secondes, pas en heures — `value_engine` doit pouvoir répondre dans ce délai, ce qui contraint le choix technique (pas de recalcul lourd à chaque tick).
+- **Un `MarketModel` live sur un marché donné ne peut être développé qu'après que sa version pré-match soit `SUPPORTED`** — le live affine un modèle de référence déjà validé, il ne part pas de zéro.
+
+```python
+@dataclass(frozen=True)
+class LiveMatchState:
+    event_id: str
+    as_of: datetime               # instant de cet état, pas du match
+    elapsed: str                  # ex. "67:00", format propre au sport
+    score: dict[str, int]         # par participant
+    period: str                   # mi-temps, set en cours, manche...
+    momentum_features: dict       # dérivées à court terme (xG cumulé, possession récente...)
+```
+
+**Cotes boostées.** Winamax les traite comme une catégorie à part dans son catalogue (confirmé par la cartographie du snapshot réel : `sportId 100000`, catégorie dédiée). Un boost est une décision marketing du bookmaker sur une sélection précise, pas le reflet honnête d'un risque perçu — le convertir en probabilité implicite classique via `margin_removal.py` donnerait un résultat trompeur.
+
+**Un boost n'est pas un marché différent** : c'est toujours `MATCH_WINNER` (ou tout autre marché existant), avec une cote relevée sur une sélection donnée. Créer un `market_type` dédié (`BOOSTED_*`) multiplierait artificiellement les marchés pour un même événement de fond — le `MarketModel` sous-jacent n'a aucune raison de changer. La bonne modélisation est donc au niveau de l'**offre**, portée par trois champs de `OddsSnapshot` (définition canonique unique en §5.3, pas redéfinie ici) :
+
+- `is_boosted: bool` — cette cote précise est-elle une offre promotionnelle sur cette sélection ?
+- `boost_reference_odds: float | None` — la cote non boostée connue pour la même sélection, quand le bookmaker la fournit.
+- `max_stake: float | None` — mise maximale acceptée sur cette offre, si le bookmaker l'annonce.
+- `max_payout: float | None` — plafond de gain annoncé sur cette offre, si distinct de la mise maximale (un plafond de gain à cote 3,00 n'équivaut pas à une mise maximale — les deux sont suivis séparément plutôt que fusionnés sous un seul concept).
+
+Conséquences :
+- Le `MarketModel` reste identique, qu'une offre soit boostée ou non — aucune duplication de modèle par statut promotionnel.
+- `value_engine` compare toujours la cote au `fair_odds` du même marché ; si `is_boosted=True`, il ne retire **pas** la marge standard sur cette cote précise (le boost casse l'hypothèse de pricing normal du bookmaker sur cette sélection), et privilégie `boost_reference_odds` comme point de comparaison quand elle est connue.
+- `max_stake`/`max_payout`, quand présents, sont propagés jusqu'à `bet_ranking.py` — un edge élevé mais plafonné (en mise ou en gain) n'a pas la même valeur qu'un edge élevé exploitable à l'échelle, et les deux ne doivent jamais être classés de la même façon.
+- **Une offre boostée n'est évaluée que si son marché sous-jacent est déjà `SUPPORTED`** — sans `fair_odds` de référence fiable sur ce marché, impossible de dire si le boost constitue une vraie opportunité ou juste du marketing sans avantage réel.
+
+### 4.4bis Pourquoi le séquencement compte plus que d'habitude ici
+
+Les deux extensions partagent la même dépendance : elles ont besoin d'un `MarketModel` pré-match déjà `SUPPORTED` sur lequel s'appuyer (comme référence à réviser pour le live, comme référence de comparaison pour les cotes boostées). Ce n'est pas une préférence de rollout, c'est une dépendance logique — les construire avant d'avoir un premier marché calibré reviendrait à comparer une cote à... rien de fiable. D'où leur position dans le rollout révisé (§11, Vague 2).
+
+
 
 ### 5.1 Bookmaker Registry (nouveau — distinct du Competition Registry)
 
@@ -179,6 +221,23 @@ class EventParticipant:
     role: str                           # "home"/"away" (football, baseball), "player_a"/"player_b"
                                          # (tennis), "starting_pitcher" (baseball)... déclaré par le sport
 ```
+
+### 5.2bis Ordre bookmaker (`slot`) ≠ rôle sportif canonique (`role`) — deux concepts distincts, jamais confondus
+
+Ce sont deux notions d'ordre différentes, qui ne doivent jamais être fusionnées silencieusement :
+
+| Concept | Valeurs | Origine | Portée |
+|---|---|---|---|
+| **Slot bookmaker** | `slot_1` / `slot_2` | Ordre d'affichage brut d'un bookmaker (ex. `competitor1`/`competitor2` chez Winamax) | Peut être conservé dans les objets d'acquisition et d'audit (utile pour détecter un changement de comportement du catalogue) ; ne devient jamais `EventParticipant.role` sans résolution explicite |
+| **Rôle canonique** | `home`/`away`, `player_a`/`player_b`, `starting_pitcher`... | Vérité sportive de l'événement, déclarée par le module sportif | `EventParticipant.role`, ce que tout le reste du pipeline consomme |
+
+`ADR-015` (dépôt de code) établit, par vérification empirique (49/49 sur 8 compétitions), que chez Winamax `slot_1` correspond systématiquement à l'équipe à domicile pour le football *actuellement*. **Mais ce n'est pas une équivalence structurelle** : un composant dédié, `ParticipantRoleResolver` (délibérément pas nommé "Normalizer" — ce mot est réservé à la gateway pour la conversion provider brut → faits canoniques, cf. `ADR-003` et glossaire), traduit explicitement `slot_1`→`role` via le module sportif concerné. Il ne propage jamais `slot_1` tel quel comme s'il était le `role`. Concrètement :
+
+- Si Winamax affiche `slot_1 = PSG, slot_2 = Marseille` pour un match où PSG reçoit → `role(PSG) = home`, `role(Marseille) = away`. Les deux ordres coïncident, mais par vérification, pas par définition.
+- **Si un jour le catalogue affiche `slot_1 = Marseille, slot_2 = PSG`** pour ce même match (changement d'ordre d'affichage côté bookmaker, sans rapport avec qui reçoit), l'événement canonique doit rester `role(PSG) = home`, `role(Marseille) = away` — jamais l'inverse simplement parce que l'ordre d'affichage a changé.
+- En tennis, il n'y a structurellement pas de `home`/`away` : `slot_1`/`slot_2` se traduisent en `player_a`/`player_b`, un ordre arbitraire mais stable, jamais un "domicile" fictif (cf. §6.2).
+
+**Règle définitive** : le slot brut peut être conservé dans les objets d'acquisition (`RawBookmakerEvent` et équivalents) et dans les logs d'audit — c'est même utile pour détecter qu'un bookmaker a changé sa convention d'affichage sans prévenir. Ce qui est interdit, c'est sa **propagation** comme `EventParticipant.role` sans passer par une résolution explicite. Cette résolution est aujourd'hui une vérification empirique documentée (`ADR-015`, football) ; si une re-vérification en pleine saison (suivi tracé dans les todos du dépôt) tombe un jour sous 100%, elle bascule vers un mapping par identité (nom résolu en `canonical_id`) plutôt que par position brute — jamais un retour silencieux à "slot_1 = home" par défaut.
 
 **`context` est un objet versionné, pas un `dict` libre.** Un champ `format: dict` non typé grossit sans contrôle et finit par contenir des clés incohérentes entre sports, sans qu'aucun consommateur ne puisse savoir ce qu'il peut légitimement lire. Chaque sport déclare donc son schéma de contexte dans `sports/<sport>/context_schema.py` :
 
@@ -228,7 +287,15 @@ class OddsSnapshot:
     selection: str
     decimal_odds: float
     observed_at: datetime
+
+    # Propriétés de l'offre — non un market_type distinct, cf. §4.4 et ADR-017
+    is_boosted: bool = False
+    boost_reference_odds: float | None = None   # cote non boostée connue, si disponible
+    max_stake: float | None = None               # mise maximale acceptée, si annoncée
+    max_payout: float | None = None              # plafond de gain, si distinct de max_stake
 ```
+
+**Définition canonique unique** : `OddsSnapshot` n'est défini qu'ici. Toute autre section du document (notamment §4.4 sur les cotes boostées) s'y réfère sans la redéfinir.
 
 `market_normalizer.py` traduit les libellés Winamax bruts ("Vainqueur du match", "Plus de 2,5 buts", "Les deux équipes marquent") vers ce vocabulaire canonique — c'est un composant à part entière, partagé par tous les `MarketModel`.
 
@@ -472,6 +539,8 @@ Responsabilités :
 | BE-FR-014 | Toute sortie `BET` reste une proposition soumise à validation humaine ; aucun placement automatique | Must |
 | BE-FR-015 | `odds_history` conserve les cotes observées de l'ouverture à la clôture, en append-only | Should |
 | BE-FR-016 | Le classement final expose, pour chaque opportunité, sa provenance de données, sa fraîcheur et son explication | Should |
+| BE-FR-017 | Un `MarketModel` live n'est développé que si sa version pré-match du même marché est déjà `SUPPORTED` ; il n'existe pas de modèle live sans référence pré-match validée | Must |
+| BE-FR-018 | Une offre boostée (`OddsSnapshot.is_boosted=True`) n'est jamais évaluée par retrait de marge standard ; elle est comparée au `fair_odds` du marché sous-jacent déjà `SUPPORTED` (via `boost_reference_odds` si connue), et ses `max_stake`/`max_payout` (si présents) sont propagés jusqu'à `bet_ranking.py` | Must |
 
 ### 10.2 Non-fonctionnelles
 
@@ -514,8 +583,14 @@ Toujours Winamax + tennis en priorité (préférence confirmée), mais désormai
 - `value_engine/` puis `portfolio/` (exposition et corrélation) branchés avant `bet_ranking.py`
 - Pipeline complet vérifié de bout en bout sur des événements réels : `BET`/`WATCH`/`ABSTAIN` cohérents, sélections corrélées regroupées et non listées comme indépendantes
 
-**Étape 7+ — Extension**
+**Étape 7+ — Extension (Vague 1 : plus de marchés/sports pré-match)**
 - Deuxième marché tennis (ex. total de jeux), puis deuxième sport (baseball probablement, cf. préférence), en suivant exactement le même gabarit. Le football, déjà construit côté gateway, peut être branché en migrant Dixon-Coles vers un `MarketModel` (`sports/football/market_models/one_x_two.py`) sans statut prioritaire.
+
+**Vague 2 — Live et cotes boostées (après qu'au moins un marché soit `SUPPORTED`)**
+- Prérequis explicite : au moins un `MarketModel` pré-match `SUPPORTED`, pas seulement `EXPERIMENTAL` (cf. §4.4bis).
+- **Live d'abord sur ce même marché** : `LiveMatchState`, révision continue de la prédiction pré-match, mesure de latence de décision. Reste `EXPERIMENTAL` jusqu'à sa propre calibration (le live a sa propre courbe de calibration, distincte du pré-match, cf. §7.1).
+- **Cotes boostées ensuite** : `is_boosted`/`boost_reference_odds`/`max_stake`/`max_payout` sur `OddsSnapshot` (pas un `market_type` séparé), propagation de ces plafonds jusqu'à `bet_ranking.py`, comparaison à `fair_odds` du marché sous-jacent déjà validé plutôt qu'à une probabilité implicite classique.
+- Ne pas ouvrir le live ou les cotes boostées sur un deuxième marché avant que le premier couple (marché pré-match + son extension live/boost) soit lui-même stable — même logique de tranche verticale étroite que le reste du PRD.
 
 ---
 
@@ -541,6 +616,9 @@ Cohérent avec le README actuel (orchestrateur LangGraph, agents par domaine sou
 | Un `MarketModel` produit une `PredictionExplanation` vide ou générique | L'auditabilité annoncée n'existe pas en pratique — impossible de comprendre une recommandation six mois plus tard | `explanation` non optionnel dans `MarketPrediction` ; contenu non vide vérifié comme critère de passage `SUPPORTED` |
 | Sur-confiance dans un `MarketModel` non encore calibré | `BET` recommandé sur un edge illusoire | Statuts `EXPERIMENTAL` → `SUPPORTED` stricts, jamais de `BET` sans historique de calibration walk-forward |
 | Corrélation entre sélections du même événement traitées comme indépendantes dans le classement | Sur-exposition perçue comme diversifiée | Module `portfolio/` dédié (§9), dans le scope explicite de l’étape 6, pas différé |
+| Un `MarketModel` live est développé avant que sa version pré-match soit calibrée | Aucune référence fiable à réviser, edge live illusoire, latence de décision mal maîtrisée | BE-FR-017 : blocage explicite, contrôlé au niveau du `manifest.py` du sport concerné |
+| Une offre boostée est évaluée comme une cote classique (retrait de marge standard) | EV calculé faux — le boost n'est pas une probabilité de marché honnête | BE-FR-018 : comparaison au `fair_odds` du marché sous-jacent uniquement, jamais à une `implied_probability` naïve sur une offre `is_boosted=True` |
+| `max_stake`/`max_payout` d'une offre boostée non propagés jusqu'au classement | Une opportunité plafonnée classée au même niveau qu'une opportunité pleinement exploitable | `max_stake`/`max_payout` champs explicites distincts de `OddsSnapshot`, vérifiés en critère de succès (§14) |
 
 ---
 

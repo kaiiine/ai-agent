@@ -20,7 +20,9 @@ Chaque ADR documente **une décision structurante**, son contexte, les alternati
 | [ADR-012](#adr-012) | Structure multi-bookmaker dès le départ | Accepté |
 | [ADR-013](#adr-013) | Explicabilité obligatoire dans chaque prédiction | Accepté |
 | [ADR-014](#adr-014) | Pas de placement automatique de pari | Accepté |
-| [ADR-015](#adr-015) | Ordre des participants Winamax : slots génériques + traduction par SportModule | Accepté |
+| [ADR-015](#adr-015) | Ordre des participants Winamax : slots génériques + traduction par le SportModule | Accepté |
+| [ADR-016](#adr-016) | Live différé, mais dépendant d'un modèle pré-match déjà validé | Accepté |
+| [ADR-017](#adr-017) | Cotes boostées modélisées comme propriété de l'offre (pas un market_type) | Accepté |
 
 ---
 
@@ -341,8 +343,8 @@ Côté betting-engine, l'équivalent est `ABSTAIN` : ne pas recommander est un r
 Sur 49 matchs de 8 compétitions, `competitor1` correspond **toujours** à l'équipe à domicile, jamais inversé. Réserve honnête : échantillon de début de saison (journées 1-2, hors-saison), et le contre-check identité-based (résolution en `canonical_id`) n'a pu confirmer sur Ligue 1 (0 overlap résolu : équipes 2026-27 hors du registre 2025-26). Le résultat name-based multi-ligues fait donc foi ; une re-vérification en pleine saison est recommandée.
 
 **Décision.**
-1. **Le connecteur/normalizer Winamax préserve l'ordre BRUT en slots génériques** : `competitor1 → slot_1`, `competitor2 → slot_2`. **Aucune sémantique home/away à ce niveau** — un normalizer sport-agnostique ne suppose jamais un « domicile ».
-2. **Chaque `SportModule` traduit les slots vers `EventParticipant.role`** :
+1. **Le connecteur Winamax préserve l'ordre BRUT en slots génériques** : `competitor1 → slot_1`, `competitor2 → slot_2`. **Aucune sémantique home/away à ce niveau** — l'acquisition sport-agnostique ne suppose jamais un « domicile ».
+2. **Chaque `SportModule` traduit les slots vers `EventParticipant.role`** (via le `ParticipantRoleResolver`, §5.2bis du PRD) :
    - football : `slot_1 → home`, `slot_2 → away` (justifié par le 100 % ci-dessus) ;
    - tennis : `slot_1 → player_a`, `slot_2 → player_b` — **jamais** de home/away fictif ;
    - autres sports : leur propre rôle déclaré.
@@ -354,10 +356,54 @@ Sur 49 matchs de 8 compétitions, `competitor1` correspond **toujours** à l'éq
 - *Mapping identité-based dès le départ* : plus robuste mais exige chaque équipe résolue ; le 100 % empirique montre que l'ordre brut suffit pour le football, avec l'identité-based comme repli documenté.
 
 **Conséquences.**
-- ✅ Normalizer sport-agnostique (slots), sémantique dans le `SportModule` — cohérent avec `EventParticipant.role`.
+- ✅ Acquisition sport-agnostique (slots), sémantique dans le `SportModule` — cohérent avec `EventParticipant.role`.
 - ✅ Aucun home/away fictif sur les sports qui n'en ont pas.
 - ✅ Décision ancrée dans une mesure réelle (49/49), avec un critère de bascule clair si elle se dégrade.
-- ⚠️ L'actuel `odds_fetcher.py` étiquette déjà `home`/`away` en dur : provisoire, à remplacer par les slots génériques dans le futur `WinamaxNormalizer` (côté betting-engine, cf. ADR-001).
+- ⚠️ L'actuel `odds_fetcher.py` étiquette déjà `home`/`away` en dur : provisoire, à remplacer par les slots génériques côté betting-engine, la traduction slot→role étant confiée au `ParticipantRoleResolver` (cf. ADR-001 et §5.2bis du PRD).
 - ⚠️ Échantillon début de saison : re-vérifier en pleine saison (déclencheur du repli identité-based).
 
 **Statut.** Accepté.
+
+---
+
+## ADR-016
+### Live différé, mais dépendant explicitement d'un modèle pré-match déjà validé
+
+**Contexte.** Kaine veut qu'Axon couvre aussi les matchs en cours, pas seulement le pré-match. Mais le live casse une hypothèse structurelle : `point_in_time` figé au moment de la décision devient un `point_in_time` glissant, l'état du match remplace la forme comme feature dominante, et la fenêtre de décision passe d'heures à secondes.
+
+**Décision.** Le live reste dans le produit (pas exclu), mais n'est développé pour un marché donné qu'**après** que sa version pré-match soit `SUPPORTED`. Un `MarketModel` live révise une prédiction de référence déjà calibrée, il ne part jamais de zéro sur un marché qui n'a pas d'abord fait ses preuves pré-match.
+
+**Alternatives écartées.**
+- *Construire le live et le pré-match en parallèle dès le début* : sans référence pré-match validée, impossible de savoir si une prédiction live est meilleure ou pire que ne rien faire — pas de point de comparaison.
+- *Exclure le live définitivement* : rejeté explicitement par Kaine ; ce n'est de toute façon pas nécessaire, la bonne réponse est le séquencement, pas l'exclusion.
+
+**Conséquences.**
+- ✅ Chaque marché live a un point de comparaison fiable (sa version pré-match calibrée), donc sa propre calibration peut être évaluée par rapport à une référence connue plutôt que dans le vide.
+- ✅ Le rythme de développement reste maîtrisé : le live n'ouvre jamais plus de risque que ce que le pré-match a déjà validé sur le même marché.
+- ⚠️ Retarde mécaniquement l'arrivée du live après celle du pré-match — assumé, cohérent avec le principe général du projet (une tranche verticale à la fois).
+- ⚠️ Le live a sa propre courbe de calibration et sa propre latence à mesurer ; ce n'est pas un simple "mode" du modèle pré-match, c'est un contrat distinct (`LiveMatchState` en entrée).
+
+**Statut.** Accepté.
+
+---
+
+## ADR-017
+### Cotes boostées modélisées comme propriété de l'offre (`OddsSnapshot`), pas comme `market_type` distinct
+
+**Contexte.** Winamax structure déjà les cotes boostées comme une catégorie distincte dans son propre catalogue (confirmé par l'inspection directe du snapshot réel : `sportId 100000` dédié). Une cote boostée est une décision marketing du bookmaker sur une sélection précise, pas le reflet honnête d'un risque perçu — la traiter comme un marché normal fausserait le calcul de valeur. Une première version de cette décision proposait un `market_type` dédié (`BOOSTED_*`) pour l'isoler ; en la relisant, ce choix s'est avéré architecturalement faux : un boost ne change pas la nature du marché.
+
+**Décision.** Une cote boostée reste sur le **même** marché que la cote normale (`MATCH_WINNER` boosté reste `MATCH_WINNER`) — ce qui change, c'est l'offre du bookmaker sur cette sélection précise, pas le marché lui-même. Le boost est donc porté par des champs sur `OddsSnapshot` (`is_boosted`, `boost_reference_odds`, `max_stake`, `max_payout` — mise et gain plafonnés séparément, car un plafond de gain à cote 3,00 n'équivaut pas à une mise maximale), jamais par un `market_type` séparé. Le `MarketModel` ne change jamais de comportement selon qu'une offre est boostée ou non ; seul `value_engine` traite différemment une offre `is_boosted=True` (pas de retrait de marge standard, comparaison prioritaire à `boost_reference_odds`).
+
+**Alternatives écartées.**
+- *`market_type` dédié `BOOSTED_*`* : première version de cette décision, revenue en arrière. Aurait dupliqué un `MarketModel` par statut promotionnel pour un même événement de fond, sans justification — le marché ne change pas, seule l'offre change.
+- *Traiter une cote boostée comme le marché classique qu'elle boost, sans aucune distinction* : produirait un EV mathématiquement calculé mais trompeur, la cote n'ayant pas la même origine (marketing vs pricing de risque).
+- *Ignorer le plafond de mise dans le classement* : ferait apparaître une opportunité plafonnée au même niveau qu'une opportunité pleinement exploitable, ce qui fausse la priorisation réelle pour Kaine.
+
+**Conséquences.**
+- ✅ Aucune duplication de `MarketModel` par statut promotionnel — le modèle de prédiction reste unique par (sport, market_type), cohérent avec `ADR-002`.
+- ✅ Le calcul de valeur reste honnête : une offre boostée n'est jamais confondue avec un vrai edge de marché.
+- ✅ `max_stake`/`max_payout` visibles en bout de chaîne évitent de sur-valoriser une opportunité en pratique limitée, sans confondre les deux notions.
+- ⚠️ Dépend d'un marché sous-jacent déjà `SUPPORTED` — donc, comme le live, différé après la première tranche verticale pré-match (cf. `ADR-016`, même logique de séquencement).
+- ⚠️ `boost_reference_odds` n'est pas toujours fournie par le bookmaker ; quand elle est absente, `value_engine` retombe sur le `fair_odds` du `MarketModel` comme seule référence.
+
+**Statut.** Accepté (révisé — modélisation initiale par `market_type` corrigée en propriété d'offre).

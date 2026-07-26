@@ -94,6 +94,8 @@ Vocabulaire partagé par `PRD-axon-sports-data-gateway-v1-HISTORICAL.md`, `PRD-a
 
 **EventParticipant** — Un participant et son **rôle** dans l'événement : `home`/`away`, `player_a`/`player_b`, `starting_pitcher`. Le rôle est déclaré par le module sportif.
 
+**Slot bookmaker** (`slot_1`/`slot_2`) — Ordre d'affichage brut d'un bookmaker (ex. `competitor1`/`competitor2` chez Winamax). **Ne jamais confondre avec `EventParticipant.role`** : le slot est une position d'affichage propre au bookmaker, le role est la vérité sportive canonique. La traduction slot→role passe toujours par une résolution explicite (vérification empirique pour le football, cf. `ADR-015` du dépôt de code ; convention arbitraire assumée pour les sports sans domicile, ex. tennis), jamais par une copie de position brute.
+
 ---
 
 ## Bookmaker
@@ -111,6 +113,12 @@ Vocabulaire partagé par `PRD-axon-sports-data-gateway-v1-HISTORICAL.md`, `PRD-a
 **Odds history** — Historique des cotes d'une sélection, de l'ouverture à la clôture. Le mouvement porte de l'information, pas seulement la cote courante.
 
 **Closing line** — Dernière cote avant le début de l'événement. Référence de marché la plus efficiente disponible.
+
+**Live market** — Marché évalué pendant le déroulement de l'événement, pas avant. Contrat distinct du marché pré-match équivalent (`LiveMatchState` en entrée, `point_in_time` glissant plutôt que figé). Un `MarketModel` live n'est développé qu'après que sa version pré-match soit `SUPPORTED` (`ADR-016`).
+
+**Cote boostée (boosted odds)** — Cote relevée par le bookmaker sur une sélection précise, à des fins marketing plutôt que comme reflet honnête du risque. Reste sur le **même marché** que la cote normale (pas de `market_type` dédié) — portée par les champs `is_boosted`/`boost_reference_odds`/`max_stake`/`max_payout` de `OddsSnapshot`, jamais évaluée par retrait de marge standard (`ADR-017`).
+
+**max_stake / max_payout** — Deux plafonds distincts associés à une cote (typiquement une cote boostée) : `max_stake` limite la mise acceptée, `max_payout` limite le gain, ce qui n'est pas équivalent (un plafond de gain de 100 € à cote 3,00 ≠ une mise maximale de 100 €). Champs explicites de `OddsSnapshot`, propagés jusqu'à `bet_ranking.py` pour ne pas confondre un edge élevé mais plafonné avec un edge pleinement exploitable.
 
 **Bookmaker margin (vig)** — Sur-round du bookmaker : la somme des probabilités implicites d'un marché dépasse 100 %. Doit être retirée avant tout calcul de valeur.
 
