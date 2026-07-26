@@ -97,6 +97,10 @@ from src.agents.jira.tools import (
 )
 
 from src.agents.cron.tools import schedule_task, list_cron_task, stop_cron_task
+from src.agents.quant.tools import (
+    winamax_odds_fetch, sports_stats_fetch, probability_compute,
+    ev_analyze, parlay_analyze, same_match_combo_analyze,
+)
 
 from langchain_core.tools import tool as lc_tool
 
@@ -248,4 +252,11 @@ def build_all_tools() -> List[BaseTool]:
         schedule_task,
         list_cron_task,
         stop_cron_task,
+        # === VALUE BETTING (QUANT) ===
+        winamax_odds_fetch,
+        sports_stats_fetch,
+        probability_compute,
+        ev_analyze,
+        parlay_analyze,
+        same_match_combo_analyze,
     ]

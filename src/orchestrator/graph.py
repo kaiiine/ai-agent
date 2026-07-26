@@ -1,6 +1,8 @@
 # src/orchestrator/graph.py
 from __future__ import annotations
 
+import json
+import re
 from datetime import datetime
 from typing import List
 
@@ -9,7 +11,14 @@ from langgraph.graph import START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from rich.console import Console as RichConsole
 
-_console = RichConsole()
+console = RichConsole()
+
+# Certains modèles (minimax-m2.5 notamment — bug connu upstream, cf. issues
+# sgl-project/sglang#16057, vllm-project/vllm#28963) émettent parfois leur appel
+# d'outil en texte brut avec une balise maison ("xxx:tool_call ... </xxx:tool_call>")
+# au lieu du vrai mécanisme de function calling. LangChain ne le reconnaît pas —
+# tool_calls reste vide et la commande n'est jamais exécutée.
+_MALFORMED_TOOL_CALL_RE = re.compile(r"\w+:tool_call\b.*?</\w+:tool_call>", re.DOTALL | re.IGNORECASE)
 
 # ── Context budget constants ───────────────────────────────────────────────────
 _CONTEXT_LIMITS: dict[str, int] = {
@@ -619,7 +628,7 @@ def _chat_node_factory():
         # Tool-round cap — force text response after _MAX_TOOL_ROUNDS consecutive rounds
         force_text = _consecutive_tool_rounds(state["messages"]) >= _MAX_TOOL_ROUNDS
         if force_text:
-            _console.print(
+            console.print(
                 f"[dim]  ↩  {_MAX_TOOL_ROUNDS} rounds atteints — synthèse forcée[/dim]"
             )
             llm_with_tools = factory()
@@ -639,7 +648,7 @@ def _chat_node_factory():
 
         if _should_compress(working, backend) and not _compressed_this_turn:
             _compressed_this_turn = True
-            _console.print("[dim]  ↩  contexte chargé — compression proactive…[/dim]")
+            console.print("[dim]  ↩  contexte chargé — compression proactive…[/dim]")
             _on_compress()
             plain_llm = factory()
             working = _cap_tool_messages(working)
@@ -647,7 +656,7 @@ def _chat_node_factory():
             before_tokens = _estimate_tokens(messages)
             after_tokens = _estimate_tokens(working)
             freed = before_tokens - after_tokens
-            _console.print(
+            console.print(
                 f"[dim]  ↩  compression: -{freed:,} tokens estimés "
                 f"({before_tokens:,} → {after_tokens:,})[/dim]"
             )
@@ -732,7 +741,7 @@ def _chat_node_factory():
                 if not capped:
                     capped = True
                     working = _cap_tool_messages(working)
-                    _console.print(
+                    console.print(
                         "[dim]  ↩  contexte trop long — tronquage des résultats tools…[/dim]"
                     )
 
@@ -746,7 +755,7 @@ def _chat_node_factory():
                     before_tokens = _estimate_tokens(messages)
                     after_tokens = _estimate_tokens(working)
                     freed = before_tokens - after_tokens
-                    _console.print(
+                    console.print(
                         f"[dim]  ↩  compression: -{freed:,} tokens estimés "
                         f"({before_tokens:,} → {after_tokens:,})[/dim]"
                     )
@@ -762,16 +771,121 @@ def _chat_node_factory():
                         ),
                         _summary_msg,
                     )
-                    _console.print("[dim]  ↩  contexte compressé — reprise…[/dim]")
+                    console.print("[dim]  ↩  contexte compressé — reprise…[/dim]")
 
                 else:
                     reduced = _drop_smartest(working)
                     if reduced is None or len(reduced) <= 1:
                         raise
                     working = reduced
-                    _console.print(
+                    console.print(
                         f"[dim]  ↩  drop tool round ({len(working)} messages restants)…[/dim]"
                     )
+
+        # Garde-fou : le LLM rappelle ask_clarification avec une question à laquelle
+        # il a déjà une réponse dans cette conversation (le modèle ignore la réponse
+        # qu'il vient de recevoir). Provoque une double popup identique côté utilisateur.
+        # Détection + un seul retry pour lui faire utiliser la réponse déjà donnée.
+        if not force_text:
+            ask_calls = [
+                tc for tc in (getattr(response, "tool_calls", None) or [])
+                if tc.get("name") == "ask_clarification"
+            ]
+            if ask_calls:
+                answered_questions: set[str] = set()
+                for m in working:
+                    if isinstance(m, ToolMessage) and getattr(m, "name", None) == "ask_clarification":
+                        try:
+                            content = m.content if isinstance(m.content, str) else json.dumps(m.content)
+                            payload = json.loads(content)
+                            for q_text in (payload.get("answers") or {}):
+                                if q_text != "_extra":
+                                    answered_questions.add(q_text.strip().lower())
+                        except Exception:
+                            pass
+
+                is_duplicate = any(
+                    (q.get("question") if isinstance(q, dict) else str(q) or "").strip().lower()
+                    in answered_questions
+                    for tc in ask_calls
+                    for q in (tc.get("args", {}).get("questions") or [])
+                )
+
+                if is_duplicate:
+                    console.print(
+                        "[dim]  ↩  question déjà répondue reposée — correction…[/dim]"
+                    )
+                    dup_reminder = HumanMessage(
+                        content=(
+                            "[SYSTEME] Tu viens de reposer une question à laquelle tu as déjà "
+                            "une réponse dans cette conversation (visible dans un précédent "
+                            "résultat de ask_clarification). Utilise cette réponse directement, "
+                            "ne la redemande pas. Continue l'action demandée avec les outils "
+                            "appropriés."
+                        )
+                    )
+                    try:
+                        response = llm_with_tools.invoke(working + [response, dup_reminder])
+                    except Exception:
+                        pass  # échec de la correction → on garde la réponse originale
+
+        # Garde-fou : certains modèles (minimax-m2.5 notamment, bug connu upstream)
+        # écrivent parfois leur appel d'outil en texte brut ("xxx:tool_call ... "
+        # "</xxx:tool_call>") au lieu du vrai mécanisme de function calling —
+        # tool_calls reste vide et la commande n'est jamais exécutée. Détection +
+        # un seul retry pour forcer un vrai appel structuré.
+        if not force_text:
+            no_real_tool_call = not getattr(response, "tool_calls", None)
+            raw_text = _content_to_str(response.content)
+            if no_real_tool_call and _MALFORMED_TOOL_CALL_RE.search(raw_text):
+                console.print(
+                    "[dim]  ↩  appel d'outil mal formé détecté — correction…[/dim]"
+                )
+                fix_reminder = HumanMessage(
+                    content=(
+                        "[SYSTEME] Ta dernière réponse contenait un faux appel d'outil "
+                        "écrit en texte brut (une balise type 'xxx:tool_call ... "
+                        "</xxx:tool_call>'). Cette syntaxe n'existe pas et n'exécute rien. "
+                        "Refais le même appel en utilisant le vrai mécanisme de function "
+                        "calling à ta disposition, pas du texte."
+                    )
+                )
+                try:
+                    response = llm_with_tools.invoke(working + [response, fix_reminder])
+                except Exception:
+                    pass  # échec de la correction → on garde la réponse originale
+
+        # Garde-fou : le prompt interdit les questions en texte libre (elles doivent
+        # passer par ask_clarification), mais rien n'empêche mécaniquement le LLM de
+        # le faire quand même. Détection + un seul retry corrigé.
+        # Exclus volontairement : les flows dont le design PRÉVOIT une confirmation
+        # en texte libre ("brouillon + attends ton oui") — Slack (_SLACK) et le commit
+        # git (_SHELL: "propose le message, attend la validation"), ainsi que le mode
+        # plan (_PLAN_MODE: "wait for explicit validation"). Les intercepter casserait
+        # ces flows volontairement conçus ainsi, ce qui serait pire que le bug d'origine.
+        confirmation_flow_tools = {"slack_send_message", "git_commit"}
+        has_confirmation_flow = any(t.name in confirmation_flow_tools for t in selected_tools)
+        if not force_text and not plan_mode and not has_confirmation_flow:
+            no_tool_call = not getattr(response, "tool_calls", None)
+            resp_text = _content_to_str(response.content).strip()
+            if no_tool_call and resp_text.endswith("?"):
+                console.print(
+                    "[dim]  ↩  question en texte libre détectée — correction…[/dim]"
+                )
+                reminder = HumanMessage(
+                    content=(
+                        "[SYSTEME] Tu viens de répondre par une question en texte libre — "
+                        "c'est interdit. Si l'info est déjà présente ailleurs dans cette "
+                        "conversation (y compris une réponse précédente à ask_clarification), "
+                        "utilise-la directement sans la redemander. Sinon, repose la question "
+                        "immédiatement via ask_clarification(questions=[...])."
+                    )
+                )
+                try:
+                    _corrected = llm_with_tools.invoke(working + [response, reminder])
+                    response = _corrected
+                except Exception:
+                    pass  # échec de la correction → on garde la réponse originale
 
         # Persist compression to LangGraph state so subsequent chatbot calls
         # start with the compressed history, not the original bloated one.

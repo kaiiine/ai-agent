@@ -1849,168 +1849,196 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         t.start()
         _thinking_thread.append(t)
 
-        for msg, meta in graph.stream(current_state, config=config, stream_mode="messages"):
-            node = meta.get("langgraph_node") or "unknown"
+        _stream_input = current_state
+        while True:
+            _needs_stream_restart = False
+            for msg, meta in graph.stream(_stream_input, config=config, stream_mode="messages"):
+                node = meta.get("langgraph_node") or "unknown"
 
-            if cfg.debug and node != last_debug_node:
-                console.print(f"[dim]→ {node}[/dim]")
-                last_debug_node = node
+                if cfg.debug and node != last_debug_node:
+                    console.print(f"[dim]→ {node}[/dim]")
+                    last_debug_node = node
 
-            if isinstance(msg, ToolMessage):
-                tool_name = getattr(msg, "name", None) or getattr(msg, "tool_name", None) or meta.get("tool", "tool")
-                if tool_name == "gmail_send_email":
-                    _safe_stop(live, stop_thinking, _thinking_thread[0] if _thinking_thread else None)
-                    from .review import review_email
-                    action, refinement = review_email()
-                    if action == "send":
-                        pending_refinements.append("Email envoyé avec succès.")
-                    elif action == "cancel":
-                        pending_refinements.append("Envoi annulé par l'utilisateur.")
-                    elif action == "modify" and refinement:
-                        pending_refinements.append(f"L'utilisateur veut modifier le mail : {refinement}")
-                    stop_thinking.clear()
-                    live.start(refresh=False)
-                    new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
-                    new_t.start()
-                    if _thinking_thread:
-                        _thinking_thread[0] = new_t
-                    else:
-                        _thinking_thread.append(new_t)
-                elif tool_name == "ask_clarification":
-                    import json as _json
-                    try:
-                        content = msg.content
-                        if not isinstance(content, str):
-                            content = _json.dumps(content)
-                        payload = _json.loads(content)
-                        questions = payload.get("questions", []) if isinstance(payload, dict) else []
-                    except Exception:
-                        questions = []
-                    _safe_stop(live, stop_thinking, _thinking_thread[0] if _thinking_thread else None)
-                    from .review import ask_user_questions
-                    try:
-                        answers = ask_user_questions(questions)
-                    except Exception as _qe:
-                        console.print(Text(f"  erreur questionnaire : {_qe}", style="red"))
-                        answers = {}
-                    # Remplace le ToolMessage placeholder par les vraies réponses dans l'état du graph
-                    try:
-                        from langchain_core.messages import ToolMessage as _TM
-                        updated = _TM(
-                            content=_json.dumps({"answers": answers}),
-                            tool_call_id=msg.tool_call_id,
-                            name="ask_clarification",
-                            id=getattr(msg, "id", None),
-                        )
-                        graph.update_state(config, {"messages": [updated]})
-                    except Exception:
-                        pass
-                    stop_thinking.clear()
-                    try:
+                if isinstance(msg, ToolMessage):
+                    tool_name = getattr(msg, "name", None) or getattr(msg, "tool_name", None) or meta.get("tool", "tool")
+                    if tool_name == "gmail_send_email":
+                        _safe_stop(live, stop_thinking, _thinking_thread[0] if _thinking_thread else None)
+                        from .review import review_email
+                        action, refinement = review_email()
+                        if action == "send":
+                            pending_refinements.append("Email envoyé avec succès.")
+                        elif action == "cancel":
+                            pending_refinements.append("Envoi annulé par l'utilisateur.")
+                        elif action == "modify" and refinement:
+                            pending_refinements.append(f"L'utilisateur veut modifier le mail : {refinement}")
+                        stop_thinking.clear()
                         live.start(refresh=False)
-                    except Exception:
-                        pass
-                    new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
-                    new_t.start()
-                    if _thinking_thread:
-                        _thinking_thread[0] = new_t
+                        new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
+                        new_t.start()
+                        if _thinking_thread:
+                            _thinking_thread[0] = new_t
+                        else:
+                            _thinking_thread.append(new_t)
+                    elif tool_name == "ask_clarification":
+                        import json as _json
+                        try:
+                            content = msg.content
+                            if not isinstance(content, str):
+                                content = _json.dumps(content)
+                            payload = _json.loads(content)
+                            questions = payload.get("questions", []) if isinstance(payload, dict) else []
+                        except Exception:
+                            questions = []
+                        _safe_stop(live, stop_thinking, _thinking_thread[0] if _thinking_thread else None)
+                        from .review import ask_user_questions
+                        try:
+                            answers = ask_user_questions(questions)
+                        except Exception as _qe:
+                            console.print(Text(f"  erreur questionnaire : {_qe}", style="red"))
+                            answers = {}
+                        # Remplace le ToolMessage placeholder par les vraies réponses dans l'état du graph.
+                        # IMPORTANT : msg.id (l'objet streamé en direct) vaut encore None ici — l'id réel
+                        # n'est attribué par LangGraph qu'au moment du commit dans l'état persistant.
+                        # Il faut donc relire l'état via get_state() pour cibler le bon message par
+                        # tool_call_id (fiable), sinon le remplacement ne matche rien et se perd
+                        # silencieusement — la réponse de l'utilisateur n'atteint jamais le LLM.
+                        try:
+                            from langchain_core.messages import ToolMessage as _TM
+                            _real_id = msg.tool_call_id  # fallback si la relecture échoue
+                            try:
+                                _snap = graph.get_state(config)
+                                _placeholder = next(
+                                    (
+                                        m for m in reversed(_snap.values.get("messages", []))
+                                        if isinstance(m, _TM) and m.tool_call_id == msg.tool_call_id
+                                    ),
+                                    None,
+                                )
+                                if _placeholder is not None:
+                                    _real_id = _placeholder.id
+                            except Exception:
+                                pass
+                            updated = _TM(
+                                content=_json.dumps({"answers": answers}),
+                                tool_call_id=msg.tool_call_id,
+                                name="ask_clarification",
+                                id=_real_id,
+                            )
+                            graph.update_state(config, {"messages": [updated]})
+                        except Exception:
+                            pass
+                        stop_thinking.clear()
+                        try:
+                            live.start(refresh=False)
+                        except Exception:
+                            pass
+                        new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
+                        new_t.start()
+                        if _thinking_thread:
+                            _thinking_thread[0] = new_t
+                        else:
+                            _thinking_thread.append(new_t)
+                        _needs_stream_restart = True
+                        break
+                    elif tool_name == "run_coding_agent":
+                        # Stop coding-specialist thinking thread, restart for orchestrator response
+                        stop_thinking.set()
+                        if _thinking_thread:
+                            _thinking_thread[0].join(timeout=0.2)
+                        compile_mode.clear()
+                        stop_thinking.clear()
+                        new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
+                        new_t.start()
+                        if _thinking_thread:
+                            _thinking_thread[0] = new_t
+                        else:
+                            _thinking_thread.append(new_t)
                     else:
-                        _thinking_thread.append(new_t)
-                elif tool_name == "run_coding_agent":
-                    # Stop coding-specialist thinking thread, restart for orchestrator response
-                    stop_thinking.set()
-                    if _thinking_thread:
-                        _thinking_thread[0].join(timeout=0.2)
-                    compile_mode.clear()
-                    stop_thinking.clear()
-                    new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
-                    new_t.start()
-                    if _thinking_thread:
-                        _thinking_thread[0] = new_t
-                    else:
-                        _thinking_thread.append(new_t)
-                else:
-                    live.update(tool_call_panel(tool_name))
-                if cfg.debug:
-                    live.console.print(Panel(
-                        Pretty(msg.content),
-                        title=f"[dim]{tool_name}[/dim]",
-                        border_style="dim",
-                    ))
-                last_node = "tools"
-                continue
-
-            if isinstance(msg, (AIMessageChunk, AIMessage)):
-                raw = msg.content or ""
-                from src.infra.settings import settings
-                if settings.llm_backend == "gemini" and isinstance(raw, list):
-                    chunk_text = "".join(
-                        p.get("text", "") if isinstance(p, dict) else str(p)
-                        for p in raw
-                    )
-                else:
-                    chunk_text = raw
-                if not chunk_text:
-                    tool_calls = getattr(msg, "tool_calls", None) or []
-                    for tc in tool_calls:
-                        if (tc.get("name") or "") == "run_coding_agent":
-                            # Commit any accumulated orchestrator text to scrollback
-                            # BEFORE specialist starts printing — fixes visual ordering
-                            if saw_any_token and response_content:
-                                from .panels import final_panel
-                                console.print(final_panel(response_content))
-                                response_content = ""
-                                saw_any_token = False
-                            live.update(Text(""))
+                        live.update(tool_call_panel(tool_name))
+                    if cfg.debug:
+                        live.console.print(Panel(
+                            Pretty(msg.content),
+                            title=f"[dim]{tool_name}[/dim]",
+                            border_style="dim",
+                        ))
+                    last_node = "tools"
                     continue
-                if last_node == "tools":
-                    response_content = ""
-                    saw_any_token = False
-                    plan_rendered = False
-                    last_node = "chatbot"
-                    stop_thinking.set()
-                    if _thinking_thread:
-                        _thinking_thread[0].join(timeout=0.2)
-                    # Efface le panel sans stop/start — évite de committer le contenu
-                    # partiel dans le scrollback à chaque appel d'outil.
-                    # Le stop/start (re-ancrage) n'est nécessaire que pour run_coding_agent
-                    # qui imprime dans le console ; il est géré séparément plus haut.
-                    live.update(Text(""))
-                compile_mode.clear()
-                stop_thinking.set()
 
-                _PLAN_OPEN  = "<axon:plan>"
-                _PLAN_CLOSE = "</axon:plan>"
-
-                if settings.llm_backend == "gemini" and response_content and chunk_text.startswith(response_content):
-                    chunk_text = chunk_text[len(response_content):]
-                response_content += chunk_text
-
-                saw_any_token = True
-
-                if not plan_rendered:
-                    if _PLAN_OPEN in response_content and _PLAN_CLOSE in response_content:
-                        # Complete plan block — extract, render, strip from content
-                        pre, rest = response_content.split(_PLAN_OPEN, 1)
-                        steps, post = rest.split(_PLAN_CLOSE, 1)
-                        plan_rendered = True
+                if isinstance(msg, (AIMessageChunk, AIMessage)):
+                    raw = msg.content or ""
+                    from src.infra.settings import settings
+                    if settings.llm_backend == "gemini" and isinstance(raw, list):
+                        chunk_text = "".join(
+                            p.get("text", "") if isinstance(p, dict) else str(p)
+                            for p in raw
+                        )
+                    else:
+                        chunk_text = raw
+                    if not chunk_text:
+                        tool_calls = getattr(msg, "tool_calls", None) or []
+                        for tc in tool_calls:
+                            if (tc.get("name") or "") == "run_coding_agent":
+                                # Commit any accumulated orchestrator text to scrollback
+                                # BEFORE specialist starts printing — fixes visual ordering
+                                if saw_any_token and response_content:
+                                    from .panels import final_panel
+                                    console.print(final_panel(response_content))
+                                    response_content = ""
+                                    saw_any_token = False
+                                live.update(Text(""))
+                        continue
+                    if last_node == "tools":
+                        response_content = ""
+                        saw_any_token = False
+                        plan_rendered = False
+                        last_node = "chatbot"
+                        stop_thinking.set()
+                        if _thinking_thread:
+                            _thinking_thread[0].join(timeout=0.2)
+                        # Efface le panel sans stop/start — évite de committer le contenu
+                        # partiel dans le scrollback à chaque appel d'outil.
+                        # Le stop/start (re-ancrage) n'est nécessaire que pour run_coding_agent
+                        # qui imprime dans le console ; il est géré séparément plus haut.
                         live.update(Text(""))
-                        live.stop()
-                        console.print(plan_panel(steps.strip()))
-                        live.start(refresh=False)
-                        response_content = (pre + post).strip()
-                        if response_content:
+                    compile_mode.clear()
+                    stop_thinking.set()
+
+                    _PLAN_OPEN  = "<axon:plan>"
+                    _PLAN_CLOSE = "</axon:plan>"
+
+                    if settings.llm_backend == "gemini" and response_content and chunk_text.startswith(response_content):
+                        chunk_text = chunk_text[len(response_content):]
+                    response_content += chunk_text
+
+                    saw_any_token = True
+
+                    if not plan_rendered:
+                        if _PLAN_OPEN in response_content and _PLAN_CLOSE in response_content:
+                            # Complete plan block — extract, render, strip from content
+                            pre, rest = response_content.split(_PLAN_OPEN, 1)
+                            steps, post = rest.split(_PLAN_CLOSE, 1)
+                            plan_rendered = True
+                            live.update(Text(""))
+                            live.stop()
+                            console.print(plan_panel(steps.strip()))
+                            live.start(refresh=False)
+                            response_content = (pre + post).strip()
+                            if response_content:
+                                update_live_markdown(live, response_content, deb, cursor=True)
+                        elif _PLAN_OPEN in response_content:
+                            # Partial plan still streaming — show any text before the tag
+                            pre = response_content.split(_PLAN_OPEN, 1)[0].strip()
+                            if pre:
+                                update_live_markdown(live, pre, deb, cursor=False)
+                        else:
                             update_live_markdown(live, response_content, deb, cursor=True)
-                    elif _PLAN_OPEN in response_content:
-                        # Partial plan still streaming — show any text before the tag
-                        pre = response_content.split(_PLAN_OPEN, 1)[0].strip()
-                        if pre:
-                            update_live_markdown(live, pre, deb, cursor=False)
                     else:
                         update_live_markdown(live, response_content, deb, cursor=True)
-                else:
-                    update_live_markdown(live, response_content, deb, cursor=True)
 
+            if _needs_stream_restart:
+                _stream_input = None
+                continue
+            break
         footer = fmt_ms(perf_counter() - t0)
         if saw_any_token:
             safe = _guard_sanitize(enforce_lang_output(response_content, user_lang))

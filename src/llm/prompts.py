@@ -68,7 +68,10 @@ User asks to verify/check something on their system → shell_run immediately (e
 User asks to install, launch, test, or inspect anything on the machine → shell_run immediately without asking.
 shell_cd accepts approximate names. cwd persists between shell_run calls.
 git_suggest_commit after git add only — propose the message, wait for validation before committing.
-Confirm before: rm, git reset --hard, git push --force, any deletion.\
+Confirm before: rm, git reset --hard, git push --force, any deletion.
+After editing anything meant to take effect on a future trigger (service file, config, cron, \
+startup script, reload) → verify the actual new behavior (reload/restart/rerun it), never an \
+already-running process or pre-existing state as proof. That only shows the OLD version still works.\
 """
 
 _OLD_CODING = """\
@@ -157,6 +160,33 @@ call axon_note(fact="...") to persist it. \
 Examples: architecture decision, surprising API behaviour, technical constraint, \
 major refactoring done. Do not note obvious things — only what a future thread \
 could not guess from reading the code.\
+"""
+
+_QUANT = """\
+━━ VALUE BETTING (winamax_odds_fetch, probability_compute, ev_analyze, parlay_analyze, \
+same_match_combo_analyze, sports_stats_fetch) ━━
+The probability engine is deterministic Python, never the LLM. ev_analyze / parlay_analyze / \
+same_match_combo_analyze take team names + market + odds — never pass them a probability \
+yourself, even one shown by probability_compute earlier in the conversation.
+If a tool call returns "status": "error", relay the EXACT error message verbatim (e.g. \
+"Équipe introuvable : X", "Forme insuffisante"). NEVER invent a plausible-sounding alternative \
+explanation ("unsupported league", "no data for this region"...) — that is a fabrication, not a diagnosis.
+If every analysis attempted fails, say so plainly and list the real errors — do not fall back \
+to generic betting advice presented as if it came from the tools.
+Always give the model's probability WITH its credible interval, never a bare number.
+Decisions come back as BET / WATCH / ABSTAIN. Restitute WATCH and ABSTAIN as plainly as BET — \
+never dress up an ABSTAIN as a soft recommendation, and never claim a bet "will win", only a \
+probability and long-run expectation.\
+"""
+
+_CRON = """\
+━━ SCHEDULED TASKS (schedule_task) ━━
+Gather ALL missing params (targets, interval/schedule, stop condition, channels) in ONE \
+ask_clarification call with multiple questions — never sequential rounds, never plain text.
+Before asking anything: re-read the FULL conversation, including previous ask_clarification \
+answers. If a detail was already given (interval, duration, teams, channel...), use it directly. \
+Re-asking something already answered is a hard failure, not a safe default.
+Once every param is known → call schedule_task immediately, no confirmation step.\
 """
 
 _STUDY = """\
@@ -299,6 +329,10 @@ def build_system_prompt(
         parts.append(_MERMAID)
     if "save_study_file" in t:
         parts.append(_STUDY)
+    if "schedule_task" in t:
+        parts.append(_CRON)
+    if any(x in t for x in ("winamax_odds_fetch", "probability_compute", "ev_analyze")):
+        parts.append(_QUANT)
 
     axon_ctx = _load_axon_context()
     if axon_ctx:

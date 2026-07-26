@@ -26,6 +26,9 @@ PID_FILE = Path.home() / ".axon" / "cron.pid"
 RELOAD_INTERVAL = 10 # sec
 _SYSTEM = """\
 Tu es un agent de monitoring autonome. Exécute la tâche demandée.
+Pour un pari/pronostic sportif : utilise winamax_odds_fetch (cotes), sports_stats_fetch (forme),
+probability_compute (probabilité statistique réelle), ev_analyze/parlay_analyze/same_match_combo_analyze
+(edge) — jamais une probabilité devinée ou hallucinée.
 Réponds UNIQUEMENT avec un objet JSON valide (pas de markdown) :
 {
   "notify": true,
@@ -76,6 +79,10 @@ def _run_task(task_id: str) -> None:
     from langgraph.prebuilt import create_react_agent
     from src.agents.search.tools import web_search_news, web_research_report
     from src.agents.shell.tools import shell_run
+    from src.agents.quant.tools import (
+        winamax_odds_fetch, sports_stats_fetch, probability_compute,
+        ev_analyze, same_match_combo_analyze, parlay_analyze,
+    )
 
     tasks = get_tasks()
     task = next((t for t in tasks if t["id"] == task_id), None)
@@ -99,7 +106,11 @@ def _run_task(task_id: str) -> None:
             prompt += f"\n\nStop condition: {task['stop_condition']}"
 
         llm = _make_llm()
-        tools = [web_search_news, web_research_report, shell_run]
+        tools = [
+            web_search_news, web_research_report, shell_run,
+            winamax_odds_fetch, sports_stats_fetch, probability_compute,
+            ev_analyze, same_match_combo_analyze, parlay_analyze,
+        ]
         agent = create_react_agent(llm, tools, prompt=_SYSTEM)
         result_state = agent.invoke({"messages": [HumanMessage(content=prompt)]})
         raw = result_state["messages"][-1].content

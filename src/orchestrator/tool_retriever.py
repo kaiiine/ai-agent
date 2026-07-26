@@ -75,7 +75,11 @@ TOOL_GROUPS: dict[str, list[str]] = {
     ],
     "cron": [
         "schedule_task", "list_cron_tasks", "stop_cron_task"
-    ]
+    ],
+    "quant": [
+        "winamax_odds_fetch", "sports_stats_fetch", "probability_compute",
+        "ev_analyze", "parlay_analyze", "same_match_combo_analyze",
+    ],
 }
 
 # Index inverse : tool_name → group_name
@@ -94,6 +98,49 @@ _ALWAYS_INCLUDED = {"get_current_time", "ask_clarification"}
 # couvrant les différentes façons dont un utilisateur peut formuler sa demande.
 # Chaque anchor est un document séparé dans Chroma → N chances d'être trouvé.
 _TOOL_ANCHORS: dict[str, list[str]] = {
+    "winamax_odds_fetch": [
+        "il y a un coup à jouer sur ce match",
+        "quelles sont les cotes du match",
+        "analyse ce pari sportif",
+        "ça vaut le coup de parier sur",
+        "prono pour le match de ce soir",
+        "value bet sur ce match",
+        "compare ces combinés",
+        "le pari est-il intéressant",
+        "cote winamax",
+        "y a-t-il de bons paris à faire en ce moment",
+        "y a-t-il de bons paris sportifs à faire",
+        "des paris intéressants aujourd'hui",
+        "qu'est-ce qui se joue en ce moment côté paris",
+        "des matchs à parier ce soir",
+    ],
+    "probability_compute": [
+        "quelle est la probabilité que cette équipe gagne",
+        "calcule les chances de victoire",
+        "estime la probabilité du match",
+        "qui va gagner selon les stats",
+    ],
+    "sports_stats_fetch": [
+        "quelle est la forme récente de cette équipe",
+        "historique des confrontations entre ces deux équipes",
+        "comment se porte cette équipe en ce moment",
+    ],
+    "ev_analyze": [
+        "est-ce que ce pari a de la valeur",
+        "calcule l'espérance de gain de ce pari",
+        "combien miser sur ce pari",
+        "ce pari est-il rentable sur le long terme",
+    ],
+    "parlay_analyze": [
+        "analyse mon combiné de paris",
+        "est-ce que ce combiné vaut le coup",
+        "compare ces paris combinés entre eux",
+    ],
+    "same_match_combo_analyze": [
+        "combiné sur le même match",
+        "victoire et plus de 2.5 buts dans le même match",
+        "double pari sur un seul match",
+    ],
     "shell_run": [
         # ── Demandes explicites d'exécution ──────────────────────────────
         "lance cette commande pour moi",
@@ -426,6 +473,12 @@ class ToolRetriever:
                 for anchor in _TOOL_ANCHORS.get(t.name, []):
                     docs.append(Document(page_content=anchor, metadata={"tool_name": t.name}))
 
+            # Repart de zéro à chaque reconstruction — sinon les anciennes générations
+            # de documents (précédentes listes de tools) s'accumulent indéfiniment dans
+            # Chroma et diluent la recherche par similarité avec des doublons obsolètes.
+            if _CACHE_DIR.exists():
+                import shutil
+                shutil.rmtree(_CACHE_DIR)
             _CACHE_DIR.mkdir(parents=True, exist_ok=True)
             self._store = Chroma.from_documents(docs, embeddings, persist_directory=str(_CACHE_DIR))
             _CACHE_HASH.write_text(current_hash)

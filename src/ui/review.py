@@ -690,7 +690,7 @@ def _ask_with_choices(question: str, choices: list[str], q_num: int, total: int)
 
 def ask_user_questions(questions: list) -> dict:
     """Shows a questionnaire. Each item is a str or {"question": "...", "choices": [...]}.
-    Returns {question: answer, ...} and optional "_extra" key."""
+    Returns {question: answer, ...}."""
     answers: dict[str, str] = {}
     total = len(questions)
 
@@ -727,11 +727,6 @@ def ask_user_questions(questions: list) -> dict:
             console.print()
 
         answers[text] = answer
-
-    console.print(Text("  Autre chose à préciser ? (optionnel)", style="dim"))
-    extra = _prompt_input("  + › ")
-    if extra:
-        answers["_extra"] = extra
 
     console.print()
     console.print(Rule(characters="·", style=f"dim {ACCENT}"))

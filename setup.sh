@@ -252,6 +252,36 @@ config_jira() {
     prompt_key "JIRA_API_KEY" "Clé API Jira"   "Format : ATATT3x..."
 }
 
+config_quant() {
+    step "API-Football — Value betting (Winamax)"
+    echo -e "  ${DIM}Permet à Axon de calculer de vraies probabilités (Poisson/Elo) sur les${NC}"
+    echo -e "  ${DIM}matchs et de les comparer aux cotes Winamax pour détecter un edge réel.${NC}"
+    echo -e "  ${DIM}Gratuit : 100 requêtes/jour. Le tier gratuit bloque la saison en cours —${NC}"
+    echo -e "  ${DIM}c'est football-data.org (ci-dessous) qui la couvre, API-Football sert de${NC}"
+    echo -e "  ${DIM}source complémentaire (saisons passées, autres compétitions).${NC}"
+    echo ""
+    echo -e "  ${ORANGE}Étapes :${NC}"
+    echo -e "  ${DIM}1. Aller sur https://www.api-football.com/${NC}"
+    echo -e "  ${DIM}2. Créer un compte gratuit${NC}"
+    echo -e "  ${DIM}3. Dashboard → copier ta clé API (section 'My Access')${NC}"
+    echo ""
+    echo -e "  ${DIM}Winamax ne demande aucune clé — les cotes sont déjà accessibles.${NC}"
+    prompt_key "API_FOOTBALL_KEY" "Clé API-Football" "Format : ta clé depuis le dashboard api-football.com"
+}
+
+config_football_data() {
+    step "football-data.org — Données saison en cours (value betting)"
+    echo -e "  ${DIM}Complète API-Football : couvre la saison EN COURS gratuitement (Ligue 1,${NC}"
+    echo -e "  ${DIM}Premier League...), là où le tier gratuit d'API-Football bloque tout.${NC}"
+    echo -e "  ${DIM}Gratuit : 10 requêtes/minute, 12 compétitions majeures.${NC}"
+    echo ""
+    echo -e "  ${ORANGE}Étapes :${NC}"
+    echo -e "  ${DIM}1. Aller sur https://www.football-data.org/client/register${NC}"
+    echo -e "  ${DIM}2. Créer un compte gratuit (aucune carte bancaire demandée)${NC}"
+    echo -e "  ${DIM}3. La clé API arrive par email — la copier ici${NC}"
+    prompt_key "FOOTBALL_DATA_ORG_KEY" "Clé football-data.org" "Format : ta clé reçue par email"
+}
+
 config_projects_dir() {
     step "Dossier de projets"
     echo -e "  ${DIM}Indiquer ton dossier racine de projets permet à l'IA de trouver tes repos git plus vite.${NC}"
@@ -309,6 +339,8 @@ show_status() {
     env_status "OLLAMA_API_KEY"  "Ollama Cloud (optionnel)"
     env_status "SLACK_USER_TOKEN" "Slack"
     env_status "JIRA_API_KEY"    "Jira      (gestion de projet)"
+    env_status "API_FOOTBALL_KEY" "API-Football (value betting Winamax)"
+    env_status "FOOTBALL_DATA_ORG_KEY" "football-data.org (saison en cours)"
     if [[ -f "gcp-oauth.keys.json" ]]; then
         ok "Google    (Gmail · Calendar · Drive · Docs · Slides)"
     else
@@ -339,6 +371,8 @@ config_menu() {
         echo -e "  ${ORANGE}6${NC}  Google       ${DIM}(Gmail · Calendar · Drive · Docs · Slides)${NC}"
         echo -e "  ${ORANGE}7${NC}  Jira         ${DIM}(gestion de tickets et projets)${NC}"
         echo -e "  ${ORANGE}8${NC}  Dossier de projets  ${DIM}(pour que l'IA trouve tes repos plus vite)${NC}"
+        echo -e "  ${ORANGE}9${NC}  API-Football ${DIM}(value betting Winamax)${NC}"
+        echo -e "  ${ORANGE}10${NC} football-data.org ${DIM}(saison en cours, value betting)${NC}"
         echo -e "  ${ORANGE}a${NC}  Tout configurer"
         echo -e "  ${ORANGE}q${NC}  Quitter le menu"
         echo ""
@@ -354,6 +388,8 @@ config_menu() {
             6) config_google ;;
             7) config_jira ;;
             8) config_projects_dir ;;
+            9) config_quant ;;
+            10) config_football_data ;;
             a|A)
                 config_tavily
                 config_gemini
@@ -363,6 +399,8 @@ config_menu() {
                 config_google
                 config_jira
                 config_projects_dir
+                config_quant
+                config_football_data
                 ;;
             q|Q)
                 info "Configuration terminée."
