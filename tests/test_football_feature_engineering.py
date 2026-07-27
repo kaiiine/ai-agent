@@ -64,7 +64,7 @@ def _five_away_losses():  # 5x défaite 0-1 à l'extérieur
 def test_fully_resolved_event_has_features_and_no_missing():
     gw = _FakeGateway({_PSG: _five_home_wins(), _OM: _five_away_losses()},
                       {_PSG: 1.3, _OM: 0.7})
-    fs = build_event_feature_set(_event(), gateway=gw)
+    fs = build_event_feature_set(_event(), gateway=gw, as_of=_KO)
 
     assert fs.sport == "football" and fs.as_of == _KO
     assert fs.feature_set_version == "football-1.0"
@@ -90,7 +90,7 @@ def test_form_stats_exact_arithmetic():
          _OM: _five_away_losses()},
         {_PSG: 1.2, _OM: 0.8},
     )
-    psg = build_event_feature_set(_event(), gateway=gw).participant_features[_PSG]
+    psg = build_event_feature_set(_event(), gateway=gw, as_of=_KO).participant_features[_PSG]
     assert psg["form_matches"] == 2
     assert psg["form_points_per_game"] == 1.5        # (3*1 + 0) / 2
     assert psg["form_goals_for_avg"] == 1.0          # (2 + 0) / 2
@@ -101,7 +101,7 @@ def test_form_stats_exact_arithmetic():
 
 def test_no_form_is_recorded_missing_never_crashes():
     gw = _FakeGateway({_OM: _five_away_losses()}, {_PSG: 1.3, _OM: 0.7})  # PSG absent
-    fs = build_event_feature_set(_event(), gateway=gw)
+    fs = build_event_feature_set(_event(), gateway=gw, as_of=_KO)
     assert f"form:{_PSG}" in fs.missing_features
     assert f"rest_days:{_PSG}" in fs.missing_features
     assert "form_points_per_game" not in fs.participant_features[_PSG]
@@ -116,7 +116,7 @@ def test_insufficient_form_is_flagged_but_still_computed():
          _OM: _five_away_losses()},
         {_PSG: 1.3, _OM: 0.7},
     )
-    fs = build_event_feature_set(_event(), gateway=gw)
+    fs = build_event_feature_set(_event(), gateway=gw, as_of=_KO)
     assert f"form_insufficient:{_PSG}" in fs.missing_features   # < 5 matchs
     assert fs.participant_features[_PSG]["form_matches"] == 2    # mais calculé
 
@@ -124,7 +124,7 @@ def test_insufficient_form_is_flagged_but_still_computed():
 def test_missing_standings_recorded_and_matchup_degrades():
     gw = _FakeGateway({_PSG: _five_home_wins(), _OM: _five_away_losses()},
                       {_PSG: 1.3})                                # OM absent du classement
-    fs = build_event_feature_set(_event(), gateway=gw)
+    fs = build_event_feature_set(_event(), gateway=gw, as_of=_KO)
     assert f"standings:{_OM}" in fs.missing_features
     # strength_differential ne peut pas être calculé -> absent, mais les diffs de forme oui
     assert "strength_differential" not in fs.matchup_features
@@ -134,7 +134,7 @@ def test_missing_standings_recorded_and_matchup_degrades():
 def test_deterministic_same_inputs_same_output():
     gw = _FakeGateway({_PSG: _five_home_wins(), _OM: _five_away_losses()},
                       {_PSG: 1.3, _OM: 0.7})
-    assert build_event_feature_set(_event(), gateway=gw) == build_event_feature_set(_event(), gateway=gw)
+    assert build_event_feature_set(_event(), gateway=gw, as_of=_KO) == build_event_feature_set(_event(), gateway=gw, as_of=_KO)
 
 
 def test_season_derived_from_kickoff():
@@ -148,5 +148,8 @@ def test_season_derived_from_kickoff():
         return orig(cid, last, season)
 
     gw.recent_form = spy
-    build_event_feature_set(_event(when=datetime(2026, 1, 15, tzinfo=timezone.utc)), gateway=gw)
+    build_event_feature_set(
+        _event(when=datetime(2026, 1, 15, tzinfo=timezone.utc)), gateway=gw,
+        as_of=datetime(2026, 1, 15, tzinfo=timezone.utc),
+    )
     assert captured["season"] == "2025"

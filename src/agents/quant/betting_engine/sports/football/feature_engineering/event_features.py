@@ -64,8 +64,14 @@ def build_event_feature_set(
     event: CanonicalEvent,
     gateway: _GatewayLike | None = None,
     *,
+    as_of: datetime,
     window: int = FORM_WINDOW,
 ) -> EventFeatureSet:
+    """`as_of` est REQUIS : le cutoff de données déclaré par l'appelant (instant
+    jusqu'auquel l'information est disponible), pas le coup d'envoi. C'est lui qui
+    permet la garde anti-fuite en aval (features.as_of ≤ point_in_time, ADR-004) ;
+    le déduire de `scheduled_at` (postérieur à la décision) la rendrait fausse.
+    Aucune substitution implicite par l'heure courante."""
     if gateway is None:                       # import paresseux : hermétique en test
         from src.agents.quant.gateway import gateway as gateway  # type: ignore
 
@@ -109,7 +115,7 @@ def build_event_feature_set(
     return EventFeatureSet(
         event_id=event.event_id,
         sport=event.sport,
-        as_of=event.scheduled_at,
+        as_of=as_of,
         feature_set_version=FEATURE_SET_VERSION,
         event_features={},                     # V0 : signal en participant + matchup
         participant_features=participant_features,
