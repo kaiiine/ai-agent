@@ -78,6 +78,17 @@ class LiveEvaluationResult:
     def is_evaluated(self) -> bool:
         return self.status is LiveEvaluationStatus.EVALUATED
 
+    @property
+    def has_actionable_evaluation(self) -> bool:
+        """Une VRAIE `MarketPrediction` a été calculée — l'ABSTAIN éventuel est
+        alors un cap modèle (MODEL_NOT_SUPPORTED), pas un refus AVANT prédiction.
+
+        Source UNIQUE de la classification « exploitable » : le CLI en dérive son
+        code de sortie via cette propriété, jamais via une liste de statuts
+        reconstruite à la main. Tout nouveau statut d'échec ajouté au contrat est
+        automatiquement non-exploitable (≠ EVALUATED), sans modifier le CLI."""
+        return self.status is LiveEvaluationStatus.EVALUATED
+
 
 def _season_of(dt: datetime) -> str:
     return str(dt.year if dt.month >= 7 else dt.year - 1)
