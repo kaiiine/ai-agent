@@ -25,3 +25,13 @@ class PointInTimeViolationError(Exception):
     non disponible au moment de la décision (fuite temporelle, ADR-004). On
     refuse plutôt que de produire une prédiction silencieusement biaisée.
     """
+
+
+class MarketCoherenceError(Exception):
+    """L'assemblage de cotes fourni au value_engine n'est pas un marché cohérent.
+
+    Ensemble incomplet, sélections dupliquées/inconnues, cote ≤ 1, bookmakers ou
+    événements différents, snapshots temporellement incompatibles, overround
+    incohérent... On refuse : aucun no-vig ne doit être calculé sur un assemblage
+    incomplet ou hétérogène.
+    """
