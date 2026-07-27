@@ -5,8 +5,11 @@ nom) : `recent_form()` par participant et `standings_strength()` une fois par
 événement. Ne plante jamais sur donnée manquante — dégrade et remonte dans
 `missing_features` (ex. trêve estivale = vrai manque, pas un bug).
 
-Pas de Dixon-Coles ici (features simples, cf. décision d'architecture) : forme
-récente pondérée arrivera avec la migration Dixon-Coles, à l'étape MarketModel.
+Forces Dixon-Coles (`attack_strength`/`defense_strength`) émises ici : ce sont
+des FEATURES (fait brut -> quantité dérivée, §6.2). Le calcul `team_strengths`
+est importé de `quant/dixon_coles.py` (import transitoire, todo #7 — jamais
+copié, source unique gelée et testée). La forme brute reste interne : seules les
+forces (neutres de lieu) sont exposées ; le MarketModel ne voit jamais la forme.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from datetime import date, datetime
 from typing import Protocol
 
 from src.agents.quant.gateway.core.errors import NoDataAvailableError
+from src.agents.quant.dixon_coles import team_strengths  # import transitoire (todo #7)
 from src.agents.quant.betting_engine.core.canonical_event import CanonicalEvent
 from src.agents.quant.betting_engine.core.feature_set import EventFeatureSet, FeatureValue
 
@@ -101,6 +105,12 @@ def build_event_feature_set(
             features["rest_days"] = (
                 event.scheduled_at.date() - date.fromisoformat(form[0]["date"])
             ).days
+            # Forces Dixon-Coles (features neutres de lieu) : mêmes appels que le
+            # pipeline gelé (opponent_ratings = classement, ou None si absent ->
+            # ajustement adversaire désactivé, fallback identique).
+            strengths = team_strengths(form, opponent_ratings=standings or None)
+            features["attack_strength"] = strengths["attack"]
+            features["defense_strength"] = strengths["defense"]
             if features["form_matches"] < MIN_FORM_MATCHES:
                 missing.add(f"form_insufficient:{cid}")
 

@@ -32,3 +32,13 @@ class CanonicalEvent:
     participants: tuple[CanonicalParticipant, ...]
     scheduled_at: datetime
     context: object | None = None          # EventContext typé/versionné (context_schema.py) — à venir
+
+
+@dataclass(frozen=True)
+class CanonicalMarket:
+    """Une sélection précise d'un marché à évaluer (§4.2) — l'unité que le
+    `value_engine` comparera à une cote. Pour le 1X2, `selection` ∈
+    {"home","draw","away"}."""
+
+    market_type: str
+    selection: str

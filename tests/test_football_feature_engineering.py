@@ -153,3 +153,19 @@ def test_season_derived_from_kickoff():
         as_of=datetime(2026, 1, 15, tzinfo=timezone.utc),
     )
     assert captured["season"] == "2025"
+
+
+def test_dixon_coles_strengths_emitted_when_form_present():
+    gw = _FakeGateway({_PSG: _five_home_wins(), _OM: _five_away_losses()},
+                      {_PSG: 1.3, _OM: 0.7})
+    fs = build_event_feature_set(_event(), gateway=gw, as_of=_KO)
+    for cid in (_PSG, _OM):
+        assert "attack_strength" in fs.participant_features[cid]
+        assert "defense_strength" in fs.participant_features[cid]
+
+
+def test_no_strengths_when_form_absent():
+    gw = _FakeGateway({_OM: _five_away_losses()}, {_PSG: 1.3, _OM: 0.7})  # PSG sans forme
+    fs = build_event_feature_set(_event(), gateway=gw, as_of=_KO)
+    assert "attack_strength" not in fs.participant_features[_PSG]
+    assert f"form:{_PSG}" in fs.missing_features
