@@ -21,6 +21,13 @@ if len(sys.argv) > 1 and sys.argv[1] in ("sports-status", "sports-seed"):
         print_status(competition=args.competition, season=args.season)
     sys.exit(0)
 
+# ── 0bis. `axon recommend` — délègue au CLI Advisor (aucune logique métier ici) ─
+if len(sys.argv) > 1 and sys.argv[1] == "recommend":
+    from dotenv import load_dotenv
+    load_dotenv()
+    from src.agents.quant.advisor.cli import main as _advisor_recommend
+    sys.exit(_advisor_recommend(sys.argv[2:]))
+
 # ── 1. Boot loader — démarre immédiatement ────────────────────────────────────
 from rich.console import Console as _Console
 from src.ui.boot import BootLoader, report_step
