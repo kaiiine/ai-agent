@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "notes": "Sizing V1 d'une ligne SINGLE (ADR-ADV-007, tranche minimale). fractional_kelly = fraction de Kelly par profil de risque ; per_line_cap_fraction = plafond de mise par ligne en part de bankroll. Valeurs INITIALES / placeholders à calibrer. Decimal en chaîne. Conservateur = fraction et cap plus faibles. En V1 (aucun modèle SUPPORTED) le sizing n'est exercé que par fixtures ELIGIBLE.",
+  "profiles": {
+    "CONSERVATIVE": { "fractional_kelly": "0.25", "per_line_cap_fraction": "0.05" },
+    "BALANCED":     { "fractional_kelly": "0.50", "per_line_cap_fraction": "0.10" },
+    "AGGRESSIVE":   { "fractional_kelly": "1.00", "per_line_cap_fraction": "0.20" }
+  }
+}
