@@ -23,10 +23,12 @@ from src.agents.quant.betting_engine.bookmakers.market_canonicalizer import (
 from src.agents.quant.betting_engine.bookmakers.protocol import (
     MarketType, RawBookmakerEvent, RawMarket, RawSelection,
 )
+from src.agents.quant.betting_engine.core.odds import OddsSnapshot
 from src.agents.quant.betting_engine.live_batch import LiveEvaluationBatch
 from src.agents.quant.betting_engine.live_evaluation import (
     LiveEvaluationResult, LiveEvaluationStatus as St, evaluate_live_event,
 )
+from src.agents.quant.betting_engine.value_engine.decision import evaluate_selection
 
 from src.agents.quant.advisor.input_adapter import betting_engine_adapter as adapter
 from src.agents.quant.advisor.input_adapter.errors import (
@@ -125,6 +127,14 @@ def test_adapts_a_valid_evaluation():
     assert out.skipped == ()
 
 
+def test_observed_at_is_the_odds_fetch_time():
+    # observed_at = RawBookmakerEvent.fetched_at (instant d'observation des cotes),
+    # PAS le decision_time de la requête.
+    raw = _event()
+    out = adapter.adapt_live_batch(_batch((raw, _evaluated())))
+    assert all(e.observed_at == raw.fetched_at for e in out.evaluations)
+
+
 def test_market_maturity_preserved_not_upgraded():
     out = adapter.adapt_live_batch(_batch((_event(), _evaluated())))
     assert {e.model_maturity for e in out.evaluations} == {"EXPERIMENTAL"}   # jamais SUPPORTED
@@ -212,6 +222,28 @@ def test_missing_scores_are_none_never_zero():
     assert home.freshness_score is None
     assert home.liquidity_score is None
     assert home.calibration_score is None
+
+
+# ── Frontière boosted : is_boosted=False ne peut PAS accompagner une offre boostée ──
+def test_boosted_offer_never_adapted_as_standard_odds():
+    """Verrouille la prémisse qui rend is_boosted=False factuellement correct.
+
+    Une offre boostée n'est JAMAIS évaluée comme cote standard : le value_engine
+    la refuse (NOT_EVALUATED + UNSUPPORTED_ODDS_TYPE). L'adaptateur la porte donc
+    avec is_boosted=True et SANS métriques de valeur — jamais is_boosted=False.
+    (La prémisse boosted->NOT_EVALUATED est aussi couverte par test_value_engine.)"""
+    res = _evaluated()
+    pred_home = res.predictions["home"]
+    boosted = OddsSnapshot("ev:1", "MATCH_WINNER", "home", 2.5, _DEC, "winamax", is_boosted=True)
+    boosted_home = evaluate_selection(pred_home, [boosted])       # vrai chemin moteur
+    assert boosted_home.evaluation_status.value == "NOT_EVALUATED"
+    assert "UNSUPPORTED_ODDS_TYPE" in boosted_home.reasons
+
+    res = replace(res, decisions=tuple(
+        boosted_home if d.selection == "home" else d for d in res.decisions))
+    home = next(e for e in adapter.adapt_result(_event(), res)[0] if e.selection == "home")
+    assert home.is_boosted is True                                 # jamais False pour une offre boostée
+    assert home.no_vig_probability is None and home.implied_probability_raw is None
 
 
 # ── Événement non évaluable : tracé, aucun candidat ───────────────────────────

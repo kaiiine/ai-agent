@@ -234,3 +234,13 @@ Inventaire des identifiants réellement disponibles dans la chaîne : `bookmaker
 **Divergence confirmée (hors périmètre de cette unité)** : `market_id` reste **non propagé** sur `LiveEvaluationResult` (`evaluate_live_event` le calcule en local mais ne le stocke pas). L'adaptateur Advisor (Lot 2) le **reconstruira** via `build_market_id(bookmaker, canonical_event.event_id, market_type)` — décision Q5 inchangée, non traitée ici pour rester minimal.
 
 Prochaine étape : **Lot 2** (adaptateur `betting_engine_adapter` : `LiveEvaluationResult` → `CandidateBet`, `market_id` reconstruit, `source_decision_id=None`) — arrêt avant commit, avec les 3 contrôles.
+
+### 10.4 Décisions tranchées en revue du Lot 3 (Candidate Generator)
+
+**`candidate_id` = identité de l'OFFRE, pas de la requête (ADR-ADV-003).** Le hash utilise `observed_at` = `RawBookmakerEvent.fetched_at` (source réelle de `OddsSnapshot.observed_at = observed_at or raw_event.fetched_at`), **propagé** Adapter → `AdaptedEvaluation.observed_at` → hash — jamais le `decision_time` Advisor. Deux requêtes observant le même snapshot → même id. **Dette** : `fetched_at` est l'instant de *scan* ; aucun `snapshot_id` ni timestamp de mise à jour de cote intrinsèque Winamax n'est capturé (même famille que Q5) → deux scans de cotes inchangées donnent aujourd'hui des ids distincts.
+
+**`edge` = définition du Betting Engine.** `edge = fair_probability − no_vig_probability` (moteur : `value_engine/decision.py`, `edge = model_p − no_vig_p`). `edge_low = probability_low − no_vig_probability`. `no_vig` propagé, jamais recalculé. `implied_probability` reste l'implicite **brute** (informatif), distincte du seuil d'edge. Figé **avant le Lot 5** (le ranking consomme `edge`). Reporté aussi en PRD §10.2.1.
+
+**`is_boosted` : fait vérifié, pas un inconnu.** Le `value_engine` n'atteint `EVALUATED` que pour une cote **standard** (une offre boostée → `NOT_EVALUATED` + `UNSUPPORTED_ODDS_TYPE`). Donc `is_boosted=False` sur une évaluation adaptée reflète la détection réelle du moteur, ce n'est pas un `unknown` forcé à `False`. Une éventuelle sélection boostée porterait `is_boosted=True` + métriques `None` → le Generator la **rejette** (pas de candidat de valeur, Vague 2). `bool` conservé.
+
+**`max_stake` / `max_payout` : `None` = « limite inconnue/absente », pas une perte silencieuse.** `RawSelection.max_stake/max_payout` restent à `None` en V0 (peuplement des cotes boostées différé Vague 2, cf. `winamax/market_mapping.py`) : **aucune valeur disponible en amont n'est perdue**. `None` porte donc la sémantique explicite « pas de plafond connu ». Gap tracé ; propagation à activer quand la Vague 2 peuplera ces champs.

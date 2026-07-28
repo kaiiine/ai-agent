@@ -92,6 +92,7 @@ def _adapt_selection(
         competition_id=canonical_event.competition_id,
         scheduled_at=canonical_event.scheduled_at,
         participant_ids=tuple(p.canonical_id for p in canonical_event.participants),
+        observed_at=raw_event.fetched_at,          # instant d'observation des cotes (bookmaker)
         bookmaker=raw_event.bookmaker,
         market_id=market_id,
         market_type=prediction.market_type,
@@ -111,6 +112,10 @@ def _adapt_selection(
         no_vig_probability=_opt_decimal(decision.no_vig_probability),
         edge=_opt_decimal(decision.edge),
         expected_value=_opt_decimal(decision.expected_value),
+        # is_boosted N'EST PAS un inconnu forcé à False : le value_engine n'atteint
+        # EVALUATED que pour une cote STANDARD (une offre boostée -> NOT_EVALUATED +
+        # UNSUPPORTED_ODDS_TYPE). Ce flag reflète donc la détection réelle du moteur ;
+        # False sur un EVALUATED est un fait vérifié.
         is_boosted="UNSUPPORTED_ODDS_TYPE" in decision.reasons,
         decision=decision.decision,
         decision_reasons=tuple(decision.reasons),

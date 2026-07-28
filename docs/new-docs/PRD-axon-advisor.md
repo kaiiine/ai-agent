@@ -572,6 +572,11 @@ Il ne décide pas encore si un candidat doit être recommandé.
 
 Le Candidate Generator ne peut pas créer de nouvelles données sportives.
 
+#### 10.2.1 Définitions canoniques (tranchées au Lot 3)
+
+- **`edge`** : `edge = probabilité_modèle − probabilité_no_vig_marché`, **définition héritée du Betting Engine** (`value_engine/decision.py` : `edge = model_p − no_vig_p`) et non une sémantique nouvelle. `edge_mean = fair_probability − no_vig_probability`, `edge_low = probability_low − no_vig_probability`. Le `no_vig` (marge retirée) est propagé du moteur, jamais recalculé. `implied_probability` reste l'implicite **brute** (`1/cote`) à titre informatif, distincte du seuil d'edge. Cette définition est figée **avant le Lot 5** puisque le ranking consomme `edge`.
+- **`candidate_id`** : identité de l'**offre observée** (ADR-ADV-003) — hash de `bookmaker | event_id | market_id | selection | model_version | observed_at`, où `observed_at` = instant d'observation des cotes côté bookmaker (`RawBookmakerEvent.fetched_at`), **jamais** le `decision_time` de la requête Advisor. Deux requêtes observant le même snapshot produisent le même id. Limite V1 : `fetched_at` est l'instant de scan, faute d'un `snapshot_id` / timestamp de mise à jour de cote intrinsèque (dette connecteur, même famille que Q5).
+
 ---
 
 ## 11. Eligibility & Policy

@@ -69,6 +69,11 @@ class AdaptedEvaluation:
     scheduled_at: datetime
     participant_ids: tuple[str, ...]
 
+    # Instant d'OBSERVATION des cotes (côté bookmaker), = RawBookmakerEvent.fetched_at
+    # (source de OddsSnapshot.observed_at). Distinct du decision_time Advisor :
+    # c'est l'identité temporelle de l'OFFRE, pas de la requête (ADR-ADV-003).
+    observed_at: datetime
+
     # Marché (market_id reconstruit via le builder canonique, jamais parallèle).
     bookmaker: str
     market_id: str
