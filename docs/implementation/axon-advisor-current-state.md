@@ -218,4 +218,19 @@ Un lot = une unité de commit distincte, arrêt avant chaque commit.
 | `DataReadiness` sans `DEPRECATED` | mapping défensif, source ne l'émet jamais | ce doc §4.2 |
 | EV basse dégénérée (`NOT_ESTIMATED`) | `low==mean` documenté comme limite v1 | ce doc §4.1 |
 
-Prochaine étape : **Lot 1** (contrats de domaine Advisor) — arrêt avant commit, avec les 3 contrôles (invariant→scénario→test, hors-scope, seuils/constantes).
+### 10.3 Résolution de l'unité BE frontière (Q4/Q5)
+
+Réalisée après le Lot 1, en unité de commit distincte.
+
+**Q4 — frontière batch : `evaluate_live_batch` (module `betting_engine/live_batch.py`).**
+Inspection : `run_live` (ex-`cli.py`) était **déjà du domaine pur** — aucune trace CLI (pas d'`argparse`, pas de rendu, pas de code de sortie) ; ses seuls défauts étaient sa *localisation* et son *nom*. Extraction du plus petit contrat public (`evaluate_live_batch` → `LiveEvaluationBatch`) ; le CLI ne garde QUE l'I/O (`main`, `render_human`, `build_json_record`, `exit_code_for`). Dépendances : `CLI → live_batch ← adaptateur Advisor` ; jamais `Advisor → cli`. Verrous : test AST `live_batch` sans dépendance d'interface, + `betting_engine.cli` ajouté à la liste interdite du test de pureté Advisor.
+
+**Q5 — provenance : `source_decision_id = None` (option 3), dette documentée.**
+Inventaire des identifiants réellement disponibles dans la chaîne : `bookmaker_event_id`, `decision_time`, `canonical_event.event_id` (sur `LiveEvaluationResult`) ; **`BettingDecision` et `MarketPrediction` n'en portent aucun** ; **aucun `run_id`/`evaluation_id`/`decision_id`/`snapshot_id` nulle part**. Le Betting Engine est un **évaluateur sans état** : il calcule et retourne, ne persiste ni run ni décision. Conclusion :
+- (1) aucun id atomique existant à propager ;
+- (2) en introduire un ici (uuid éphémère) ne tracerait **rien** — ce serait exactement l'« id inventé pour remplir le champ » proscrit ; une identité *persistée* suppose une couche d'audit BE = prématuré pour une frontière minimale ;
+- (3) → `source_decision_id` reste **`None`** côté Advisor. **Dette** : quand le BE gagnera une frontière de persistance/audit attribuant des ids de décision stables, le champ pourra référencer un id réel et traçable.
+
+**Divergence confirmée (hors périmètre de cette unité)** : `market_id` reste **non propagé** sur `LiveEvaluationResult` (`evaluate_live_event` le calcule en local mais ne le stocke pas). L'adaptateur Advisor (Lot 2) le **reconstruira** via `build_market_id(bookmaker, canonical_event.event_id, market_type)` — décision Q5 inchangée, non traitée ici pour rester minimal.
+
+Prochaine étape : **Lot 2** (adaptateur `betting_engine_adapter` : `LiveEvaluationResult` → `CandidateBet`, `market_id` reconstruit, `source_decision_id=None`) — arrêt avant commit, avec les 3 contrôles.

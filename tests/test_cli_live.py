@@ -18,6 +18,7 @@ from src.agents.quant.betting_engine.bookmakers.winamax.catalogue import support
 from src.agents.quant.betting_engine.live_evaluation import (
     LiveEvaluationStatus as St, evaluate_live_event,
 )
+from src.agents.quant.betting_engine.live_batch import evaluate_live_batch
 from src.agents.quant.betting_engine import cli
 
 _PSG = "team:football:fra:psg"
@@ -157,8 +158,8 @@ def test_main_returns_one_on_total_scan_failure():
 def test_main_exit_zero_end_to_end():
     conn = _FakeConnector([_event()])
     # coverage injecté via un evaluate enveloppé (usable_providers DB non requise en test)
-    run = cli.run_live(conn, sports_gateway=_GW(), event_resolver=_resolver(),
-                       evaluate=_evaluate_covered, now_fn=lambda: _DEC)
+    run = evaluate_live_batch(conn, sports_gateway=_GW(), event_resolver=_resolver(),
+                              evaluate=_evaluate_covered, now_fn=lambda: _DEC)
     assert cli.exit_code_for(run.results) == 0
     assert run.results[0][1].status is St.EVALUATED
 
@@ -172,8 +173,8 @@ def test_decision_time_captured_once_and_passed_to_every_event():
         return _evaluate_covered(event, decision_time=decision_time, **kw)
 
     conn = _FakeConnector([_event("A"), _event("B")])
-    run = cli.run_live(conn, sports_gateway=_GW(), event_resolver=_resolver(),
-                       evaluate=spy_evaluate, now_fn=lambda: _DEC)
+    run = evaluate_live_batch(conn, sports_gateway=_GW(), event_resolver=_resolver(),
+                              evaluate=spy_evaluate, now_fn=lambda: _DEC)
     assert run.decision_time == _DEC
     assert captured == [_DEC, _DEC]               # un seul instant, jamais divergent
 
@@ -186,8 +187,8 @@ def test_individual_event_failure_does_not_stop_the_run():
         return _evaluate_covered(event, **kw)
 
     conn = _FakeConnector([_event("BAD"), _event("OK")])
-    run = cli.run_live(conn, sports_gateway=_GW(), event_resolver=_resolver(),
-                       evaluate=flaky_evaluate, now_fn=lambda: _DEC)
+    run = evaluate_live_batch(conn, sports_gateway=_GW(), event_resolver=_resolver(),
+                              evaluate=flaky_evaluate, now_fn=lambda: _DEC)
     assert len(run.results) == 2                   # le run continue
     by_id = {e.bookmaker_event_id: r for e, r in run.results}
     assert by_id["BAD"].status is St.GATEWAY_UNAVAILABLE

@@ -1,9 +1,10 @@
 """CLI adaptateur — run ponctuel manuel : scan Winamax -> évaluations lisibles.
 
 Adaptateur MINCE : ne connaît ni le PRELOADED_STATE, ni la canonicalisation, ni
-la résolution, ni la décision. Il n'appelle que des interfaces publiques :
-`supported_events` (catalogue) et `evaluate_live_event` (orchestrateur). Aucune
-logique métier dupliquée, aucune écriture ~/.axon, aucun scheduler.
+la résolution, ni la décision. Il délègue tout le batch à la frontière de domaine
+`evaluate_live_batch` (scan + évaluation), et ne garde QUE l'I/O : parsing
+d'arguments, rendu, code de sortie. Aucune logique métier dupliquée, aucune
+écriture ~/.axon, aucun scheduler.
 
 Codes de sortie :
   0 = scan OK et au moins un résultat exploitable (vraie prédiction calculée) ;
@@ -17,65 +18,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Callable
 
-from .bookmakers.winamax.catalogue import supported_events
 from .bookmakers.protocol import RawBookmakerEvent
-from .live_evaluation import (
-    LiveEvaluationResult,
-    LiveEvaluationStatus,
-    evaluate_live_event,
-)
+from .live_batch import evaluate_live_batch
+from .live_evaluation import LiveEvaluationResult
 
 _SELECTIONS = ("home", "draw", "away")
-Pair = tuple[RawBookmakerEvent, LiveEvaluationResult]
 
 
-@dataclass(frozen=True)
-class LiveRun:
-    decision_time: datetime
-    results: list[Pair]
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def run_live(
-    connector,
-    *,
-    sports_gateway,
-    event_resolver,
-    catalogue: Callable = supported_events,
-    evaluate: Callable = evaluate_live_event,
-    now_fn: Callable[[], datetime] = _utcnow,
-) -> LiveRun:
-    """Cœur testable. `catalogue(connector)` peut lever (scan échoué) -> propagé.
-    Un échec inattendu sur UN événement n'arrête pas le run (résultat typé)."""
-    events = catalogue(connector)                       # scan ; propage l'échec au CLI
-    decision_time = now_fn()                            # capturé UNE fois, APRÈS la fin du scan
-
-    results: list[Pair] = []
-    for event in events:
-        try:
-            result = evaluate(
-                event, decision_time=decision_time,
-                event_resolver=event_resolver, sports_gateway=sports_gateway,
-            )
-        except Exception as exc:                        # défensif : un événement ne fait pas tomber le run
-            result = LiveEvaluationResult(
-                status=LiveEvaluationStatus.GATEWAY_UNAVAILABLE,
-                reason=f"erreur technique inattendue : {type(exc).__name__}",
-                decision_time=decision_time, bookmaker_event_id=event.bookmaker_event_id,
-                error_context={"type": type(exc).__name__, "repr": repr(exc)},
-            )
-        results.append((event, result))
-    return LiveRun(decision_time, results)
-
-
-def exit_code_for(results: list[Pair]) -> int:
+def exit_code_for(results) -> int:
     """0 si au moins un résultat exploitable, sinon 2 (scan supposé réussi)."""
     return 0 if any(res.has_actionable_evaluation for _, res in results) else 2
 
@@ -152,7 +103,7 @@ def main(argv: list[str] | None = None, *, connector=None, sports_gateway=None,
         from src.agents.quant.gateway import gateway as sports_gateway
 
     try:
-        run = run_live(connector, sports_gateway=sports_gateway, event_resolver=event_resolver)
+        run = evaluate_live_batch(connector, sports_gateway=sports_gateway, event_resolver=event_resolver)
     except Exception as exc:   # noqa: BLE001 — scan total / erreur technique -> code 1
         print(f"échec du scan / erreur technique : {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

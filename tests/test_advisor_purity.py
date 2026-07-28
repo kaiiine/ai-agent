@@ -10,10 +10,13 @@ import pathlib
 _ADVISOR = pathlib.Path(__file__).resolve().parents[1] / "src" / "agents" / "quant" / "advisor"
 
 # Namespaces interdits dans le cœur : frameworks + orchestration + couches d'interface.
+# `betting_engine.cli` est explicitement interdit : l'adaptateur Advisor consomme
+# la frontière de DOMAINE `betting_engine.live_batch`, jamais l'adaptateur CLI (Q4).
 _FORBIDDEN = (
     "langgraph", "langchain", "click", "fastapi",
     "src.orchestrator", "src.ui", "src.api",
     "src.agents.quant.tools",
+    "src.agents.quant.betting_engine.cli",
 )
 
 
