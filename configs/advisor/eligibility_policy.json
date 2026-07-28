@@ -1,0 +1,24 @@
+{
+  "version": "1",
+  "notes": "Seuils d'éligibilité par profil de risque. Valeurs INITIALES / placeholders à calibrer (comme la staleness_tolerance du Betting Engine) : elles vivent ici, versionnées et transparentes, jamais codées en dur dans la logique. Decimal en chaîne. min_expected_value_low ne gate que le chemin ELIGIBLE (modèle SUPPORTED). En V1 (modèles EXPERIMENTAL, freshness None, data_quality=1.0, max_stake None) ces seuils sont largement dormants.",
+  "profiles": {
+    "CONSERVATIVE": {
+      "min_expected_value_low": "0.03",
+      "min_data_quality": "0.70",
+      "min_freshness": "0.50",
+      "min_stake": "0.50"
+    },
+    "BALANCED": {
+      "min_expected_value_low": "0.01",
+      "min_data_quality": "0.50",
+      "min_freshness": "0.30",
+      "min_stake": "0.20"
+    },
+    "AGGRESSIVE": {
+      "min_expected_value_low": "0.00",
+      "min_data_quality": "0.30",
+      "min_freshness": "0.10",
+      "min_stake": "0.10"
+    }
+  }
+}
