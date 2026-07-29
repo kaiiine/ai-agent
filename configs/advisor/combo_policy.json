@@ -1,0 +1,10 @@
+{
+  "config_version": "1",
+  "effective_from": "2026-07-29",
+  "checksum": "fee9499988cb278b4890ab54627c044e31ef09982a97f2a0445ea0b86c91999b",
+  "top_k": 8,
+  "max_combo_legs": 2,
+  "safety_margin": "0.90",
+  "min_combo_ev": "0.02",
+  "notes": "Combo Builder V1 (Lot 9). safety_margin (]0,1[) = escompte conservateur de l'hypothèse d'indépendance non prouvée, appliquée au mean ET au low. min_combo_ev = seuil d'admission sur worst_case_ev (borne basse), DISTINCT des seuils Eligibility/Ranking. max_combo_legs=2 (3 legs différé). Placeholders à calibrer. checksum = sha256 des champs config_version|effective_from|top_k|max_combo_legs|safety_margin|min_combo_ev (sort_keys), hors metadata."
+}

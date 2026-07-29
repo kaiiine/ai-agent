@@ -23,6 +23,7 @@ from .domain.recommendations import RecommendationResponse
 from .domain.requests import OddsRange, RecommendationRequest
 from .domain import serialization
 from .input_adapter.schema import AdaptedBatch
+from .combos import load_combo_policy
 from .pipeline import run_pipeline
 from .policy import load_policy_config
 from .portfolio import load_portfolio_caps
@@ -110,6 +111,7 @@ def _load_configs() -> dict:
         "ranking_profiles": load_ranking_profiles(),
         "sizing_profiles": load_sizing_profiles(),
         "portfolio_caps": load_portfolio_caps(),
+        "combo_policy": load_combo_policy(),
     }
 
 
