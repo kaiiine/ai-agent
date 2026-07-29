@@ -1,5 +1,5 @@
-"""Sizing V1 d'une ligne SINGLE (ADR-ADV-007) + assemblage du portefeuille à une
-ligne. Le Lot 8 réutilisera `compute_single_stake`, sans la remplacer.
+"""Primitive de sizing V1 d'une ligne SINGLE (ADR-ADV-007). RÉUTILISÉE par le
+Portfolio Optimizer (Lot 8) — jamais une 2ᵉ formule.
 
 Kelly sur la probabilité PRUDENTE (`probability_low`, imposé par le contrat) ;
 atténué par `fractional_kelly` (config) × `reliability` × `data_quality` ; borné
@@ -13,12 +13,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, Context, Decimal
 
-from ..domain.candidates import CandidateBet, CandidateEvaluation
-from ..domain.enums import LineType
+from ..domain.candidates import CandidateBet
 from ..domain.money import ONE, ZERO
-from ..domain.portfolios import BetLeg, PortfolioLine, RecommendationPortfolio
-from ..domain.requests import RecommendationRequest
-from . import explanation
 
 # Précision de CALCUL déterministe pour les divisions. Pas un arrondi métier
 # (granularité de mise -> Lot 8 / ADR-ADV-002). Le cap `max_payout/odds` arrondit
@@ -83,28 +79,3 @@ def compute_single_stake(
 
     stake = min(caps)
     return stake if stake > ZERO else ZERO
-
-
-def build_single_portfolio(
-    top: CandidateEvaluation, stake: Decimal, request: RecommendationRequest,
-) -> RecommendationPortfolio:
-    c = top.candidate
-    line_id = f"line:{c.candidate_id}"
-    leg = BetLeg(candidate_id=c.candidate_id, event_id=c.event_id, market_id=c.market_id,
-                 selection=c.selection, bookmaker=c.bookmaker, odds=c.bookmaker_odds)
-    line = PortfolioLine(
-        line_id=line_id, line_type=LineType.SINGLE, bookmaker=c.bookmaker, legs=(leg,),
-        stake=stake, total_odds=c.bookmaker_odds, estimated_probability=c.fair_probability,
-        expected_value=c.expected_value_mean, worst_case_ev=c.expected_value_low,
-        correlation_warning=None)
-
-    target = request.target_total_odds
-    target_match = target is not None and target.minimum <= c.bookmaker_odds <= target.maximum
-    return RecommendationPortfolio(
-        portfolio_id=f"pf:{c.candidate_id}", request_id=request.request_id,
-        strategy_id=request.ranking_profile, lines=(line,),
-        total_stake=stake, unallocated_bankroll=request.bankroll - stake,
-        expected_return=c.expected_value_mean, expected_profit=stake * c.expected_value_mean,
-        downside_score=c.expected_value_low, concentration_score=ZERO,  # ligne unique (multi-lignes = Lot 8)
-        target_odds_match=target_match, quality_score=c.data_quality, warnings=(),
-        explanation=explanation.build_single_explanation(top, stake))

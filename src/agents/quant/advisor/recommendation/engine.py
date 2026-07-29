@@ -13,15 +13,18 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
 
 from ..domain.candidates import CandidateEvaluation
 from ..domain.enums import CandidateStatus, RecommendationOutcome
-from ..domain.money import ZERO
 from ..domain.recommendations import RecommendationResponse
 from ..domain.requests import RecommendationRequest
 from ..ranking.sort import RankingResult
-from . import audit, simple
+from . import audit
 from .simple import SizingProfile
+
+if TYPE_CHECKING:                                  # évite le cycle recommendation <-> portfolio
+    from ..portfolio.constraints import PortfolioCaps
 
 
 def _rejection_summary(rejected: Sequence[CandidateEvaluation]) -> dict[str, int]:
@@ -31,7 +34,9 @@ def _rejection_summary(rejected: Sequence[CandidateEvaluation]) -> dict[str, int
 def recommend(
     policy_evaluations: Sequence[CandidateEvaluation], ranking_result: RankingResult,
     request: RecommendationRequest, *, sizing_profiles: Mapping[str, SizingProfile],
+    caps_config: "Mapping[str, PortfolioCaps]",
 ) -> RecommendationResponse:
+    from ..portfolio import build_portfolios      # lazy : casse le cycle d'import
     review = tuple(e for e in policy_evaluations if e.status is CandidateStatus.REVIEW_ONLY)
     rejected = [e for e in policy_evaluations if e.status is CandidateStatus.REJECTED]
     rejected.extend(ranking_result.non_rankable)
@@ -48,18 +53,13 @@ def recommend(
             portfolios=portfolios, review_candidates=review_candidates,
             rejection_summary=rejection_summary, warnings=(), audit_id=audit_id)
 
-    # RECOMMENDED : meilleur ELIGIBLE misable.
+    # RECOMMENDED : portefeuille(s) multi-single sur les ELIGIBLE classés (Lot 8).
     if ranking_result.ranked:
-        top = ranking_result.ranked[0]
-        sizing = sizing_profiles.get(request.risk_profile.value)
-        if sizing is None:
-            raise ValueError(f"profil de sizing non configuré : {request.risk_profile.value}")
-        stake = simple.compute_single_stake(
-            top.candidate, reliability=top.ranking_components["reliability_component"],
-            bankroll=request.bankroll, max_total_stake=request.max_total_stake, sizing=sizing)
-        if stake > ZERO:
-            portfolio = simple.build_single_portfolio(top, stake, request)
-            return response(RecommendationOutcome.RECOMMENDED, portfolios=(portfolio,),
+        portfolios = build_portfolios(
+            ranking_result.ranked, request,
+            sizing_profiles=sizing_profiles, caps_config=caps_config)
+        if portfolios:
+            return response(RecommendationOutcome.RECOMMENDED, portfolios=portfolios,
                             review_candidates=review)
 
     # REVIEW_CANDIDATES : rien de misable mais des candidats à examiner.

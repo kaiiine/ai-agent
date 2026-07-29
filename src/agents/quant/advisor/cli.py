@@ -25,6 +25,7 @@ from .domain import serialization
 from .input_adapter.schema import AdaptedBatch
 from .pipeline import run_pipeline
 from .policy import load_policy_config
+from .portfolio import load_portfolio_caps
 from .ranking import load_ranking_profiles
 from .recommendation import load_sizing_profiles
 
@@ -108,6 +109,7 @@ def _load_configs() -> dict:
         "policy_config": load_policy_config(),
         "ranking_profiles": load_ranking_profiles(),
         "sizing_profiles": load_sizing_profiles(),
+        "portfolio_caps": load_portfolio_caps(),
     }
 
 

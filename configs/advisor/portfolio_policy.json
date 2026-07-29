@@ -1,0 +1,30 @@
+{
+  "version": "1",
+  "notes": "Contraintes de portefeuille multi-single V1 (Lot 8). Caps d'exposition en PART de bankroll par événement/participant/compétition/bookmaker ; stake_granularity = pas d'arrondi (vers le BAS) ; min_line_stake = mise technique minimale sous laquelle une ligne est écartée. Valeurs INITIALES / placeholders à calibrer. Decimal en chaîne. Conservateur = caps plus serrés. En V1 (aucun modèle SUPPORTED) exercé par fixtures ELIGIBLE.",
+  "profiles": {
+    "CONSERVATIVE": {
+      "max_event_exposure_fraction": "0.10",
+      "max_participant_exposure_fraction": "0.10",
+      "max_competition_exposure_fraction": "0.20",
+      "max_bookmaker_exposure_fraction": "0.50",
+      "stake_granularity": "0.01",
+      "min_line_stake": "0.50"
+    },
+    "BALANCED": {
+      "max_event_exposure_fraction": "0.20",
+      "max_participant_exposure_fraction": "0.20",
+      "max_competition_exposure_fraction": "0.40",
+      "max_bookmaker_exposure_fraction": "0.70",
+      "stake_granularity": "0.01",
+      "min_line_stake": "0.20"
+    },
+    "AGGRESSIVE": {
+      "max_event_exposure_fraction": "0.40",
+      "max_participant_exposure_fraction": "0.40",
+      "max_competition_exposure_fraction": "0.70",
+      "max_bookmaker_exposure_fraction": "1.00",
+      "stake_granularity": "0.01",
+      "min_line_stake": "0.10"
+    }
+  }
+}

@@ -11,6 +11,7 @@ from .domain.recommendations import RecommendationResponse
 from .domain.requests import RecommendationRequest
 from .input_adapter.schema import AdaptedBatch
 from .policy import PolicyConfig, evaluate_candidates
+from .portfolio.constraints import PortfolioCaps
 from .ranking import RankingProfile, rank
 from .recommendation import recommend
 from .recommendation.simple import SizingProfile
@@ -21,6 +22,7 @@ def run_pipeline(
     policy_config: PolicyConfig,
     ranking_profiles: Mapping[str, RankingProfile],
     sizing_profiles: Mapping[str, SizingProfile],
+    portfolio_caps: Mapping[str, PortfolioCaps],
 ) -> RecommendationResponse:
     ranking_profile = ranking_profiles.get(request.ranking_profile)
     if ranking_profile is None:
@@ -29,4 +31,5 @@ def run_pipeline(
     candidates = generate_candidates(adapted_batch)
     policy_evaluations = evaluate_candidates(candidates, request, config=policy_config)
     ranking_result = rank(policy_evaluations, profile=ranking_profile)
-    return recommend(policy_evaluations, ranking_result, request, sizing_profiles=sizing_profiles)
+    return recommend(policy_evaluations, ranking_result, request,
+                     sizing_profiles=sizing_profiles, caps_config=portfolio_caps)
