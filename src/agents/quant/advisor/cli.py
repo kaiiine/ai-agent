@@ -13,7 +13,9 @@ Codes de sortie (PRD §18.3) :
 from __future__ import annotations
 
 import argparse
+import pathlib
 import sys
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Callable
@@ -60,7 +62,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--competitions", nargs="*")
     p.add_argument("--bookmakers", nargs="*")
     p.add_argument("--market-types", nargs="*")
-    p.add_argument("--request-id", default="axon-cli")
+    # request_id FRAIS par invocation (unicité requise par l'audit/idempotence,
+    # Lot 10 §0). Un --request-id explicite n'est fourni que pour un rejeu ciblé.
+    p.add_argument("--request-id", default=None)
     p.add_argument("--format", choices=("human", "json"), default="human")
     return p
 
@@ -75,8 +79,9 @@ def _build_request(args, decision_time: datetime) -> RecommendationRequest:
     if (odds_min is None) != (odds_max is None):
         raise ValueError("--target-odds-min et --target-odds-max doivent être fournis ensemble")
     target = None if odds_min is None else OddsRange(Decimal(odds_min), Decimal(odds_max))
+    request_id = args.request_id or f"req:{uuid.uuid4().hex}"   # frais si non fourni (§0)
     return RecommendationRequest(
-        request_id=args.request_id, decision_time=decision_time, bankroll=Decimal(args.bankroll),
+        request_id=request_id, decision_time=decision_time, bankroll=Decimal(args.bankroll),
         currency=args.currency, allowed_sports=_fset(args.sports),
         allowed_competitions=_fset(args.competitions), allowed_bookmakers=_fset(args.bookmakers),
         allowed_market_types=_fset(args.market_types), target_total_odds=target,
@@ -128,8 +133,22 @@ def _default_batch_loader(decision_time: datetime) -> AdaptedBatch:  # pragma: n
                           event_resolver=resolver, now_fn=lambda: decision_time)
 
 
+def _default_audit_store():
+    from .audit import JsonlAuditStore, load_audit_config
+    cfg = load_audit_config()
+    repo_root = pathlib.Path(__file__).resolve().parents[5]
+    return JsonlAuditStore(repo_root / cfg.audit_store_path)
+
+
+def _persist_audit(request, batch, result, cfg, audit_store) -> None:
+    from .audit import build_config_snapshots, build_envelope
+    snapshots = build_config_snapshots(allow_combos=request.allow_combos)
+    envelope = build_envelope(request, batch, snapshots, result.trace, result.recommendation)
+    (audit_store or _default_audit_store()).append(envelope)
+
+
 def main(argv: list[str] | None = None, *, batch_loader: Callable[[datetime], AdaptedBatch] | None = None,
-         now_fn: Callable[[], datetime] = _utcnow, configs: dict | None = None) -> int:
+         now_fn: Callable[[], datetime] = _utcnow, configs: dict | None = None, audit_store=None) -> int:
     args = _build_parser().parse_args(argv)
 
     try:
@@ -142,11 +161,13 @@ def main(argv: list[str] | None = None, *, batch_loader: Callable[[datetime], Ad
     cfg = configs or _load_configs()
     try:
         batch = loader(request.decision_time)
-        response = run_pipeline(batch, request, **cfg)
+        result = run_pipeline(batch, request, **cfg)
+        _persist_audit(request, batch, result, cfg, audit_store)
     except Exception as exc:   # noqa: BLE001 — scan/technique -> code 1
         print(f"échec global : {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
+    response = result.recommendation
     if args.format == "json":
         print(serialization.to_json(response))
     else:

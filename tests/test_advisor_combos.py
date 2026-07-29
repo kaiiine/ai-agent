@@ -286,10 +286,10 @@ def test_integration_up_to_sizing_fork():
                                      _adapted("c2", "e2", ("b1", "b2"))), ())
     cfg = _configs()
 
-    off = run_pipeline(batch, _request(allow_combos=False), **cfg)   # builder non appelé
+    off = run_pipeline(batch, _request(allow_combos=False), **cfg).recommendation  # builder non appelé
     assert not any(w.startswith(R.COMBO_SIZING_NOT_AVAILABLE) for w in off.warnings)
 
-    on = run_pipeline(batch, _request(allow_combos=True), **cfg)     # builder appelé
+    on = run_pipeline(batch, _request(allow_combos=True), **cfg).recommendation    # builder appelé
     # code STABLE machine-readable, distinguable d'un vrai NO_OPPORTUNITY.
     assert any(w.startswith(R.COMBO_SIZING_NOT_AVAILABLE) for w in on.warnings)
     # aucune PortfolioLine COMBO inventée : la frontière est bloquée par le sizing.

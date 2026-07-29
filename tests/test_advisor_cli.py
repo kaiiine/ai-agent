@@ -9,15 +9,20 @@ import json
 import pathlib
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from decimal import Decimal
 
 from src.agents.quant.advisor import cli
+from src.agents.quant.advisor.audit import JsonlAuditStore
 
 _REPO = pathlib.Path(__file__).resolve().parents[1]
 from src.agents.quant.advisor.input_adapter.schema import (
     AdaptedBatch, AdaptedEvaluation, AdaptedExplanation,
 )
+
+# Store d'audit temporaire : le CLI persiste, mais les tests n'écrivent pas dans var/.
+_AUDIT_STORE = JsonlAuditStore(pathlib.Path(tempfile.mkdtemp()) / "cli_audit.jsonl")
 
 _DEC = datetime(2026, 7, 29, 12, tzinfo=timezone.utc)
 _KO = datetime(2026, 8, 1, 17, tzinfo=timezone.utc)
@@ -48,7 +53,7 @@ def _loader(*evs):
 
 
 def _run(argv, loader):
-    return cli.main(argv, batch_loader=loader, now_fn=lambda: _DEC)
+    return cli.main(argv, batch_loader=loader, now_fn=lambda: _DEC, audit_store=_AUDIT_STORE)
 
 
 _BASE = ["--bankroll", "100"]

@@ -135,3 +135,47 @@ class AdaptedBatch:
         for ev in self.evaluations:
             out.setdefault(ev.event_id, []).append(ev)
         return {k: tuple(v) for k, v in out.items()}
+
+
+# ── Désérialisation typée (Lot 10 : requise pour le replay exact) ─────────────
+def _dec(v):
+    return None if v is None else Decimal(v)
+
+
+def _dt(v):
+    return datetime.fromisoformat(v)
+
+
+def _explanation_from_jsonable(d: dict) -> AdaptedExplanation:
+    return AdaptedExplanation(
+        top_features=tuple((n, float(f)) for n, f in d["top_features"]),   # valeur diagnostique -> float
+        missing_features=frozenset(d["missing_features"]),
+        confidence_drivers=tuple(d["confidence_drivers"]),
+        warnings=tuple(d["warnings"]))
+
+
+def _evaluation_from_jsonable(d: dict) -> AdaptedEvaluation:
+    return AdaptedEvaluation(
+        schema_version=d["schema_version"], event_id=d["event_id"], sport=d["sport"],
+        competition_id=d["competition_id"], scheduled_at=_dt(d["scheduled_at"]),
+        participant_ids=tuple(d["participant_ids"]), observed_at=_dt(d["observed_at"]),
+        bookmaker=d["bookmaker"], market_id=d["market_id"], market_type=d["market_type"],
+        selection=d["selection"], bookmaker_odds=Decimal(d["bookmaker_odds"]),
+        fair_probability=Decimal(d["fair_probability"]), probability_low=Decimal(d["probability_low"]),
+        probability_high=Decimal(d["probability_high"]), uncertainty_status=d["uncertainty_status"],
+        model_version=d["model_version"], model_maturity=d["model_maturity"],
+        data_quality=Decimal(d["data_quality"]), calibration_score=_dec(d["calibration_score"]),
+        freshness_score=_dec(d["freshness_score"]), liquidity_score=_dec(d["liquidity_score"]),
+        implied_probability_raw=_dec(d["implied_probability_raw"]),
+        no_vig_probability=_dec(d["no_vig_probability"]), edge=_dec(d["edge"]),
+        expected_value=_dec(d["expected_value"]), is_boosted=d["is_boosted"], decision=d["decision"],
+        decision_reasons=tuple(d["decision_reasons"]), warnings=tuple(d["warnings"]),
+        explanation=_explanation_from_jsonable(d["explanation"]),
+        source_decision_id=d["source_decision_id"])
+
+
+def adapted_batch_from_jsonable(d: dict) -> AdaptedBatch:
+    return AdaptedBatch(
+        schema_version=d["schema_version"], decision_time=_dt(d["decision_time"]),
+        evaluations=tuple(_evaluation_from_jsonable(e) for e in d["evaluations"]),
+        skipped=tuple(SkippedEvaluation(**s) for s in d["skipped"]))

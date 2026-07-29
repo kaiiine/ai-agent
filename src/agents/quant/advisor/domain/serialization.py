@@ -39,6 +39,12 @@ def to_jsonable(obj):
         return {k: to_jsonable(v) for k, v in obj.items()}
     if isinstance(obj, (str, int, bool)) or obj is None:
         return obj
+    if isinstance(obj, float):
+        # float = diagnostic NON monétaire (ex. valeurs de features d'explication) ;
+        # chaîne canonique déterministe. Les valeurs monétaires/probabilistes sont
+        # `Decimal` (garanti par les contrats), jamais float — cette branche ne
+        # relâche donc pas l'invariant « aucun float monétaire » (ADV-NFR-010).
+        return repr(obj)
     raise TypeError(f"type non sérialisable : {type(obj).__name__}")
 
 

@@ -1,0 +1,8 @@
+{
+  "config_version": "1",
+  "effective_from": "2026-07-29",
+  "checksum": "808fdc3eea60a51f07e27717182278f0e76a9247798db45312815e256e7e3910",
+  "audit_store_path": "var/advisor/audits/audit.jsonl",
+  "audit_schema_version": "1",
+  "notes": "Audit persistant V1 (Lot 10). Store JSONL append-only. audit_store_path repo-local sous var/ (gitignoré), INJECTABLE en test (tmp_path). Jamais ~/.axon. checksum = sha256 de config_version|effective_from|audit_store_path|audit_schema_version (sort_keys)."
+}
