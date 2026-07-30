@@ -39,15 +39,43 @@ from .core.market_model import DataReadiness, MarketPrediction
 from .sports.registry import SPORT_MODULES, SportModule
 from .value_engine import BettingDecision, evaluate_selection
 
-# PLACEHOLDER DEVINÉ, pas une valeur métier : dette de calibration (cf. todos).
-# Ne peut être calibré qu'une fois la gateway exposant la fraîcheur (todo gateway-side).
-DEFAULT_STALENESS_TOLERANCE = timedelta(hours=48)
+# Tolérance de staleness LIVE : désormais versionnée dans
+# configs/gateway/freshness_policy.json (plus un placeholder codé en dur). Valeur
+# inchangée (48h) mais inspectable ; reste un seuil live non backtestable, à
+# recalibrer une fois la fraîcheur mesurée exposée bout en bout (dette structurée).
+def _default_staleness_tolerance() -> timedelta:
+    from src.agents.quant.gateway.core.freshness_policy import default_freshness_policy
+    return default_freshness_policy().live_staleness_tolerance
 
 _FRESHNESS_UNAVAILABLE = (
     "freshness_unavailable: la gateway n'expose pas la fraîcheur via son API "
     "publique ; staleness non vérifiée (live uniquement, non backtestable)"
 )
+_FRESHNESS_DEGRADED = (
+    "freshness_degraded: la gateway expose la fraîcheur mais la donnée servie n'a "
+    "pas d'horodatage fiable (repli sur fetched_at) ; staleness non mesurable — "
+    "aucune fraîcheur favorable inventée"
+)
 _SELECTIONS = ("home", "draw", "away")
+
+
+def gateway_staleness_probe(sports_gateway, competition_id: str, season: str, reference_time: datetime):
+    """Construit un `freshness_probe` qui LIT la fraîcheur calculée par la Gateway
+    (`data_freshness`) et en dérive l'ÂGE à `reference_time`. Aucune recomputation
+    de fraîcheur dans le BE : seule une soustraction sur l'horodatage effectif fourni.
+
+    Renvoie `None` (staleness non mesurable) si la Gateway ne peut pas fournir de
+    donnée, OU si la base de fraîcheur est dégradée (repli `fetched_at`) : on ne
+    convertit jamais un horodatage de récupération en « fraîcheur » favorable."""
+    def probe() -> timedelta | None:
+        getter = getattr(sports_gateway, "data_freshness", None)
+        if getter is None:
+            return None
+        info = getter(competition_id, season)
+        if info is None or info.degraded or info.effective_time is None:
+            return None
+        return reference_time - info.effective_time
+    return probe
 
 
 class LiveEvaluationStatus(str, Enum):
@@ -111,9 +139,11 @@ def evaluate_live_event(
     sport_modules: dict[str, SportModule] = SPORT_MODULES,
     coverage_check: Callable[..., list[str]] = usable_providers,
     freshness_probe: Callable[[], timedelta | None] | None = None,
-    staleness_tolerance: timedelta = DEFAULT_STALENESS_TOLERANCE,
+    staleness_tolerance: timedelta | None = None,
 ) -> LiveEvaluationResult:
     warnings: list[str] = []
+    if staleness_tolerance is None:                     # défaut = politique versionnée (jamais un hardcode)
+        staleness_tolerance = _default_staleness_tolerance()
 
     def result(status, reason, **kw) -> LiveEvaluationResult:
         return LiveEvaluationResult(
@@ -163,14 +193,26 @@ def evaluate_live_event(
                       error_context={"type": type(exc).__name__, "repr": repr(exc)})
 
     # 6) Fraîcheur : seam explicite, jamais "frais" supposé en silence.
-    if freshness_probe is not None:
-        staleness = freshness_probe()
-        if staleness is not None and staleness > staleness_tolerance:
+    #    Priorité : sonde injectée (test) > sonde dérivée de la Gateway (production,
+    #    "Gateway calcule -> BE lit") > aucune capacité (warning). Une sonde qui
+    #    renvoie None = staleness non mesurable de façon fiable (dégradée), jamais
+    #    "frais" ni "trop vieux".
+    probe = freshness_probe
+    if probe is None and hasattr(sports_gateway, "data_freshness"):
+        probe = gateway_staleness_probe(sports_gateway, mapping.competition_id, season, decision_time)
+
+    freshness_notes: list[str] = []
+    if probe is not None:
+        staleness = probe()
+        if staleness is None:
+            freshness_notes.append(_FRESHNESS_DEGRADED)
+        elif staleness > staleness_tolerance:
             return result(LiveEvaluationStatus.DATA_TOO_STALE,
                           f"données trop anciennes ({staleness} > {staleness_tolerance})",
                           canonical_event=event, feature_set=features)
     else:
-        warnings.append(_FRESHNESS_UNAVAILABLE)
+        freshness_notes.append(_FRESHNESS_UNAVAILABLE)
+    warnings.extend(freshness_notes)
 
     # 7) Readiness — jamais de prédiction fabriquée.
     if module.model.assess_data_readiness(event, features) == DataReadiness.INSUFFICIENT_DATA:
@@ -181,13 +223,12 @@ def evaluate_live_event(
     # 8) Prédiction RÉELLE (point_in_time = decision_time).
     predictions = module.model.predict_selections(event, features, point_in_time=decision_time)
 
-    # Le warning freshness_unavailable doit vivre AUSSI dans l'explication de la
-    # prédiction, pas seulement dans le résultat d'orchestration.
-    extra = [_FRESHNESS_UNAVAILABLE] if freshness_probe is None else []
-    if extra:
+    # Les notes de fraîcheur (indispo / dégradée) doivent vivre AUSSI dans
+    # l'explication de la prédiction, pas seulement dans le résultat d'orchestration.
+    if freshness_notes:
         predictions = {
             sel: replace(pred, explanation=replace(
-                pred.explanation, warnings=list(pred.explanation.warnings) + extra))
+                pred.explanation, warnings=list(pred.explanation.warnings) + freshness_notes))
             for sel, pred in predictions.items()
         }
 

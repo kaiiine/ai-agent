@@ -1,0 +1,13 @@
+{
+  "config_version": "1",
+  "effective_from": "2026-07-29",
+  "checksum": "2e73ce798e2551bba2087137f786903dd0793c0d0669b77611b701d8e0a3ee4e",
+  "half_life_hours": {
+    "FIXTURES": 12.0,
+    "RESULTS": 24.0,
+    "STANDINGS": 24.0
+  },
+  "default_half_life_hours": 12.0,
+  "live_staleness_tolerance_hours": 48.0,
+  "notes": "Fraîcheur Gateway (GW-NFR-003). Valeurs = celles historiquement codées en dur dans core/quality.py, désormais versionnées et transparentes (jamais dans la logique). freshness_score = 0.5 ** (age_hours / half_life), age mesuré sur l'horodatage EFFECTIF (published_time > event_time > fetched_at, cf. resolve_freshness_basis) — jamais un timestamp fabriqué. live_staleness_tolerance_hours remplace le placeholder DEVINÉ de live_evaluation.py (staleness live, non backtestable). Seuils INITIAUX à recalibrer sur données réelles ; checksum = sha256 de config_version|effective_from|half_life_hours|default_half_life_hours|live_staleness_tolerance_hours (sort_keys)."
+}

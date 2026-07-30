@@ -178,3 +178,78 @@ def test_insufficient_features_when_one_team_has_no_form():
     assert res.status is S.INSUFFICIENT_FEATURES
     assert res.feature_set is not None            # features construites (dégradées)
     assert res.predictions == {}                  # aucune prédiction fabriquée
+
+
+# ── Fraîcheur live CÂBLÉE : Gateway calcule -> BE lit (jamais recalculée) ──────
+from src.agents.quant.gateway.gateway import DataFreshness           # noqa: E402
+from src.agents.quant.betting_engine.live_evaluation import (        # noqa: E402
+    _FRESHNESS_DEGRADED,
+    _FRESHNESS_UNAVAILABLE,
+)
+
+
+class _FreshGateway(_FakeLiveGateway):
+    """Gateway live exposant `data_freshness` (capacité de fraîcheur réelle)."""
+    def __init__(self, freshness):
+        super().__init__({_PSG: _PSG_FORM, _OM: _OM_FORM}, {_PSG: 1.3, _OM: 0.7})
+        self._freshness = freshness
+        self.freshness_calls = []
+
+    def data_freshness(self, league_canonical_id, season, data_type="RESULTS"):
+        self.freshness_calls.append((league_canonical_id, season, data_type))
+        return self._freshness
+
+
+def _df(effective_time, *, basis="published_time", degraded=False):
+    return DataFreshness(freshness_score=0.9, effective_time=effective_time,
+                         basis=basis, degraded=degraded, stale=False)
+
+
+def test_live_freshness_from_gateway_recent_evaluates():
+    gw = _FreshGateway(_df(_DECISION - timedelta(hours=2)))            # 2h < tolérance 48h
+    res = _run(gw)
+    assert res.status is S.EVALUATED
+    # Provenance : la Gateway a bien été interrogée pour la compétition résolue.
+    assert gw.freshness_calls == [("competition:football:fra:ligue1", "2025", "RESULTS")]
+    # Fraîcheur mesurée et suffisante -> aucune note d'indispo/dégradation.
+    assert _FRESHNESS_UNAVAILABLE not in res.warnings
+    assert _FRESHNESS_DEGRADED not in res.warnings
+
+
+def test_live_freshness_from_gateway_stale_refuses():
+    gw = _FreshGateway(_df(_DECISION - timedelta(hours=100)))          # 100h > tolérance 48h
+    res = _run(gw)
+    assert res.status is S.DATA_TOO_STALE                              # décision explicite
+    assert res.predictions == {}                                      # aucune prédiction servie
+
+
+def test_live_freshness_degraded_is_not_measurable_no_invented_score():
+    # Repli sur fetched_at (degraded) : même si fetched_at est TRÈS récent, on ne
+    # convertit pas ça en "frais" -> staleness non mesurable, note explicite.
+    gw = _FreshGateway(_df(_DECISION, basis="fetched_at", degraded=True))
+    res = _run(gw)
+    assert res.status is S.EVALUATED
+    assert _FRESHNESS_DEGRADED in res.warnings                        # jamais un score favorable inventé
+    assert all(_FRESHNESS_DEGRADED in p.explanation.warnings for p in res.predictions.values())
+
+
+def test_live_freshness_missing_data_is_not_measurable():
+    gw = _FreshGateway(None)                                          # aucune donnée de fraîcheur
+    res = _run(gw)
+    assert res.status is S.EVALUATED
+    assert _FRESHNESS_DEGRADED in res.warnings                        # non mesurable, pas "frais"
+
+
+def test_gateway_without_data_freshness_is_unavailable():
+    # Gateway sans capacité de fraîcheur -> warning d'indisponibilité (comportement historique).
+    res = _run(_full_gateway())
+    assert res.status is S.EVALUATED
+    assert _FRESHNESS_UNAVAILABLE in res.warnings
+
+
+def test_injected_probe_overrides_gateway_capability():
+    # Une sonde explicite (test) a priorité sur la capacité Gateway.
+    gw = _FreshGateway(_df(_DECISION - timedelta(hours=2)))
+    res = _run(gw, freshness_probe=lambda: timedelta(hours=100))       # forcée trop vieille
+    assert res.status is S.DATA_TOO_STALE
+    assert gw.freshness_calls == []                                    # capacité Gateway non appelée
