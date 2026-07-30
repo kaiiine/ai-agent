@@ -152,18 +152,5 @@ def build_combos(
     return ComboResult(admissible=pruning.rank_combos(admissible), rejected=tuple(rejected)), explanations
 
 
-class ComboSizingRequired(NotImplementedError):
-    """FORK money-sensitive (Lot 9). `PortfolioLine.stake` est non optionnel, mais
-    aucun contrat de sizing COMBO validé n'existe : on ne transforme JAMAIS un combo
-    admissible en `PortfolioLine` avec une mise improvisée. Décision dédiée requise
-    (fiabilité de la proba jointe, rôle de la marge dans le sizing, caps combo,
-    exposition des legs, interaction avec les allocations SINGLE, corrélation
-    résiduelle). Cf. current-state §10.6 et le stop du Lot 9."""
-
-
-def to_portfolio_line(combo: ComboEvaluation):
-    """Frontière atteinte : refuse d'inventer une mise. Lève toujours tant
-    qu'aucun contrat de sizing COMBO n'est validé."""
-    raise ComboSizingRequired(
-        f"combo {combo.combo_id} admissible mais non transformable en PortfolioLine "
-        f"faute de contrat de sizing COMBO validé")
+# Note : la matérialisation d'un combo admissible en `PortfolioLine` COMBO vit
+# désormais dans le Portfolio Optimizer (sizing ADR-ADV-014), plus dans un fork bloqué.

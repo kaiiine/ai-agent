@@ -68,7 +68,8 @@ class ComboAuditTrail:
     combo_config_version: str | None
     bookmaker_acceptance_status: ComboBookmakerAcceptanceStatus
     materialization_status: ComboMaterializationStatus
-    combo_signal: str | None                         # COMBO_SIZING_NOT_AVAILABLE le cas échéant
+    combo_signal: str | None                         # None depuis ADR-ADV-014 (sizing câblé) ;
+                                                      # non-None réservé aux audits historiques
 
 
 @dataclass(frozen=True)

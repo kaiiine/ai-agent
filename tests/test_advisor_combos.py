@@ -17,7 +17,7 @@ import pytest
 
 from src.agents.quant.advisor.combos import build_combos, combo_id, load_combo_policy
 from src.agents.quant.advisor.combos import builder as _builder
-from src.agents.quant.advisor.combos.builder import ComboSizingRequired, evaluate_pair, to_portfolio_line
+from src.agents.quant.advisor.combos.builder import evaluate_pair
 from src.agents.quant.advisor.combos.compatibility import (
     DIFFERENT_BOOKMAKERS, DUPLICATE_LEG, FORBIDDEN_MARKET, NON_ELIGIBLE_LEG, check_compatibility,
 )
@@ -246,11 +246,6 @@ def test_ranking_input_order_independent():
         assert sig(shuffled) == ref                           # mêmes combos, ids, métriques, ordre
 
 
-# ── Frontière : fork sizing COMBO ─────────────────────────────────────────────
-def test_to_portfolio_line_raises_sizing_fork():
-    combo = build_combos(_ranked_indep(2), _request(), _policy())[0].admissible[0]
-    with pytest.raises(ComboSizingRequired):
-        to_portfolio_line(combo)                              # jamais de mise improvisée
 
 
 # ── Intégration jusqu'à la frontière (sans ligne COMBO inventée) ──────────────
