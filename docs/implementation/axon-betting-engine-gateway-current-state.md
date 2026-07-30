@@ -235,3 +235,36 @@ Restent **hors de ce chantier**, forks distincts explicites :
 - **sizing COMBO** (fork Advisor/Combo dédié).
 - **placement automatique** (BE-FR-014) : hors scope, toute sortie BET reste une
   proposition à validation humaine.
+
+## 15. Classification des dettes restantes (chemin principal)
+
+Le **chemin principal** `Gateway → BE → maturity/SUPPORTED → value/worst_case_ev →
+BET/ABSTAIN → adapter → Advisor → eligibility → ranking → sizing SINGLE → portfolio
+→ CLI → audit → replay` est **architecturalement complet et testé** (capacité
+démontrée hermétiquement ; activation réelle interdite tant que le modèle est
+`EXPERIMENTAL`). Dettes restantes :
+
+- **DATA** : `min_sample_size` (296<500, 2ᵉ saison/ligue) · `positive_clv`
+  (`NOT_YET_MEASURABLE` — infra de collecte prête, reste à accumuler) · `data_quality`
+  provider (table statique de `quality.py`, à calibrer) · **reliability empirique**
+  (`DATA / FUTURE_STATISTICAL_ADR`, ADR-BE-003).
+- **EXTERNAL** : capture Winamax **réelle** (réseau) — `record_replay` prêt à archiver
+  `SOURCE_LIVE` ; `axon record-odds` prêt à consommer.
+- **ARCHITECTURAL** : **sizing COMBO** (fork Advisor/Combo dédié, money-sensitive) ·
+  **ownership des noyaux `dixon_coles`/`ev_engine`** — voir ci-dessous.
+- **OPERATIONS** : exploitation/monitoring (hors périmètre code).
+
+### Noyaux `dixon_coles` / `ev_engine` — reclassé ARCHITECTURAL (pas CODE)
+Le « todo #7 » (migration des noyaux vers le BE) **n'est pas un refactor purement
+structurel** : ces noyaux sont **partagés** (source UNIQUE, jamais copiée — invariant
+déjà satisfait) entre le BE et l'agent LEGACY `quant/tools.py`. `ev_engine` co-localise
+en particulier la **logique money de l'agent legacy** (`kelly_stake`, `analyze_bet`,
+`analyze_parlay`, `KELLY_FRACTION=0.25`) que la nouvelle architecture BE/Advisor **ne
+doit PAS posséder** (Option A : le BE ne size pas ; le Kelly canonique vit dans
+Advisor). Migrer `ev_engine` dans le BE tirerait un **second Kelly** dans le BE
+(interdit) ou exigerait de **scinder un noyau gelé** + de décider du sort de l'agent
+legacy — une décision **architecturale, money-adjacente, non déterminée par les
+contrats actuels**, à risque de régression sur les golden gelés. **Décision : ne pas
+migrer maintenant** ; l'invariant critique (source unique) est déjà tenu. La migration
+physique se fera lors du **retrait de l'agent legacy** `quant/tools.py`/`odds_fetcher`
+(chantier dédié), quand le déplacement deviendra univoque et sans risque.
