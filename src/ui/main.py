@@ -33,6 +33,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "record-odds":
     from src.agents.quant.betting_engine.clv.cli import main as _record_odds
     sys.exit(_record_odds(sys.argv[2:]))
 
+# ── 0quater. `axon coverage` — couverture Winamax -> modèle (§16), aucune logique ici ─
+if len(sys.argv) > 1 and sys.argv[1] == "coverage":
+    from src.agents.quant.betting_engine.coverage_cli import main as _coverage
+    sys.exit(_coverage(sys.argv[2:]))
+
 # ── 1. Boot loader — démarre immédiatement ────────────────────────────────────
 from rich.console import Console as _Console
 from src.ui.boot import BootLoader, report_step
