@@ -38,6 +38,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "coverage":
     from src.agents.quant.betting_engine.coverage_cli import main as _coverage
     sys.exit(_coverage(sys.argv[2:]))
 
+# ── 0quinquies. `axon readiness` — maturité mécanique du modèle (§16), aucune logique ici ─
+if len(sys.argv) > 1 and sys.argv[1] == "readiness":
+    from src.agents.quant.betting_engine.readiness_cli import main as _readiness
+    sys.exit(_readiness(sys.argv[2:]))
+
 # ── 1. Boot loader — démarre immédiatement ────────────────────────────────────
 from rich.console import Console as _Console
 from src.ui.boot import BootLoader, report_step
