@@ -59,25 +59,6 @@ _FRESHNESS_DEGRADED = (
 _SELECTIONS = ("home", "draw", "away")
 
 
-def gateway_staleness_probe(sports_gateway, competition_id: str, season: str, reference_time: datetime):
-    """Construit un `freshness_probe` qui LIT la fraîcheur calculée par la Gateway
-    (`data_freshness`) et en dérive l'ÂGE à `reference_time`. Aucune recomputation
-    de fraîcheur dans le BE : seule une soustraction sur l'horodatage effectif fourni.
-
-    Renvoie `None` (staleness non mesurable) si la Gateway ne peut pas fournir de
-    donnée, OU si la base de fraîcheur est dégradée (repli `fetched_at`) : on ne
-    convertit jamais un horodatage de récupération en « fraîcheur » favorable."""
-    def probe() -> timedelta | None:
-        getter = getattr(sports_gateway, "data_freshness", None)
-        if getter is None:
-            return None
-        info = getter(competition_id, season)
-        if info is None or info.degraded or info.effective_time is None:
-            return None
-        return reference_time - info.effective_time
-    return probe
-
-
 class LiveEvaluationStatus(str, Enum):
     EVALUATED = "EVALUATED"
     EVENT_NOT_RESOLVED = "EVENT_NOT_RESOLVED"
@@ -101,6 +82,9 @@ class LiveEvaluationResult:
     decisions: tuple[BettingDecision, ...] = ()                              # () sauf EVALUATED
     warnings: list[str] = field(default_factory=list)
     error_context: dict = field(default_factory=dict)
+    # Fraîcheur MESURÉE par la Gateway (0..1), propagée à l'aval (adaptateur/Advisor).
+    # None = non mesurable (jamais fabriquée). Distincte du gate DATA_TOO_STALE.
+    freshness_score: float | None = None
 
     @property
     def is_evaluated(self) -> bool:
@@ -193,23 +177,31 @@ def evaluate_live_event(
                       error_context={"type": type(exc).__name__, "repr": repr(exc)})
 
     # 6) Fraîcheur : seam explicite, jamais "frais" supposé en silence.
-    #    Priorité : sonde injectée (test) > sonde dérivée de la Gateway (production,
-    #    "Gateway calcule -> BE lit") > aucune capacité (warning). Une sonde qui
-    #    renvoie None = staleness non mesurable de façon fiable (dégradée), jamais
-    #    "frais" ni "trop vieux".
-    probe = freshness_probe
-    if probe is None and hasattr(sports_gateway, "data_freshness"):
-        probe = gateway_staleness_probe(sports_gateway, mapping.competition_id, season, decision_time)
-
+    #    Priorité : sonde injectée (test, âge seul) > capacité Gateway (production,
+    #    "Gateway calcule -> BE lit" : âge ET score mesuré) > aucune capacité (warning).
+    #    Le score mesuré (0..1) est PROPAGÉ (result.freshness_score) pour l'aval
+    #    (adaptateur/Advisor) ; None quand non mesurable, jamais fabriqué.
     freshness_notes: list[str] = []
-    if probe is not None:
-        staleness = probe()
+    measured_freshness: float | None = None
+    if freshness_probe is not None:
+        staleness = freshness_probe()
         if staleness is None:
             freshness_notes.append(_FRESHNESS_DEGRADED)
         elif staleness > staleness_tolerance:
             return result(LiveEvaluationStatus.DATA_TOO_STALE,
                           f"données trop anciennes ({staleness} > {staleness_tolerance})",
                           canonical_event=event, feature_set=features)
+    elif hasattr(sports_gateway, "data_freshness"):
+        info = sports_gateway.data_freshness(mapping.competition_id, season)
+        if info is None or info.degraded or info.effective_time is None:
+            freshness_notes.append(_FRESHNESS_DEGRADED)      # capacité présente, mesure non fiable
+        else:
+            measured_freshness = info.freshness_score        # MESURÉ par la Gateway (0..1)
+            staleness = decision_time - info.effective_time
+            if staleness > staleness_tolerance:
+                return result(LiveEvaluationStatus.DATA_TOO_STALE,
+                              f"données trop anciennes ({staleness} > {staleness_tolerance})",
+                              canonical_event=event, feature_set=features)
     else:
         freshness_notes.append(_FRESHNESS_UNAVAILABLE)
     warnings.extend(freshness_notes)
@@ -239,4 +231,5 @@ def evaluate_live_event(
 
     return result(LiveEvaluationStatus.EVALUATED, "ok",
                   canonical_event=event, feature_set=features,
-                  predictions=predictions, decisions=decisions)
+                  predictions=predictions, decisions=decisions,
+                  freshness_score=measured_freshness)

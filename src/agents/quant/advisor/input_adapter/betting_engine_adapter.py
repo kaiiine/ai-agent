@@ -82,6 +82,7 @@ def _merge_warnings(*sources) -> tuple[str, ...]:
 
 def _adapt_selection(
     raw_event: RawBookmakerEvent, canonical_event, prediction, decision, result_warnings,
+    freshness_score,
 ) -> AdaptedEvaluation:
     market_id = build_market_id(raw_event.bookmaker, canonical_event.event_id, prediction.market_type)
     exp = prediction.explanation
@@ -106,7 +107,9 @@ def _adapt_selection(
         model_maturity=_maturity(prediction),
         data_quality=_to_decimal(prediction.data_quality, "data_quality"),
         calibration_score=_opt_decimal(decision.model_reliability),
-        freshness_score=None,               # FRESHNESS_UNKNOWN (Q1) — jamais 0
+        # Fraîcheur MESURÉE par la Gateway et propagée par le BE (result.freshness_score) ;
+        # None = non mesurable (FRESHNESS_UNKNOWN), jamais 0. Décidé en aval par l'Advisor.
+        freshness_score=_opt_decimal(freshness_score),
         liquidity_score=None,               # non exposé par la source — jamais 0
         implied_probability_raw=_opt_decimal(decision.implied_probability_raw),
         no_vig_probability=_opt_decimal(decision.no_vig_probability),
@@ -156,7 +159,8 @@ def adapt_result(
                 f"sélection « {sel} » absente d'un résultat EVALUATED "
                 f"({result.bookmaker_event_id})")
         evaluations.append(
-            _adapt_selection(raw_event, result.canonical_event, prediction, decision, result.warnings))
+            _adapt_selection(raw_event, result.canonical_event, prediction, decision,
+                             result.warnings, result.freshness_score))
     return evaluations, None
 
 

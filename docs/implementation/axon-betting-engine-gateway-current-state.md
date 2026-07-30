@@ -136,14 +136,18 @@ Gateway (bon endroit). Demi-vies + tolérance staleness live dans
 (`published > event > fetched`, `resolve_freshness_basis`) ; timestamp manquant →
 `degraded=True`, jamais une fraîcheur favorable inventée. Frontières testées.
 
-**Câblage Gateway → BE fermé** : `gateway.data_freshness(...)` (accesseur additif,
-même fetch/enveloppe — la Gateway calcule) est consommé par
-`live_evaluation.gateway_staleness_probe` (le BE lit l'horodatage effectif, calcule
-l'âge, ne recalcule **pas** la fraîcheur). `evaluate_live_event` : sonde injectée >
-sonde Gateway > indisponible ; base dégradée (`fetched_at`) → staleness
-`NOT_MEASURABLE` (jamais « frais » inventé) ; trop vieux → `DATA_TOO_STALE`. Aucun
-contrat gelé modifié, aucune dépendance Advisor. → critère de maturité
-`measurable_live_freshness` = **MEASURABLE/PASS**.
+**Câblage Gateway → BE → Advisor fermé** : `gateway.data_freshness(...)` (accesseur
+additif, même fetch/enveloppe — la Gateway calcule) est consommé par
+`evaluate_live_event` (le BE lit l'horodatage effectif + le **score mesuré**, calcule
+l'âge, ne recalcule **pas** la fraîcheur). Priorité : sonde injectée > capacité
+Gateway > indisponible ; base dégradée (`fetched_at`) → staleness `NOT_MEASURABLE`
+(jamais « frais » inventé) ; trop vieux → `DATA_TOO_STALE`. Le **score de fraîcheur
+mesuré (0..1)** est désormais PROPAGÉ jusqu'à l'Advisor :
+`LiveEvaluationResult.freshness_score` → `betting_engine_adapter` →
+`AdaptedEvaluation.freshness_score` (None quand non mesurable, jamais 0). L'Advisor
+peut donc éligibiliser un BET SUPPORTED sans le rejeter `FRESHNESS_UNKNOWN`. Aucun
+contrat gelé modifié (le champ `freshness_score` existait déjà). → critère de
+maturité `measurable_live_freshness` = **MEASURABLE/PASS**.
 
 ## 11. Provenance
 
@@ -191,6 +195,14 @@ test dans `test_live_evaluation`) : `SUPPORTED` + opportunité admissible → `B
 end-to-end sans `NotImplementedError` ; `SUPPORTED` + borne basse insuffisante /
 stale / data_quality faible → `ABSTAIN`. Le sizing reste dans Advisor (Kelly unique,
 non dupliqué).
+
+**Capacité système bout en bout (démontrée, hermétique)** : `test_end_to_end_capability`
+prouve la chaîne complète avec un modèle SUPPORTED **de test** (jamais le ledger réel) :
+Gateway fraîche → `evaluate_live_batch` → `BET` → `adapt_live_batch` → pipeline Advisor
+→ `RECOMMENDED` → CLI `axon recommend` → audit persistant → **replay exact identique**.
+Distinction stricte **capacité** (démontrable) vs **activation réelle** (interdite tant
+que le modèle réel est `EXPERIMENTAL`, garanti par un test dédié). Le test ne modifie
+ni la maturity policy ni le ledger.
 
 ## 14. Limitations connues / conditions exactes d'un premier `SUPPORTED`
 

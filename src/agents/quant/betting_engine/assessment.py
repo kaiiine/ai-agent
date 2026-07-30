@@ -106,7 +106,7 @@ def assess_default_one_x_two(odds_observations: Sequence[OddsObservation] = ()) 
         league_id=FL1_LEAGUE_ID, season=FL1_SEASON,
         odds_observations=odds_observations,
         # La fraîcheur live est désormais CÂBLÉE (Gateway.data_freshness ->
-        # gateway_staleness_probe -> evaluate_live_event) et testée : le chemin de
+        # evaluate_live_event, score mesuré propagé) et testée : le chemin de
         # décision expose une fraîcheur mesurée -> capacité MEASURABLE. Distinct de
         # la CLV, qui reste NOT_YET_MEASURABLE faute de DONNÉES collectées.
         live_freshness_status=FRESHNESS_MEASURABLE,
