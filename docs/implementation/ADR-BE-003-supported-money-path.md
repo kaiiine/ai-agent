@@ -55,13 +55,27 @@ borne basse.
 - **Rôle en BE** : **gate** (`≥ min_model_reliability`) + **exposition** pour le
   sizing Advisor (qui la multiplie dans le Kelly fractionné → monotone : reliability
   plus basse ⇒ mise ≤, propriété du Lot 6 **inchangée**, caractérisée par test).
-- **V1** : aucune définition canonique par-modèle n'existe encore (nécessite un
-  historique de calibration réel — dette de données, comme la CLV). V1 assigne une
-  **reliability EXPLICITE par politique** (`bet_decision_policy.supported_model_reliability`),
-  conservatrice et versionnée — **jamais** une formule fabriquée type `1 − ECE`
-  (§7). C'est exactement la stratégie permise « SUPPORTED → reliability déterminée
-  par une politique explicite ». Une vraie reliability par-modèle remplacera cette
-  valeur via le même seam, sans nouveau fork.
+- **V1 (décision contractuelle tranchée)** : `model_reliability` d'un modèle
+  SUPPORTED = **valeur de policy versionnée** (`bet_decision_policy.supported_model_reliability
+  = 0.75`), utilisée à la fois comme **gate BE** et comme **multiplicateur de sizing
+  Advisor**. Cette valeur :
+  - **n'est PAS** une estimation empirique ;
+  - **n'est PAS** dérivée de `1 − ECE` ;
+  - **n'est PAS** une moyenne improvisée de métriques ;
+  - **n'est PAS** recalculée automatiquement depuis les métriques de calibration ;
+  - **ne doit jamais** être ajustée a posteriori pour augmenter les mises.
+
+  C'est la stratégie explicitement permise « SUPPORTED → reliability déterminée par
+  une politique » (§7), **transitoire**, pas une propriété statistique mesurée.
+- **Reliability empirique future** = `NOT IMPLEMENTED YET`. Classée **`DATA /
+  FUTURE_STATISTICAL_ADR`** (pas `CODE`). Elle exigera un **ADR statistique dédié
+  AVANT tout usage money-sensitive**, et au minimum : historique hors échantillon
+  suffisant · plusieurs périodes/folds · idéalement > 1 saison/ligue · définition
+  statistique justifiable · validation point-in-time · tests de stabilité ·
+  démonstration qu'elle **améliore** la politique de risque plutôt que de la rendre
+  arbitraire. Elle remplacera la valeur de policy via le **même seam**
+  (`bet_decision_policy` / le champ `model_reliability` déjà exposé), sans nouveau
+  fork architectural.
 
 ## Kelly : formule canonique unique
 Le Kelly `f* = (p·odds − 1)/(odds − 1)` sur `probability_low` vit **uniquement**

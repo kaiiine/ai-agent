@@ -226,9 +226,12 @@ architecturale complète et testée, activée mécaniquement le jour où un mod�
 `SUPPORTED`. Aucun nouveau fork architectural ne sera nécessaire alors.
 
 Restent **hors de ce chantier**, forks distincts explicites :
-- **reliability réelle par-modèle** (issue de calibration) : V1 utilise une valeur
-  de politique explicite ; la vraie reliability est une dette de DONNÉES (même
-  nature que la CLV), branchée via le même seam.
-- **sizing COMBO** (déjà différé côté Advisor/Combo).
+- **reliability empirique par-modèle** : **décision V1 tranchée = Option 1** — on
+  garde la valeur de policy (`0.75`, transitoire, non-empirique, jamais recalculée
+  ni ajustée a posteriori). La reliability empirique est **`NOT IMPLEMENTED YET`**,
+  classée **`DATA / FUTURE_STATISTICAL_ADR`** : différée jusqu'à un historique
+  suffisant, puis **ADR statistique dédié** avant tout usage money (conditions dans
+  ADR-BE-003). Sizing Advisor **inchangé** ; reliability **conservée** dans le sizing.
+- **sizing COMBO** (fork Advisor/Combo dédié).
 - **placement automatique** (BE-FR-014) : hors scope, toute sortie BET reste une
   proposition à validation humaine.
