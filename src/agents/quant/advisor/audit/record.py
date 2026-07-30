@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from ..policy import reason_codes
 from . import canonical, identity
 from .schema import (
     AUDIT_SCHEMA_VERSION,
@@ -20,7 +19,19 @@ from .schema import (
 )
 
 
-def _combo_trail(trace) -> ComboAuditTrail:
+def _materialized_combo_ids(recommendation) -> frozenset[str]:
+    """combo_id des combos réellement FINANCÉS (PortfolioLine COMBO) — jamais déduit
+    autrement que des lignes finales matérialisées."""
+    from ..domain.enums import LineType
+    ids: set[str] = set()
+    for pf in recommendation.portfolios:
+        for line in pf.lines:
+            if line.line_type is LineType.COMBO:
+                ids.add(line.line_id.removeprefix("line:"))
+    return frozenset(ids)
+
+
+def _combo_trail(trace, recommendation) -> ComboAuditTrail:
     NOT_VERIFIED = ComboBookmakerAcceptanceStatus.NOT_VERIFIED   # aucune donnée bookmaker en V1
     if not trace.combo_builder_invoked:
         # État 1 : combos jamais recherchés (allow_combos=False).
@@ -42,17 +53,22 @@ def _combo_trail(trace) -> ComboAuditTrail:
             combo_config_version=policy.config_version, bookmaker_acceptance_status=NOT_VERIFIED,
             materialization_status=ComboMaterializationStatus.NO_CANDIDATE, combo_signal=None)
 
-    # États 3+4 : combo admissible, acceptation bookmaker NON vérifiée, bloqué au sizing.
+    # États 3/4 : combo(s) admissible(s), acceptation bookmaker NON vérifiée. Le sizing
+    # EXISTE désormais (ADR-ADV-014) : MATERIALIZED si >=1 financé, sinon
+    # ADMISSIBLE_NOT_MATERIALIZED (écarté par les caps/budget). Jamais BLOCKED.
     prices = tuple(ComboPriceAudit(
         c.combo_id, c.pricing.worst_case_ev, c.pricing.expected_value, c.pricing.combined_odds,
         c.pricing.combined_prob_mean, c.pricing.combined_prob_low) for c in cr.admissible)
+    materialized = _materialized_combo_ids(recommendation)
+    any_materialized = any(c.combo_id in materialized for c in cr.admissible)
+    status = (ComboMaterializationStatus.MATERIALIZED if any_materialized
+              else ComboMaterializationStatus.ADMISSIBLE_NOT_MATERIALIZED)
     return ComboAuditTrail(
         builder_invoked=True, candidate_count=candidate_count, admissible_count=len(cr.admissible),
         rejection_reasons=tuple(c.rejection_reason for c in cr.rejected if c.rejection_reason),
         admissible_combos=prices, safety_margin=policy.safety_margin,
         combo_config_version=policy.config_version, bookmaker_acceptance_status=NOT_VERIFIED,
-        materialization_status=ComboMaterializationStatus.BLOCKED_SIZING_NOT_AVAILABLE,
-        combo_signal=reason_codes.COMBO_SIZING_NOT_AVAILABLE)
+        materialization_status=status, combo_signal=None)
 
 
 def build_envelope(
@@ -63,7 +79,7 @@ def build_envelope(
         request=request, config_snapshots=tuple(config_snapshots), adapted_batch=adapted_batch,
         policy_evaluations=tuple(trace.policy_evaluations),
         ranked_evaluations=tuple(trace.ranked_evaluations),
-        recommendation=recommendation, combos=_combo_trail(trace), be_run_id=be_run_id)
+        recommendation=recommendation, combos=_combo_trail(trace, recommendation), be_run_id=be_run_id)
     fingerprint = identity.request_fingerprint(request)
     return AdvisorAuditEnvelope(
         audit_schema_version=AUDIT_SCHEMA_VERSION,

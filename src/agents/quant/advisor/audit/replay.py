@@ -55,7 +55,7 @@ def replay_exact(envelope: dict, *, run_pipeline_fn=None) -> ReplayResult:
         "recommendation": (fresh.recommendation, payload["recommendation"]),
         "policy_evaluations": (tuple(fresh.trace.policy_evaluations), payload["policy_evaluations"]),
         "ranked_evaluations": (tuple(fresh.trace.ranked_evaluations), payload["ranked_evaluations"]),
-        "combos": (record._combo_trail(fresh.trace), payload["combos"]),
+        "combos": (record._combo_trail(fresh.trace, fresh.recommendation), payload["combos"]),
     }
     differences = [name for name, (fresh_obj, archived) in checks.items()
                    if _canon(fresh_obj) != _canon(archived)]

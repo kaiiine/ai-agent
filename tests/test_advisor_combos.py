@@ -279,7 +279,10 @@ def _configs():
                 combo_policy=load_combo_policy())
 
 
-def test_integration_up_to_sizing_fork():
+def test_integration_combos_are_sized_and_materialized():
+    """Sizing COMBO câblé (ADR-ADV-014) : allow_combos=True -> combos admissibles
+    sizés et MATÉRIALISÉS en PortfolioLine COMBO. allow_combos=False -> singles seuls,
+    aucune ligne COMBO, aucun bruit."""
     from src.agents.quant.advisor.input_adapter.schema import AdaptedBatch
     from src.agents.quant.advisor.pipeline import run_pipeline
     batch = AdaptedBatch("1", _DEC, (_adapted("c1", "e1", ("a1", "a2")),
@@ -287,15 +290,15 @@ def test_integration_up_to_sizing_fork():
     cfg = _configs()
 
     off = run_pipeline(batch, _request(allow_combos=False), **cfg).recommendation  # builder non appelé
-    assert not any(w.startswith(R.COMBO_SIZING_NOT_AVAILABLE) for w in off.warnings)
+    assert not any(w.startswith("combos:") for w in off.warnings)
+    assert all(line.line_type.value == "SINGLE" for pf in off.portfolios for line in pf.lines)
 
     on = run_pipeline(batch, _request(allow_combos=True), **cfg).recommendation    # builder appelé
-    # code STABLE machine-readable, distinguable d'un vrai NO_OPPORTUNITY.
-    assert any(w.startswith(R.COMBO_SIZING_NOT_AVAILABLE) for w in on.warnings)
-    # aucune PortfolioLine COMBO inventée : la frontière est bloquée par le sizing.
-    for pf in on.portfolios:
-        for line in pf.lines:
-            assert line.line_type.value == "SINGLE"
+    assert any(w.startswith("combos:") for w in on.warnings)                       # admissibles sizés
+    combo_lines = [line for pf in on.portfolios for line in pf.lines if line.line_type.value == "COMBO"]
+    assert combo_lines                                                             # >=1 ligne COMBO financée
+    for line in combo_lines:
+        assert line.stake > 0 and len(line.legs) == 2                              # jamais une mise nulle
 
 
 # ── Pureté / frontières ───────────────────────────────────────────────────────

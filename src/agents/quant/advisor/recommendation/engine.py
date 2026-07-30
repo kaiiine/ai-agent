@@ -35,6 +35,7 @@ def recommend(
     policy_evaluations: Sequence[CandidateEvaluation], ranking_result: RankingResult,
     request: RecommendationRequest, *, sizing_profiles: Mapping[str, SizingProfile],
     caps_config: "Mapping[str, PortfolioCaps]",
+    combos: Sequence = (),
 ) -> RecommendationResponse:
     from ..portfolio import build_portfolios      # lazy : casse le cycle d'import
     review = tuple(e for e in policy_evaluations if e.status is CandidateStatus.REVIEW_ONLY)
@@ -53,11 +54,12 @@ def recommend(
             portfolios=portfolios, review_candidates=review_candidates,
             rejection_summary=rejection_summary, warnings=(), audit_id=audit_id)
 
-    # RECOMMENDED : portefeuille(s) multi-single sur les ELIGIBLE classés (Lot 8).
+    # RECOMMENDED : portefeuille(s) sur les ELIGIBLE classés (Lot 8) + combos
+    # admissibles matérialisés dans le primaire (Lot 9/ADR-ADV-014).
     if ranking_result.ranked:
         portfolios = build_portfolios(
             ranking_result.ranked, request,
-            sizing_profiles=sizing_profiles, caps_config=caps_config)
+            sizing_profiles=sizing_profiles, caps_config=caps_config, combos=combos)
         if portfolios:
             return response(RecommendationOutcome.RECOMMENDED, portfolios=portfolios,
                             review_candidates=review)

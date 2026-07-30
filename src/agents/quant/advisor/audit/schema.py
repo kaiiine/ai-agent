@@ -29,7 +29,10 @@ class ComboBookmakerAcceptanceStatus(Enum):
 class ComboMaterializationStatus(Enum):
     NOT_APPLICABLE = "NOT_APPLICABLE"                # builder non invoqué (allow_combos=False)
     NO_CANDIDATE = "NO_CANDIDATE"                    # invoqué, aucun combo admissible
-    MATERIALIZED = "MATERIALIZED"                    # (jamais en V1)
+    MATERIALIZED = "MATERIALIZED"                    # >=1 combo admissible sizé -> PortfolioLine COMBO
+    ADMISSIBLE_NOT_MATERIALIZED = "ADMISSIBLE_NOT_MATERIALIZED"   # admissible mais non financé (caps/budget)
+    # Conservé pour la DÉSÉRIALISATION d'audits historiques (avant ADR-ADV-014) ;
+    # jamais produit par le code courant (le sizing COMBO existe désormais).
     BLOCKED_SIZING_NOT_AVAILABLE = "BLOCKED_SIZING_NOT_AVAILABLE"
 
 

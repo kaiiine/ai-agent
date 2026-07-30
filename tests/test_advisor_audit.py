@@ -239,19 +239,20 @@ def test_combo_state_no_admissible():
     assert c.materialization_status is ComboMaterializationStatus.NO_CANDIDATE
 
 
-def test_combo_state_admissible_blocked_sizing_and_survives_replay(tmp_path):
+def test_combo_state_materialized_and_survives_replay(tmp_path):
     env = _envelope(_request(allow_combos=True),
                     _batch(_adapted("e1", ("a1", "a2")), _adapted("e2", ("b1", "b2"))))
     c = _combos(env)
     assert c.admissible_count > 0
     assert c.bookmaker_acceptance_status is ComboBookmakerAcceptanceStatus.NOT_VERIFIED
-    assert c.materialization_status is ComboMaterializationStatus.BLOCKED_SIZING_NOT_AVAILABLE
-    assert c.combo_signal == R.COMBO_SIZING_NOT_AVAILABLE
-    # aucune PortfolioLine COMBO
-    for pf in env.payload.recommendation.portfolios:
-        for line in pf.lines:
-            assert line.line_type.value == "SINGLE"
-    # survit au round-trip + replay
+    # Sizing COMBO câblé (ADR-ADV-014) : combo admissible sizé -> MATERIALIZED, jamais bloqué.
+    assert c.materialization_status is ComboMaterializationStatus.MATERIALIZED
+    assert c.combo_signal is None
+    # au moins une PortfolioLine COMBO financée
+    combo_lines = [line for pf in env.payload.recommendation.portfolios
+                   for line in pf.lines if line.line_type.value == "COMBO"]
+    assert combo_lines and all(line.stake > 0 for line in combo_lines)
+    # survit au round-trip + replay EXACT (nouvel audit avec ligne COMBO financée)
     store = JsonlAuditStore(tmp_path / "a.jsonl")
     store.append(env)
     assert replay_exact(store.get(env.audit_id)).matches

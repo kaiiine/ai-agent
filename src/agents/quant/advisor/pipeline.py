@@ -17,7 +17,6 @@ from .domain.recommendations import RecommendationResponse
 from .domain.requests import RecommendationRequest
 from .input_adapter.schema import AdaptedBatch
 from .policy import PolicyConfig, evaluate_candidates
-from .policy import reason_codes
 from .portfolio.constraints import PortfolioCaps
 from .ranking import RankingProfile, rank
 from .recommendation import recommend
@@ -54,22 +53,27 @@ def run_pipeline(
     candidates = generate_candidates(adapted_batch)
     policy_evaluations = evaluate_candidates(candidates, request, config=policy_config)
     ranking_result = rank(policy_evaluations, profile=ranking_profile)
-    response = recommend(policy_evaluations, ranking_result, request,
-                         sizing_profiles=sizing_profiles, caps_config=portfolio_caps)
 
-    # allow_combos : builder appelé UNIQUEMENT si demandé. Combos admissibles
-    # évalués/classés mais NON misés (fork sizing COMBO) ; signal STABLE.
+    # allow_combos : builder appelé UNIQUEMENT si demandé, AVANT la recommandation
+    # pour que les combos admissibles entrent dans l'allocation (ADR-ADV-014).
     invoked = False
     combo_result: ComboResult | None = None
+    admissible_combos: tuple = ()
     if request.allow_combos and combo_policy is not None:
         invoked = True
         combo_result, _ = build_combos(ranking_result.ranked, request, combo_policy)
-        if combo_result.admissible:
-            note = (f"{reason_codes.COMBO_SIZING_NOT_AVAILABLE}: {len(combo_result.admissible)} "
-                    f"combo(s) admissible(s) évalué(s) et classé(s) mais NON misé(s) "
-                    f"(PortfolioLine.stake requis, aucun contrat de sizing combo) ; "
-                    f"acceptation bookmaker non vérifiée")
-            response = replace(response, warnings=tuple(response.warnings) + (note,))
+        admissible_combos = combo_result.admissible
+
+    response = recommend(policy_evaluations, ranking_result, request,
+                         sizing_profiles=sizing_profiles, caps_config=portfolio_caps,
+                         combos=admissible_combos)
+
+    # Combos admissibles : sizés/matérialisés dans le primaire (si caps le permettent).
+    # Note d'audit sur l'acceptation bookmaker (jamais un blocage) — le sizing EST dispo.
+    if admissible_combos:
+        note = (f"combos: {len(admissible_combos)} admissible(s) évalué(s) et sizé(s) "
+                f"(ADR-ADV-014) ; acceptation bookmaker non vérifiée (donnée non exposée en V1)")
+        response = replace(response, warnings=tuple(response.warnings) + (note,))
 
     trace = AuditTrace(
         policy_evaluations=tuple(policy_evaluations), ranked_evaluations=ranking_result.ranked,
