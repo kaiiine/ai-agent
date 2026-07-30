@@ -1,9 +1,11 @@
 {
-  "version": "1",
-  "notes": "Sizing V1 d'une ligne SINGLE (ADR-ADV-007, tranche minimale). fractional_kelly = fraction de Kelly par profil de risque ; per_line_cap_fraction = plafond de mise par ligne en part de bankroll. Valeurs INITIALES / placeholders à calibrer. Decimal en chaîne. Conservateur = fraction et cap plus faibles. En V1 (aucun modèle SUPPORTED) le sizing n'est exercé que par fixtures ELIGIBLE.",
+  "config_version": "1",
+  "effective_from": "2026-07-30",
+  "checksum": "cd8cf4bff6ce7e76e64bc7356b75472b34df3cc43e947afa93e514e2e5465d4a",
   "profiles": {
-    "CONSERVATIVE": { "fractional_kelly": "0.25", "per_line_cap_fraction": "0.05" },
-    "BALANCED":     { "fractional_kelly": "0.50", "per_line_cap_fraction": "0.10" },
-    "AGGRESSIVE":   { "fractional_kelly": "1.00", "per_line_cap_fraction": "0.20" }
-  }
+    "CONSERVATIVE": { "fractional_kelly": "0.25", "per_line_cap_fraction": "0.05", "combo_fractional_kelly": "0.125", "combo_line_cap_fraction": "0.025" },
+    "BALANCED":     { "fractional_kelly": "0.50", "per_line_cap_fraction": "0.10", "combo_fractional_kelly": "0.25",  "combo_line_cap_fraction": "0.05" },
+    "AGGRESSIVE":   { "fractional_kelly": "1.00", "per_line_cap_fraction": "0.20", "combo_fractional_kelly": "0.50",  "combo_line_cap_fraction": "0.10" }
+  },
+  "notes": "Sizing V1 SINGLE (ADR-ADV-007) + COMBO (ADR-ADV-014). fractional_kelly / per_line_cap_fraction = fraction de Kelly et plafond par ligne SINGLE (part de bankroll). combo_fractional_kelly / combo_line_cap_fraction = équivalents COMBO, PLUS CONSERVATEURS par POLICY V1 (invariant validé au chargement : 0 < combo_fractional_kelly <= fractional_kelly ; 0 < combo_line_cap_fraction <= per_line_cap_fraction). Le COMBO réutilise EXACTEMENT le Kelly canonique (compute_single_stake) sur combined_prob_low/combined_odds : aucune 2e formule. Le conservatisme combo est porté par (a) le pricing prudent (safety_margin, UNE fois, Lot 9) + (b) combo_fractional_kelly + (c) caps d'exposition sur CHAQUE jambe — jamais par une 2e correction de probabilité. Valeurs = policy V1 CONSERVATRICE (combo = moitié du single : escompte du sur-risque variance/corrélation résiduelle d'INDEPENDENT_ENOUGH), PAS des optima statistiques ; à recalibrer avec l'expérience réelle ; jamais ajustées a posteriori pour augmenter les mises. Decimal en chaîne. checksum = sha256 de config_version|effective_from|profiles (sort_keys), hors metadata."
 }

@@ -7,6 +7,7 @@ par les seuls plafonds présents (un `None` n'est jamais un plafond à 0)."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 from collections.abc import Mapping
@@ -26,23 +27,46 @@ _CONFIG_PATH = (
     pathlib.Path(__file__).resolve().parents[5]
     / "configs" / "advisor" / "sizing_policy.json"
 )
+_CHECKSUM_FIELDS = ("config_version", "effective_from", "profiles")
 
 
 @dataclass(frozen=True)
 class SizingProfile:
     fractional_kelly: Decimal
     per_line_cap_fraction: Decimal
+    # Équivalents COMBO (ADR-ADV-014), plus conservateurs. Défaut None : un profil
+    # construit sans paramètres combo ne peut pas sizer un combo (garde explicite).
+    combo_fractional_kelly: Decimal | None = None
+    combo_line_cap_fraction: Decimal | None = None
+
+
+def _expected_checksum(data: dict) -> str:
+    payload = {k: data[k] for k in _CHECKSUM_FIELDS}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def load_sizing_profiles(path: pathlib.Path = _CONFIG_PATH) -> Mapping[str, SizingProfile]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    return {
-        name: SizingProfile(
-            fractional_kelly=Decimal(p["fractional_kelly"]),
-            per_line_cap_fraction=Decimal(p["per_line_cap_fraction"]),
-        )
-        for name, p in data["profiles"].items()
-    }
+    for field in (*_CHECKSUM_FIELDS, "checksum"):
+        if field not in data:
+            raise ValueError(f"clé de configuration sizing manquante : {field}")
+    if data["checksum"] != _expected_checksum(data):
+        raise ValueError("checksum de configuration sizing invalide (intégrité money)")
+    profiles: dict[str, SizingProfile] = {}
+    for name, p in data["profiles"].items():
+        fk = Decimal(p["fractional_kelly"])
+        cap = Decimal(p["per_line_cap_fraction"])
+        combo_fk = Decimal(p["combo_fractional_kelly"])
+        combo_cap = Decimal(p["combo_line_cap_fraction"])
+        # Invariant V1 (money) : le COMBO n'est jamais plus agressif que le SINGLE.
+        if not (ZERO < combo_fk <= fk):
+            raise ValueError(f"{name}: 0 < combo_fractional_kelly <= fractional_kelly requis")
+        if not (ZERO < combo_cap <= cap):
+            raise ValueError(f"{name}: 0 < combo_line_cap_fraction <= per_line_cap_fraction requis")
+        profiles[name] = SizingProfile(
+            fractional_kelly=fk, per_line_cap_fraction=cap,
+            combo_fractional_kelly=combo_fk, combo_line_cap_fraction=combo_cap)
+    return profiles
 
 
 def kelly_fraction(probability_low: Decimal, bookmaker_odds: Decimal) -> Decimal:
