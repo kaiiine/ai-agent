@@ -72,6 +72,49 @@ def uniform_baseline(outcomes: Sequence[str]) -> dict:
     return evaluate([(uniform, o) for o in outcomes])
 
 
+def expected_calibration_error(predictions: Sequence[Prediction], n_bins: int = 10) -> dict:
+    """ECE mutualisée sur les 3 classes — MESURE de calibration, pas accuracy.
+
+    Pour chaque prédiction, chaque classe fournit une paire (proba prédite,
+    indicateur 0/1). Les paires sont regroupées par bin de proba ; l'ECE est la
+    moyenne pondérée des écarts |proba moyenne − fréquence réelle| par bin. Une
+    proba de 0,70 « bien calibrée » se réalise ~70 % du temps → écart faible.
+
+    Auto-descriptive (convention dans la sortie). Mesurée hors échantillon quand
+    `predictions` sont des prédictions walk-forward point-in-time.
+    """
+    pairs = [
+        (prob[c], 1.0 if c == outcome else 0.0)
+        for prob, outcome in predictions
+        for c in CLASSES
+    ]
+    n = len(pairs)
+    if n == 0:
+        return {"ece": None, "n_bins": n_bins, "n_pairs": 0, "per_bin": [],
+                "convention": "pooled_over_classes_abs_gap_weighted"}
+    sums = [0.0] * n_bins
+    preds = [0.0] * n_bins
+    counts = [0] * n_bins
+    for p, y in pairs:
+        b = min(int(p * n_bins), n_bins - 1)
+        sums[b] += y
+        preds[b] += p
+        counts[b] += 1
+    ece = 0.0
+    per_bin = []
+    for i in range(n_bins):
+        if counts[i] == 0:
+            per_bin.append({"bin": i, "count": 0, "mean_pred": None, "empirical": None})
+            continue
+        mean_pred = preds[i] / counts[i]
+        empirical = sums[i] / counts[i]
+        ece += (counts[i] / n) * abs(mean_pred - empirical)
+        per_bin.append({"bin": i, "count": counts[i],
+                        "mean_pred": round(mean_pred, 6), "empirical": round(empirical, 6)})
+    return {"ece": round(ece, 6), "n_bins": n_bins, "n_pairs": n, "per_bin": per_bin,
+            "convention": "pooled_over_classes_abs_gap_weighted"}
+
+
 def calibration_bin_counts(predictions: Sequence[Prediction], n_bins: int = 10) -> dict:
     """Compte des observations par bin de probabilité (par classe).
 

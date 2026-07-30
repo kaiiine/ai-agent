@@ -37,13 +37,20 @@ from src.agents.quant.betting_engine.core.market_model import (
 class OneXTwoModel:
     sport = "football"
     market_type = "MATCH_WINNER"
+    model_name = "one_x_two"
     model_version = "football.one_x_two.dixon_coles.v0"
 
-    # Plafond de calibration codé en dur : jamais SUPPORTED (défense en profondeur
-    # avec le statut déclaré dans manifest.py). Aucune calibration walk-forward.
-    _CEILING = DataReadiness.EXPERIMENTAL
     _REQUIRED = frozenset({"attack_strength", "defense_strength"})
     _SELECTIONS = ("home", "draw", "away")
+
+    @property
+    def _ceiling(self) -> DataReadiness:
+        """Plafond de calibration DÉRIVÉ du ledger de support (support_status.py) —
+        même source de vérité que manifest.GLOBAL_MODEL_STATUS. SUPPORTED seulement
+        si un `ModelSupportDecision` SUPPORTED est persisté (aucun aujourd'hui ->
+        EXPERIMENTAL). Jamais un littéral déclaratif, jamais SUPPORTED par défaut."""
+        from src.agents.quant.betting_engine.support_status import resolve_market_status
+        return resolve_market_status(self.model_name, self.model_version)
 
     # -- contrat MarketModel --------------------------------------------------
     def required_features(self) -> set[str]:
@@ -60,8 +67,9 @@ class OneXTwoModel:
             if not self._REQUIRED <= set(pf):
                 # attack/defense absentes => forme totalement absente (form:{cid}).
                 return DataReadiness.INSUFFICIENT_DATA
-        # Données présentes -> plafonné EXPERIMENTAL. JAMAIS SUPPORTED.
-        return self._CEILING
+        # Données présentes -> plafonné au statut dérivé du ledger (EXPERIMENTAL
+        # tant qu'aucun ModelSupportDecision SUPPORTED n'est persisté).
+        return self._ceiling
 
     def predict(
         self,

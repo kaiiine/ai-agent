@@ -17,6 +17,7 @@ Trois axes distincts, jamais mélangés :
 from __future__ import annotations
 
 from src.agents.quant.betting_engine.core.market_model import DataReadiness
+from src.agents.quant.betting_engine.support_status import resolve_market_status
 from .market_models.one_x_two import OneXTwoModel
 
 SPORT = "football"
@@ -40,11 +41,14 @@ REGISTERED_MARKET_MODELS: dict[str, object] = {
     "MATCH_WINNER": OneXTwoModel(),
 }
 
-# Statut GLOBAL de chaque modèle, codé en dur. EXPERIMENTAL tant qu'aucune
-# calibration walk-forward documentée n'existe (aucune aujourd'hui) : jamais
-# SUPPORTED. Déclaratif ici, ré-appliqué au runtime par le modèle lui-même.
+# Statut GLOBAL de chaque modèle, DÉRIVÉ du ledger de support (support_status.py),
+# plus un littéral codé en dur : `SUPPORTED` exige un `ModelSupportDecision`
+# persisté par le verdict mécanique de maturity.py. Aucune preuve persistée à ce
+# jour -> EXPERIMENTAL (sans I/O : ledger absent). Même source de vérité que le
+# plafond de readiness runtime du modèle -> aucune divergence possible.
 GLOBAL_MODEL_STATUS: dict[str, DataReadiness] = {
-    "MATCH_WINNER": DataReadiness.EXPERIMENTAL,
+    market_type: resolve_market_status(model.model_name, model.model_version)
+    for market_type, model in REGISTERED_MARKET_MODELS.items()
 }
 
 
