@@ -1,10 +1,11 @@
 """`OddsSnapshot` — une cote canonique observée sur une sélection (§5.3).
 
 Neutre : la `selection` est CANONIQUE (`home`/`draw`/`away`, `player_a`...), pas
-un slot bookmaker. Le pont `RawSelection`(slot) -> `OddsSnapshot`(rôle), via le
-`ParticipantRoleResolver`, n'est pas encore construit (bloquant end-to-end
-Winamax, cf. todos) : en attendant, un `OddsSnapshot` est fourni par un appelant
-déjà canonicalisé ou construit dans les tests.
+un slot bookmaker. Le pont `RawSelection`(slot) -> `OddsSnapshot`(rôle) est CONSTRUIT
+via `market_canonicalizer.canonicalize_market` (+ `resolve_participant_roles`) :
+consommé par `evaluate_live_event`, l'adaptateur Advisor et le recorder odds_history.
+Un `OddsSnapshot` peut aussi être fourni directement par un appelant déjà
+canonicalisé (tests).
 
 Les champs d'offre boostée (`boost_reference_odds`/`max_stake`/`max_payout`) sont
 présents pour compléter le contrat (ADR-017) mais NON utilisés en V0 : le
