@@ -253,3 +253,63 @@ def test_injected_probe_overrides_gateway_capability():
     res = _run(gw, freshness_probe=lambda: timedelta(hours=100))       # forcée trop vieille
     assert res.status is S.DATA_TOO_STALE
     assert gw.freshness_calls == []                                    # capacité Gateway non appelée
+
+
+# ── Money-path SUPPORTED end-to-end (§16 : module SYNTHÉTIQUE, jamais le ledger réel)
+from src.agents.quant.betting_engine.core.feature_set import EventFeatureSet    # noqa: E402
+from src.agents.quant.betting_engine.core.market_model import (                  # noqa: E402
+    DataReadiness, MarketPrediction, PredictionExplanation, UncertaintyStatus,
+)
+
+
+class _SupportedModel:
+    """Modèle SYNTHÉTIQUE de test, explicitement SUPPORTED avec intervalle ESTIMÉ.
+    Ne touche NI le ledger réel NI la politique de maturité (seam sport_modules)."""
+    def assess_data_readiness(self, event, features):
+        return DataReadiness.SUPPORTED
+
+    def predict_selections(self, event, features, point_in_time):
+        def mk(sel, low, fair, high):
+            return MarketPrediction(
+                "football", "MATCH_WINNER", sel, fair, low, high, UncertaintyStatus.ESTIMATED,
+                "synthetic.supported.v1", 1.0, DataReadiness.SUPPORTED, point_in_time,
+                PredictionExplanation([], set(), [], []))
+        # home a une vraie borne basse rentable (0.60·1.75−1 = 0.05 ≥ min_bet_ev).
+        return {"home": mk("home", 0.60, 0.63, 0.66),
+                "draw": mk("draw", 0.20, 0.22, 0.24),
+                "away": mk("away", 0.14, 0.15, 0.16)}
+
+
+class _SupportedModule:
+    model = _SupportedModel()
+
+    def build_feature_set(self, event, gateway, as_of):
+        return EventFeatureSet(
+            event_id=event.event_id, sport="football", as_of=as_of,
+            feature_set_version="synthetic-1.0", event_features={},
+            participant_features={}, matchup_features={}, missing_features=set())
+
+
+def _run_supported(gateway, *, freshness_probe=None):
+    return evaluate_live_event(
+        _event(), decision_time=_DECISION, event_resolver=_resolver(),
+        sports_gateway=gateway, coverage_check=_COVERED, freshness_probe=freshness_probe,
+        sport_modules={"football": _SupportedModule()},
+    )
+
+
+def test_supported_admissible_opportunity_reaches_bet_no_notimplemented():
+    res = _run_supported(_full_gateway())
+    assert res.status is S.EVALUATED                                   # money-path atteint, aucune exception
+    decisions = {d.selection: d for d in res.decisions}
+    assert decisions["home"].decision == "BET"                         # opportunité admissible -> BET
+    assert decisions["home"].reasons == []
+    assert decisions["home"].worst_case_ev is not None                 # économie exposée (sizing = Advisor)
+    assert "MODEL_NOT_SUPPORTED" not in decisions["home"].reasons
+
+
+def test_supported_but_stale_abstains_before_money_path():
+    gw = _FreshGateway(_df(_DECISION - timedelta(hours=100)))          # 100h > tolérance
+    res = _run_supported(gw)
+    assert res.status is S.DATA_TOO_STALE                              # gate data AVANT tout BET
+    assert res.decisions == ()                                         # money-path jamais atteint

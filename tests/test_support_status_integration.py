@@ -119,11 +119,13 @@ def test_experimental_selection_never_bets_no_fallback():
     assert d.evaluation_status is EvaluationStatus.EVALUATED   # audit calculé, pas de BET
 
 
-def test_supported_selection_reaches_deferred_money_frontier():
-    """Un modèle SUPPORTED est réellement SÉLECTIONNÉ (la branche supportée est
-    atteinte), et cette branche est la frontière money-sensitive explicitement
-    différée (borne basse EV / model_reliability non implémentés) : elle échoue
-    BRUYAMMENT (NotImplementedError), jamais par un fallback silencieux qui
-    inventerait un BET ou masquerait un ABSTAIN."""
-    with pytest.raises(NotImplementedError):
-        evaluate_selection(_pred(DataReadiness.SUPPORTED), _market())
+def test_supported_selection_reaches_money_path_no_notimplemented():
+    """Un modèle SUPPORTED est réellement SÉLECTIONNÉ et le money-path (BE-FR-012)
+    est atteint SANS NotImplementedError. Ici l'intervalle est NON estimé
+    (probability_low == fair) : pas de vraie borne basse -> ABSTAIN explicite, jamais
+    un BET sur la moyenne déguisée. Le chemin complet BET est prouvé ailleurs
+    (test_supported_money_path)."""
+    d = evaluate_selection(_pred(DataReadiness.SUPPORTED), _market())   # ne lève plus
+    assert d.decision == "ABSTAIN"
+    assert "UNCERTAINTY_NOT_ESTIMATED" in d.reasons
+    assert "MODEL_NOT_SUPPORTED" not in d.reasons                      # le modèle EST supporté

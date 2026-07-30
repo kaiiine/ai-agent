@@ -1,9 +1,11 @@
 # axon-betting-engine + sports-data-gateway — État des lieux (fondation statistique)
 
-**Statut :** fondation statistique BE/Gateway rendue honnête et opérationnelle.
-Aucun modèle promu `SUPPORTED` (verdict mécanique = `EXPERIMENTAL`). Infrastructure
-de promotion complète : une promotion future est une **conséquence mécanique** de
-nouvelles données, pas un nouveau chantier.
+**Statut :** fondation statistique BE/Gateway rendue honnête et opérationnelle **+
+money-path `SUPPORTED → BET` fermé** (BE-FR-012, ADR-BE-003). Aucun modèle promu
+`SUPPORTED` (verdict mécanique = `EXPERIMENTAL`) → aucun BET réel. Infrastructure de
+promotion **et** de décision monétaire complète : une promotion future est une
+**conséquence mécanique** de nouvelles données, pas un nouveau chantier
+architectural.
 **Sources de vérité :** `docs/architecture/PRD-axon-betting-engine.md`,
 `PRD-axon-sports-data-gateway-v2.md`, `ADR.md` (git history) — BE-FR-011/012/015/016,
 GW-NFR-003, ADR-004/011/014.
@@ -162,14 +164,33 @@ provenance. **Decimal :** les cotes BE sont `float` (contrat gelé antérieur) ;
 sécurité Decimal est imposée en aval (Advisor input_adapter). Aucune fixture
 synthétique n'est présentée comme réelle.
 
-## 13. Intégration `evaluate_live_batch` / sélection
+## 13. Money-path `SUPPORTED → BET` (BE-FR-012, ADR-BE-003)
+
+**Capacité architecturale (implémentée) vs activation réelle (non déclenchée) —
+distinction essentielle.**
 
 Le statut dérivé gouverne la sélection. Modèle `EXPERIMENTAL` → décisions
 `ABSTAIN`/`MODEL_NOT_SUPPORTED` (BE-FR-011), métriques calculées pour l'audit,
-**jamais de BET, jamais de fallback silencieux**. Un modèle `SUPPORTED` atteint
-réellement la branche supportée — laquelle reste la **frontière money-sensitive
-différée** (borne basse EV / model_reliability, BE-FR-012), qui échoue **bruyamment**
-(`NotImplementedError`), jamais par un fallback qui inventerait un BET.
+**jamais de BET, jamais de fallback silencieux** (inchangé). Le modèle réel restant
+`EXPERIMENTAL`, **aucun BET réel n'est produit**.
+
+Le `NotImplementedError` du chemin SUPPORTED est **supprimé** et remplacé par un
+money-path réel (**Option A** : le BE décide `BET`/`ABSTAIN` et expose l'économie ;
+il **ne size pas** — sizing = Advisor, ADR-ADV-007). Gates SUPPORTED : intervalle
+ESTIMÉ → `data_quality` ≥ seuil → `model_reliability` ≥ seuil → `worst_case_ev =
+probability_low·odds − 1 ≥ min_bet_ev` (borne basse, BE-FR-012). Reason codes
+distincts (`VALUE_BELOW_THRESHOLD`, `DATA_QUALITY_INSUFFICIENT`,
+`MODEL_RELIABILITY_INSUFFICIENT`, `UNCERTAINTY_NOT_ESTIMATED`,
+`MODEL_NOT_SUPPORTED`). Tout `BET` reste une **proposition** (BE-FR-014). Seuils :
+`configs/betting_engine/bet_decision_policy.json` (checksum), policy V1 à recalibrer.
+`model_reliability` V1 = valeur explicite de politique pour un SUPPORTED (§7),
+en attendant une reliability réelle par-modèle issue de calibration (dette de données).
+
+Prouvé par money-path synthétique (`test_supported_money_path`, module SUPPORTED de
+test dans `test_live_evaluation`) : `SUPPORTED` + opportunité admissible → `BET`
+end-to-end sans `NotImplementedError` ; `SUPPORTED` + borne basse insuffisante /
+stale / data_quality faible → `ABSTAIN`. Le sizing reste dans Advisor (Kelly unique,
+non dupliqué).
 
 ## 14. Limitations connues / conditions exactes d'un premier `SUPPORTED`
 
@@ -183,10 +204,14 @@ Il ne reste que **2 critères bloquants** pour un premier `SUPPORTED` mécanique
 Alors `assess_one_x_two_maturity` émet `SUPPORTED`, `append_support_decision` le
 persiste, et le modèle est sélectionnable.
 
+Le **money-path `SUPPORTED → BET`** est désormais **fermé** (ADR-BE-003) : capacité
+architecturale complète et testée, activée mécaniquement le jour où un modèle devient
+`SUPPORTED`. Aucun nouveau fork architectural ne sera nécessaire alors.
+
 Restent **hors de ce chantier**, forks distincts explicites :
-- **`SUPPORTED → BET`** (money-sensitive, BE-FR-012) : borne basse EV +
-  `model_reliability`. Aujourd'hui la branche supportée est atteinte mais lève
-  `NotImplementedError` (jamais une mise inventée). ADR/lot dédié.
-- **sizing COMBO** (déjà différé côté Advisor).
-Le Betting Engine n'est donc **pas** « entièrement terminé » : sa fondation
-statistique de promotion l'est, son money-path BET ne l'est pas.
+- **reliability réelle par-modèle** (issue de calibration) : V1 utilise une valeur
+  de politique explicite ; la vraie reliability est une dette de DONNÉES (même
+  nature que la CLV), branchée via le même seam.
+- **sizing COMBO** (déjà différé côté Advisor/Combo).
+- **placement automatique** (BE-FR-014) : hors scope, toute sortie BET reste une
+  proposition à validation humaine.

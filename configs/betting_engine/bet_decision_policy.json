@@ -1,0 +1,10 @@
+{
+  "config_version": "1",
+  "effective_from": "2026-07-30",
+  "checksum": "cb900668a5c3cbb1bde4f6f6a540cda2f8c1cc9d9f88560cb803dd6062bcc99d",
+  "min_bet_ev": 0.02,
+  "min_data_quality": 0.70,
+  "min_model_reliability": 0.60,
+  "supported_model_reliability": 0.75,
+  "notes": "Politique de décision BET/ABSTAIN du Betting Engine (BE-FR-011/012, PRD-BE §8.5, ADR-BE-003). Le BE DÉCIDE BET/ABSTAIN et expose l'économie ; il NE size PAS (le sizing Kelly vit dans Advisor, ADR-ADV-007, PRD-BE §8.5 ligne 500 : 'value_engine ne gère pas la bankroll ni le sizing'). Gates SUPPORTED : intervalle ESTIMÉ (sinon la borne basse n'existe pas) -> data_quality >= min_data_quality -> model_reliability >= min_model_reliability -> worst_case_ev = probability_low*odds-1 >= min_bet_ev (BE-FR-012 : EV à la borne basse, jamais à la moyenne). SEUILS = policy V1 non fixés par le PRD ('à calibrer une fois qu'il y a un historique réel de décisions', PRD-BE §Q3), pas des vérités statistiques ; à recalibrer ; jamais ajustés rétrospectivement pour faire parier un modèle précis. supported_model_reliability = valeur de reliability EXPLICITE (§7 : 'reliability déterminée par une politique explicite') attribuée à un modèle SUPPORTED en V1, en attendant une vraie reliability dérivée de calibration/ par (sport, market_type) (dette de données, comme la CLV) -- JAMAIS une formule fabriquée type 1-ECE. Valeurs = float (contrat économique BE gelé : cotes/proba/EV en float) ; aucune SOMME MONÉTAIRE n'est calculée dans le BE (Option A) -> aucun float monétaire ici, la sécurité Decimal est imposée en aval à la frontière de sizing Advisor. checksum = sha256 de config_version|effective_from|min_bet_ev|min_data_quality|min_model_reliability|supported_model_reliability (sort_keys)."
+}
