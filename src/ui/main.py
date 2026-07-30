@@ -28,6 +28,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "recommend":
     from src.agents.quant.advisor.cli import main as _advisor_recommend
     sys.exit(_advisor_recommend(sys.argv[2:]))
 
+# ── 0ter. `axon record-odds` — collecte odds_history (BE-FR-015), aucune logique ici ─
+if len(sys.argv) > 1 and sys.argv[1] == "record-odds":
+    from src.agents.quant.betting_engine.clv.cli import main as _record_odds
+    sys.exit(_record_odds(sys.argv[2:]))
+
 # ── 1. Boot loader — démarre immédiatement ────────────────────────────────────
 from rich.console import Console as _Console
 from src.ui.boot import BootLoader, report_step

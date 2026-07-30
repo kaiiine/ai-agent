@@ -14,6 +14,7 @@ from .clv import (
     compute_clv,
 )
 from .observation import ObservationPhase, OddsObservation
+from .recorder import RecordSummary, record_from_capture, record_odds
 from .store import JsonlOddsHistoryStore
 
 __all__ = [
@@ -26,4 +27,7 @@ __all__ = [
     "ObservationPhase",
     "OddsObservation",
     "JsonlOddsHistoryStore",
+    "RecordSummary",
+    "record_odds",
+    "record_from_capture",
 ]

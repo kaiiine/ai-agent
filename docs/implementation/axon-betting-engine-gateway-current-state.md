@@ -121,12 +121,17 @@ ajuster rétrospectivement pour promouvoir un modèle. **CLV requise** (absence 
 positive). **10 folds = une seule saison/ligue** : absence de fuite garantie, mais
 pas une preuve de robustesse inter-saisons (d'où `max_fold_brier_spread` = monitoring).
 
-## 9. CLV — `NOT_YET_MEASURABLE`
+## 9. CLV — `NOT_YET_MEASURABLE`, mais collecte OPÉRATIONNELLE
 
-Aucune paire décision/clôture n'existe (aucun odds_history). Structure de collecte
-posée (`clv/` : `OddsObservation` Decimal, `JsonlOddsHistoryStore` append-only,
-`compute_clv` point-in-time, `clv_readiness`). Absence **jamais convertie en 0**
-(`mean_clv=None`). Câble BE-FR-015.
+Aucune paire décision/clôture n'existe *encore* (aucun odds_history accumulé).
+Structure ET **collecte** posées (`clv/`) : `OddsObservation` Decimal,
+`JsonlOddsHistoryStore` append-only, `compute_clv` point-in-time, `clv_readiness`,
+**`recorder`** (scan/replay → observations canoniques, réutilise le canonicalizer,
+aucune recomputation) et **CLI `axon record-odds --capture … --phase decision|closing`**
+(offline sur capture réelle ou synthétique, provenance persistée verbatim). Rejouer
+DECISION puis CLOSING rend la CLV `MEASURABLE` (prouvé hermétiquement). Absence
+**jamais convertie en 0** (`mean_clv=None`). Câble BE-FR-015. **Reste** : capturer de
+vrais états Winamax (réseau — dette EXTERNAL) pour accumuler des cotes réelles.
 
 ## 10. Freshness — mesurée au Gateway ET propagée au point de décision
 
