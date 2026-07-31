@@ -33,17 +33,17 @@ def test_every_discovered_sport_appears():
 def test_validated_models_are_model_capable_experimental():
     cov = universal_coverage(_DISCOVERED)
     by_id = {r.winamax_sport_id: r for r in cov.rows}
-    for sid in (1, 2, 3, 16):                                 # football/basket/baseball/NFL
+    for sid in (1, 2, 3, 16, 23):                            # football/basket/baseball/NFL/volley
         assert by_id[sid].model_capable is True
         assert by_id[sid].maturity == "EXPERIMENTAL"         # dérivé du ledger, jamais SUPPORTED
         assert by_id[sid].blocker is None
-    assert cov.sports_model_capable == 4 and cov.sports_supported == 0
+    assert cov.sports_model_capable == 5 and cov.sports_supported == 0
 
 
 def test_unmodeled_and_new_sports_are_flagged_not_ignored():
     cov = universal_coverage(_DISCOVERED)
     by_id = {r.winamax_sport_id: r for r in cov.rows}
-    for sid in (4, 5, 23, 777):                              # hockey/tennis/volley + Kabaddi (nouveau)
+    for sid in (4, 5, 777):                                  # hockey/tennis + Kabaddi (nouveau)
         assert by_id[sid].model_capable is False
         assert by_id[sid].blocker == SPORT_DISCOVERED_MODEL_UNAVAILABLE
     assert by_id[777].sport_name == "Kabaddi"                # sport futur inconnu, visible (§32)

@@ -37,11 +37,16 @@ def _assess_nfl(_odds=()):
     return assess_nfl()
 
 
+def _assess_volley(_odds=()):
+    from .sports.volleyball.moneyline import assess_volleyball
+    return assess_volleyball()
+
+
 _ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a,
               "laliga": assess_laliga, "bundesliga": assess_bundesliga,
               "championship": assess_championship, "eredivisie": assess_eredivisie,
               "primeira-liga": assess_primeira_liga, "nba": _assess_nba, "mlb": _assess_mlb,
-              "nfl": _assess_nfl}
+              "nfl": _assess_nfl, "volley": _assess_volley}
 
 
 def render(assessment) -> list[str]:
