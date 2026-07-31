@@ -43,6 +43,13 @@ if len(sys.argv) > 1 and sys.argv[1] == "readiness":
     from src.agents.quant.betting_engine.readiness_cli import main as _readiness
     sys.exit(_readiness(sys.argv[2:]))
 
+# ── 0sexies. `axon providers-discover` — découverte de sources (Tavily), hors money-path (§25) ─
+if len(sys.argv) > 1 and sys.argv[1] == "providers-discover":
+    from dotenv import load_dotenv
+    load_dotenv()
+    from src.agents.quant.gateway.providers.discover_cli import main as _discover
+    sys.exit(_discover(sys.argv[2:]))
+
 # ── 1. Boot loader — démarre immédiatement ────────────────────────────────────
 from rich.console import Console as _Console
 from src.ui.boot import BootLoader, report_step

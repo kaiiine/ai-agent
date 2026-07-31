@@ -49,11 +49,35 @@ def render(matrix, source: str) -> list[str]:
     return lines
 
 
+def render_all_sports(cov) -> list[str]:
+    lines = [
+        f"Couverture UNIVERSELLE [winamax.fr/live] — {cov.sports_discovered} sports découverts",
+        f"  model-capable : {cov.sports_model_capable}   SUPPORTED : {cov.sports_supported}",
+        f"  {'sportId':>7}  {'sport':22} {'modèle':16} {'issues':6} {'maturité':12} bloqueur",
+    ]
+    for r in cov.rows:
+        model = r.methodology or "—"
+        outc = str(r.outcomes) if r.outcomes else "—"
+        lines.append(f"  {r.winamax_sport_id:>7}  {r.sport_name[:22]:22} {model:16} {outc:6} "
+                     f"{r.maturity:12} {r.blocker or ''}")
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="axon coverage", description="Couverture Winamax -> modèle (§16).")
+    p = argparse.ArgumentParser(prog="axon coverage", description="Couverture Winamax -> modèle (§16/§24).")
     p.add_argument("--sport", default="football")
     p.add_argument("--capture", default=None, help="rejouer une capture (offline) au lieu du live")
+    p.add_argument("--all-sports", action="store_true",
+                   help="matrice UNIVERSELLE : tous les sports Winamax découverts × modèles validés")
     args = p.parse_args(argv)
+
+    if args.all_sports:
+        from .bookmakers.winamax.connector import WinamaxConnector
+        from .universal_coverage import universal_coverage
+        cov = universal_coverage(WinamaxConnector().discover_sports())
+        for line in render_all_sports(cov):
+            print(line)
+        return 0
 
     events, source = _scan(args)
     matrix = coverage_matrix(events, args.sport)

@@ -117,6 +117,19 @@ def _build_markets(
     return markets
 
 
+def sports_from_state(state: dict) -> dict[int, str]:
+    """Extrait la liste des sports (sportId -> nom) d'un `PRELOADED_STATE` — pur, testable."""
+    out: dict[int, str] = {}
+    for sid, s in (state.get("sports") or {}).items():
+        try:
+            key = int(sid)
+        except (TypeError, ValueError):
+            continue
+        name = s.get("sportName") if isinstance(s, dict) else s
+        out[key] = str(name) if name else str(sid)
+    return out
+
+
 def parse_catalog(
     state: dict, sport: str, sport_id: int, *, now: datetime | None = None
 ) -> list[RawBookmakerEvent]:
@@ -186,6 +199,12 @@ class WinamaxConnector:
             raise ValueError(f"Sport inconnu : {sport}. Choix : {sorted(SPORT_IDS)}")
         state = _fetch_state(sport_id)
         return parse_catalog(state, sport.lower(), sport_id)
+
+    def discover_sports(self) -> dict[int, str]:
+        """Découverte DYNAMIQUE de tous les sports exposés par Winamax (sportId -> nom).
+        Source de vérité = le catalogue live, jamais une whitelist codée (§1/§32) : un
+        nouveau sport ajouté par Winamax apparaît sans modifier ce code."""
+        return sports_from_state(_fetch_state(1))
 
     def market_mapping(self) -> dict:
         """Table lisible des (betTypeName, template) reconnus -> `MarketType`."""
