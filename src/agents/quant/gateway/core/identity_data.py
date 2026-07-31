@@ -110,6 +110,53 @@ TEAMS: list[CanonicalEntity] = [
     CanonicalEntity("team:football:ita:torino", "Torino FC", ["Torino"], {"football_data_org": "586"}),
     CanonicalEntity("team:football:ita:lecce", "US Lecce", ["Lecce"], {"football_data_org": "5890"}),
     CanonicalEntity("team:football:ita:como", "Como 1907", ["Côme", "Como"], {"football_data_org": "7397"}),
+
+    # LaLiga (20 équipes, saison 2025-2026) — scope esp. IDs football_data_org VÉRIFIÉS
+    # EN DIRECT (competitions/PD/matches, 2026-07-31). tid Winamax 36 confirmé LaLiga par
+    # chevauchement de roster (0.75 vs PD ; competition_identity.disambiguate). Aliases =
+    # nom EXACT Winamax (scan tid 36) ; un absent -> UNRESOLVED (isolé), jamais mal résolu.
+    CanonicalEntity("team:football:esp:athletic_bilbao", "Athletic Club", ["Athletic Bilbao", "Bilbao"], {"football_data_org": "77"}),
+    CanonicalEntity("team:football:esp:atletico_madrid", "Club Atlético de Madrid", ["Atletico Madrid", "Atlético Madrid"], {"football_data_org": "78"}),
+    CanonicalEntity("team:football:esp:osasuna", "CA Osasuna", ["Osasuna"], {"football_data_org": "79"}),
+    CanonicalEntity("team:football:esp:espanyol", "RCD Espanyol de Barcelona", ["Espanyol Barcelone", "Espanyol"], {"football_data_org": "80"}),
+    CanonicalEntity("team:football:esp:barcelona", "FC Barcelona", ["FC Barcelone", "Barcelone", "Barcelona"], {"football_data_org": "81"}),
+    CanonicalEntity("team:football:esp:getafe", "Getafe CF", ["Getafe"], {"football_data_org": "82"}),
+    CanonicalEntity("team:football:esp:real_madrid", "Real Madrid CF", ["Real Madrid"], {"football_data_org": "86"}),
+    CanonicalEntity("team:football:esp:rayo_vallecano", "Rayo Vallecano de Madrid", ["Rayo Vallecano"], {"football_data_org": "87"}),
+    CanonicalEntity("team:football:esp:levante", "Levante UD", ["Levante"], {"football_data_org": "88"}),
+    CanonicalEntity("team:football:esp:mallorca", "RCD Mallorca", ["Mallorca"], {"football_data_org": "89"}),
+    CanonicalEntity("team:football:esp:real_betis", "Real Betis Balompié", ["Betis Séville", "Real Betis", "Betis"], {"football_data_org": "90"}),
+    CanonicalEntity("team:football:esp:real_sociedad", "Real Sociedad de Fútbol", ["Real Sociedad"], {"football_data_org": "92"}),
+    CanonicalEntity("team:football:esp:villarreal", "Villarreal CF", ["Villarreal"], {"football_data_org": "94"}),
+    CanonicalEntity("team:football:esp:valencia", "Valencia CF", ["Valence", "Valencia"], {"football_data_org": "95"}),
+    CanonicalEntity("team:football:esp:alaves", "Deportivo Alavés", ["Alaves", "Alavés"], {"football_data_org": "263"}),
+    CanonicalEntity("team:football:esp:elche", "Elche CF", ["Elche"], {"football_data_org": "285"}),
+    CanonicalEntity("team:football:esp:girona", "Girona FC", ["Girona"], {"football_data_org": "298"}),
+    CanonicalEntity("team:football:esp:celta_vigo", "RC Celta de Vigo", ["Celta Vigo", "Celta"], {"football_data_org": "558"}),
+    CanonicalEntity("team:football:esp:sevilla", "Sevilla FC", ["FC Séville", "Sevilla"], {"football_data_org": "559"}),
+    CanonicalEntity("team:football:esp:oviedo", "Real Oviedo", ["Real Oviedo", "Oviedo"], {"football_data_org": "1048"}),
+
+    # Bundesliga (18 équipes, saison 2025-2026) — scope deu. IDs football_data_org VÉRIFIÉS
+    # EN DIRECT (competitions/BL1/matches, 2026-07-31). tid Winamax 42 DÉSAMBIGUÏSÉ par roster
+    # (0.556 vs BL1 allemand ; tid 29 = 0.0 = Bundesliga AUTRICHIENNE, non onboardée).
+    CanonicalEntity("team:football:deu:koln", "1. FC Köln", ["FC Cologne", "Cologne", "Köln"], {"football_data_org": "1"}),
+    CanonicalEntity("team:football:deu:hoffenheim", "TSG 1899 Hoffenheim", ["TSG Hoffenheim", "Hoffenheim"], {"football_data_org": "2"}),
+    CanonicalEntity("team:football:deu:leverkusen", "Bayer 04 Leverkusen", ["Bayer Leverkusen", "Leverkusen"], {"football_data_org": "3"}),
+    CanonicalEntity("team:football:deu:dortmund", "Borussia Dortmund", ["Dortmund"], {"football_data_org": "4"}),
+    CanonicalEntity("team:football:deu:bayern", "FC Bayern München", ["Bayern Munich", "Bayern München", "Bayern"], {"football_data_org": "5"}),
+    CanonicalEntity("team:football:deu:hamburger", "Hamburger SV", ["Hambourg", "Hamburg"], {"football_data_org": "7"}),
+    CanonicalEntity("team:football:deu:stuttgart", "VfB Stuttgart", ["Stuttgart"], {"football_data_org": "10"}),
+    CanonicalEntity("team:football:deu:wolfsburg", "VfL Wolfsburg", ["Wolfsburg", "Wolfsbourg"], {"football_data_org": "11"}),
+    CanonicalEntity("team:football:deu:werder_bremen", "SV Werder Bremen", ["Werder Brême", "Werder Bremen"], {"football_data_org": "12"}),
+    CanonicalEntity("team:football:deu:mainz", "1. FSV Mainz 05", ["Mayence", "Mainz"], {"football_data_org": "15"}),
+    CanonicalEntity("team:football:deu:augsburg", "FC Augsburg", ["Augsbourg", "Augsburg"], {"football_data_org": "16"}),
+    CanonicalEntity("team:football:deu:freiburg", "SC Freiburg", ["Fribourg", "Freiburg"], {"football_data_org": "17"}),
+    CanonicalEntity("team:football:deu:monchengladbach", "Borussia Mönchengladbach", ["Borussia Mönchengladbach", "Mönchengladbach", "Gladbach"], {"football_data_org": "18"}),
+    CanonicalEntity("team:football:deu:frankfurt", "Eintracht Frankfurt", ["Eintracht Francfort", "Frankfurt", "Francfort"], {"football_data_org": "19"}),
+    CanonicalEntity("team:football:deu:st_pauli", "FC St. Pauli 1910", ["St. Pauli", "St Pauli"], {"football_data_org": "20"}),
+    CanonicalEntity("team:football:deu:union_berlin", "1. FC Union Berlin", ["Union Berlin"], {"football_data_org": "28"}),
+    CanonicalEntity("team:football:deu:heidenheim", "1. FC Heidenheim 1846", ["Heidenheim"], {"football_data_org": "44"}),
+    CanonicalEntity("team:football:deu:leipzig", "RB Leipzig", ["RB Leipzig", "Leipzig"], {"football_data_org": "721"}),
 ]
 
 LEAGUE_TEAMS: dict[str, list[str]] = {
@@ -138,5 +185,22 @@ LEAGUE_TEAMS: dict[str, list[str]] = {
         "team:football:ita:udinese", "team:football:ita:hellas_verona", "team:football:ita:cremonese",
         "team:football:ita:sassuolo", "team:football:ita:pisa", "team:football:ita:torino",
         "team:football:ita:lecce", "team:football:ita:como",
+    ],
+    "competition:football:esp:laliga": [
+        "team:football:esp:athletic_bilbao", "team:football:esp:atletico_madrid", "team:football:esp:osasuna",
+        "team:football:esp:espanyol", "team:football:esp:barcelona", "team:football:esp:getafe",
+        "team:football:esp:real_madrid", "team:football:esp:rayo_vallecano", "team:football:esp:levante",
+        "team:football:esp:mallorca", "team:football:esp:real_betis", "team:football:esp:real_sociedad",
+        "team:football:esp:villarreal", "team:football:esp:valencia", "team:football:esp:alaves",
+        "team:football:esp:elche", "team:football:esp:girona", "team:football:esp:celta_vigo",
+        "team:football:esp:sevilla", "team:football:esp:oviedo",
+    ],
+    "competition:football:deu:bundesliga": [
+        "team:football:deu:koln", "team:football:deu:hoffenheim", "team:football:deu:leverkusen",
+        "team:football:deu:dortmund", "team:football:deu:bayern", "team:football:deu:hamburger",
+        "team:football:deu:stuttgart", "team:football:deu:wolfsburg", "team:football:deu:werder_bremen",
+        "team:football:deu:mainz", "team:football:deu:augsburg", "team:football:deu:freiburg",
+        "team:football:deu:monchengladbach", "team:football:deu:frankfurt", "team:football:deu:st_pauli",
+        "team:football:deu:union_berlin", "team:football:deu:heidenheim", "team:football:deu:leipzig",
     ],
 }

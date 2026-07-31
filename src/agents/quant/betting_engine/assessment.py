@@ -113,21 +113,38 @@ def assess_default_one_x_two(odds_observations: Sequence[OddsObservation] = ()) 
     )
 
 
-def assess_serie_a(odds_observations: Sequence[OddsObservation] = ()) -> MaturityAssessment:
-    """Même modèle (OneXTwoModel, MÊME famille — pas une nouvelle méthodologie), même
-    walk-forward, appliqués au dataset réel Serie A 2025-26 (football-data.org). Verdict
-    MÉCANIQUE : la Serie A reste EXPERIMENTAL tant que les critères ne passent pas — la
-    seule chose que l'onboarding change est l'existence des DONNÉES, jamais la maturité."""
+def _assess_competition(loader, league_id, season, odds_observations) -> MaturityAssessment:
+    """Générique — MÊME modèle (OneXTwoModel), MÊME walk-forward, sur le dataset réel
+    d'une compétition. Verdict MÉCANIQUE : une compétition onboardée reste EXPERIMENTAL
+    tant que les critères ne passent pas. L'onboarding ajoute des DONNÉES, jamais de la
+    maturité — aucune promotion manuelle, aucune nouvelle méthodologie."""
     from src.agents.quant.gateway.core.identity_data import TEAMS
     from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
-    from .calibration.historical_dataset import SA_LEAGUE_ID, SA_SEASON, load_sa_2025
     from .sports.football.market_models.one_x_two import OneXTwoModel
 
     resolver = IdentityResolver(TEAMS)
-    matches, _fingerprint, _n_finished = load_sa_2025(resolver)
+    matches, _fingerprint, _n_finished = loader(resolver)
     return assess_one_x_two_maturity(
         matches=matches, model=OneXTwoModel(),
-        league_id=SA_LEAGUE_ID, season=SA_SEASON,
+        league_id=league_id, season=season,
         odds_observations=odds_observations,
         live_freshness_status=FRESHNESS_MEASURABLE,
     )
+
+
+def assess_serie_a(odds_observations: Sequence[OddsObservation] = ()) -> MaturityAssessment:
+    """Serie A 2025-26 (dataset réel football-data.org) — verdict mécanique EXPERIMENTAL."""
+    from .calibration.historical_dataset import SA_LEAGUE_ID, SA_SEASON, load_sa_2025
+    return _assess_competition(load_sa_2025, SA_LEAGUE_ID, SA_SEASON, odds_observations)
+
+
+def assess_laliga(odds_observations: Sequence[OddsObservation] = ()) -> MaturityAssessment:
+    """LaLiga 2025-26 (dataset réel football-data.org) — verdict mécanique EXPERIMENTAL."""
+    from .calibration.historical_dataset import PD_LEAGUE_ID, PD_SEASON, load_pd_2025
+    return _assess_competition(load_pd_2025, PD_LEAGUE_ID, PD_SEASON, odds_observations)
+
+
+def assess_bundesliga(odds_observations: Sequence[OddsObservation] = ()) -> MaturityAssessment:
+    """Bundesliga (Allemagne) 2025-26 (dataset réel football-data.org) — mécanique EXPERIMENTAL."""
+    from .calibration.historical_dataset import BL1_LEAGUE_ID, BL1_SEASON, load_bl1_2025
+    return _assess_competition(load_bl1_2025, BL1_LEAGUE_ID, BL1_SEASON, odds_observations)

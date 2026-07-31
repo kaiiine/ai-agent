@@ -14,7 +14,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-_VERIFICATION_METHODS = {"manual", "snapshot", "live_call", "unverified"}
+# "roster_overlap" : désambiguïsation déterministe par chevauchement de roster
+# (competition_identity.disambiguate) — preuve plus forte qu'un nom, cf. les 2 « Bundesliga ».
+_VERIFICATION_METHODS = {"manual", "snapshot", "live_call", "roster_overlap", "unverified"}
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,18 @@ WINAMAX_COMPETITION_MAPPINGS: list[WinamaxCompetitionMapping] = [
         "33", "competition:football:ita:serie_a", _VERIFIED, "live_call",
         "carto §3 : tournamentId 33 = « Serie A » (scan live 2026-07-31) ; équipes Serie A "
         "peuplées au registre (IDs football_data_org vérifiés en direct, endpoint SA/matches)",
+    ),
+    WinamaxCompetitionMapping(
+        "36", "competition:football:esp:laliga", _VERIFIED, "roster_overlap",
+        "tid 36 = « LaLiga » confirmé par chevauchement de roster (0.75 vs PD, "
+        "competition_identity.disambiguate) ; équipes peuplées (IDs football_data_org PD)",
+    ),
+    WinamaxCompetitionMapping(
+        # DÉSAMBIGUÏSATION homonyme : tid 42 (0.556 vs BL1 allemand) vs tid 29 (0.0 =
+        # Bundesliga AUTRICHIENNE). tid 42 retenu par roster, JAMAIS par le nom seul (§9).
+        "42", "competition:football:deu:bundesliga", _VERIFIED, "roster_overlap",
+        "tid 42 = « Bundesliga » (Allemagne) désambiguïsé par roster (0.556 vs BL1 ; "
+        "tid 29 autrichien = 0.0) ; équipes peuplées (IDs football_data_org BL1)",
     ),
 ]
 

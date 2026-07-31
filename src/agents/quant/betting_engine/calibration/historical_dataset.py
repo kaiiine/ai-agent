@@ -31,6 +31,14 @@ SA_LEAGUE_ID = "competition:football:ita:serie_a"
 SA_SEASON = "2025"
 DEFAULT_SA_FIXTURE = _FIXTURES / "sa_2025_matches.json"
 
+PD_LEAGUE_ID = "competition:football:esp:laliga"
+PD_SEASON = "2025"
+DEFAULT_PD_FIXTURE = _FIXTURES / "pd_2025_matches.json"
+
+BL1_LEAGUE_ID = "competition:football:deu:bundesliga"
+BL1_SEASON = "2025"
+DEFAULT_BL1_FIXTURE = _FIXTURES / "bl1_2025_matches.json"
+
 
 def load_competition_season(
     resolver: IdentityResolver, path: Path, league_id: str, season: str,
@@ -79,3 +87,13 @@ def load_fl1_2025(resolver: IdentityResolver, path: Path = DEFAULT_FL1_FIXTURE):
 def load_sa_2025(resolver: IdentityResolver, path: Path = DEFAULT_SA_FIXTURE):
     """Serie A 2025-26 (wrapper du chargeur générique) — onboardée le 2026-07-31."""
     return load_competition_season(resolver, path, SA_LEAGUE_ID, SA_SEASON)
+
+
+def load_pd_2025(resolver: IdentityResolver, path: Path = DEFAULT_PD_FIXTURE):
+    """LaLiga 2025-26 (wrapper du chargeur générique)."""
+    return load_competition_season(resolver, path, PD_LEAGUE_ID, PD_SEASON)
+
+
+def load_bl1_2025(resolver: IdentityResolver, path: Path = DEFAULT_BL1_FIXTURE):
+    """Bundesliga (Allemagne) 2025-26 (wrapper du chargeur générique)."""
+    return load_competition_season(resolver, path, BL1_LEAGUE_ID, BL1_SEASON)

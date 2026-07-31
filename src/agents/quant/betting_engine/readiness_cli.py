@@ -9,11 +9,17 @@ from __future__ import annotations
 
 import argparse
 
-from .assessment import assess_default_one_x_two, assess_serie_a
+from .assessment import (
+    assess_bundesliga,
+    assess_default_one_x_two,
+    assess_laliga,
+    assess_serie_a,
+)
 from .maturity import Verdict
 
 # Compétitions ayant un dataset réel embarqué -> readiness mesurable par walk-forward.
-_ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a}
+_ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a,
+              "laliga": assess_laliga, "bundesliga": assess_bundesliga}
 
 
 def render(assessment) -> list[str]:

@@ -29,3 +29,19 @@
   competition_type: league
   tier: 1
   status: active
+
+- canonical_id: "competition:football:esp:laliga"
+  sport: football
+  name: "LaLiga"
+  country_code: ES
+  competition_type: league
+  tier: 1
+  status: active
+
+- canonical_id: "competition:football:deu:bundesliga"
+  sport: football
+  name: "Bundesliga"
+  country_code: DE
+  competition_type: league
+  tier: 1
+  status: active
