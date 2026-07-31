@@ -13,6 +13,9 @@ from src.agents.quant.betting_engine.bookmakers.winamax.record_replay import (
 )
 from src.agents.quant.betting_engine.capability import (
     COMPETITION_NOT_RESOLVED,
+    DATA_UNAVAILABLE,
+    SPORT_NOT_SUPPORTED,
+    SPORT_UNAVAILABLE,
     coverage_matrix,
     market_capability,
 )
@@ -70,12 +73,50 @@ def test_coverage_isolates_unsupported_competition():
     assert m.by_reason.get(COMPETITION_NOT_RESOLVED) == 1
 
 
+def test_capability_lattice_distinguishes_data_gap_from_model_gap():
+    # Le treillis en couches (§5) doit rendre observable catalogue ≠ data ≠ model.
+    m = coverage_matrix(_events(), "football")
+    by_name = {c.competition_name: c for c in m.capabilities}
+
+    l1 = by_name["Ligue 1 McDonald's®"]
+    assert l1.model_capable is True and l1.data_capable is True
+    assert l1.capability_state == "EXPERIMENTAL"           # modèle + données + maturité
+
+    # MLS : un modèle football MATCH_WINNER EXISTERAIT (model_capable) — c'est la
+    # DONNÉE (identité/historique) qui manque. Donc DATA_UNAVAILABLE, PAS un manque
+    # de modèle. C'est le cœur de l'honnêteté multisport.
+    mls = by_name["Major League Soccer"]
+    assert mls.model_capable is True                        # le modèle s'appliquerait
+    assert mls.data_capable is False                        # mais aucune donnée ne résout
+    assert mls.capability_state == DATA_UNAVAILABLE
+    assert mls.reason_unavailable == COMPETITION_NOT_RESOLVED   # rétro-compat
+
+    # Colonnes de couverture DISTINCTES (§19).
+    assert m.competitions_model_capable == 2               # les deux ont un modèle applicable
+    assert m.competitions_data_capable == 1                # seule Ligue 1 a les données
+    assert m.competitions_evaluable == 1
+    assert m.by_state.get(DATA_UNAVAILABLE) == 1
+
+
+def test_capability_state_sport_unavailable_when_no_module():
+    # Vu comme du "tennis" (aucun module) : ni modèle ni données -> SPORT_UNAVAILABLE.
+    m = coverage_matrix(_events(), "tennis")
+    for c in m.capabilities:
+        assert c.model_capable is False and c.data_capable is False
+        assert c.capability_state == SPORT_UNAVAILABLE
+        assert c.reason_unavailable == SPORT_NOT_SUPPORTED
+    assert m.competitions_model_capable == 0 and m.competitions_data_capable == 0
+    assert m.competitions_evaluable == 0
+
+
 def test_render_shows_both_evaluable_and_unavailable():
     lines = render(coverage_matrix(_events(), "football"), "replay:synthetic")
     text = "\n".join(lines)
-    assert "ÉVALUABLES  : 1" in text
+    assert "ÉVALUABLES : 1" in text
+    assert "model-capable : 2" in text and "data-capable : 1" in text   # couches distinctes
     assert "Ligue 1" in text and "EXPERIMENTAL" in text
     assert "Major League Soccer" in text and COMPETITION_NOT_RESOLVED in text
+    assert DATA_UNAVAILABLE in text                                     # état de couche visible
 
 
 def test_coverage_cli_from_capture_offline(tmp_path):

@@ -25,10 +25,16 @@ def _scan(args):
 
 
 def render(matrix, source: str) -> list[str]:
+    # Couches DISTINCTES (§19) : catalogue ≠ data ≠ model ≠ SUPPORTED. `model-capable`
+    # peut dépasser `data-capable` (ex. MLS : modèle football applicable mais aucune
+    # donnée) — c'est précisément la distinction que le produit doit rendre visible.
     lines = [
         f"Couverture {matrix.sport} [{source}]",
         f"  compétitions découvertes : {matrix.competitions_discovered}  (events : {matrix.events_discovered})",
-        f"  compétitions ÉVALUABLES  : {matrix.competitions_evaluable}  (events : {matrix.events_evaluable})",
+        f"  model-capable : {matrix.competitions_model_capable}   "
+        f"data-capable : {matrix.competitions_data_capable}   "
+        f"ÉVALUABLES : {matrix.competitions_evaluable}  (events : {matrix.events_evaluable})",
+        f"  par état de capacité : {matrix.by_state}",
         f"  non évaluables par raison : {matrix.by_reason}",
         "  — évaluables —",
     ]
@@ -39,7 +45,7 @@ def render(matrix, source: str) -> list[str]:
         lines.append("    (aucune — catalogue large mais aucun modèle applicable)")
     lines.append("  — non évaluables (top 10 par volume) —")
     for c in [x for x in matrix.capabilities if not x.evaluable][:10]:
-        lines.append(f"    {c.competition_name[:32]:32} {c.reason_unavailable:24} {c.discovered_events:3} events")
+        lines.append(f"    {c.competition_name[:32]:32} {c.capability_state:18} {c.reason_unavailable:24} {c.discovered_events:3} events")
     return lines
 
 
