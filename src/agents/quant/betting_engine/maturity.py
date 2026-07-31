@@ -34,6 +34,13 @@ CLV_NOT_YET_MEASURABLE = "NOT_YET_MEASURABLE"
 FRESHNESS_MEASURABLE = "MEASURABLE"
 FRESHNESS_NOT_MEASURABLE = "NOT_MEASURABLE"
 
+# États AUDIT de la maturité CLV (§6) — plus fins que le verdict PASS/FAIL/NOT_MEASURABLE.
+# La distinction reste exploitable en audit (3 obs positives != « non mesurable »).
+CLV_STATE_NOT_MEASURABLE = "NOT_MEASURABLE"          # aucune paire décision/clôture
+CLV_STATE_INSUFFICIENT_SAMPLE = "INSUFFICIENT_SAMPLE"  # paires mesurées mais n_events < minimum
+CLV_STATE_NOT_POSITIVE = "MEASURABLE_NOT_POSITIVE"   # échantillon suffisant, borne basse <= 0
+CLV_STATE_PASS = "PASS"                              # échantillon suffisant ET borne basse > 0
+
 
 class Verdict(str, Enum):
     PASS = "PASS"
@@ -98,6 +105,9 @@ class MaturityObservations:
     clv_status: str                      # CLV_MEASURABLE | CLV_NOT_YET_MEASURABLE
     clv_mean: float | None               # renseigné seulement si clv_status == MEASURABLE
     live_freshness_status: str           # FRESHNESS_MEASURABLE | FRESHNESS_NOT_MEASURABLE
+    # Échantillon CLV EFFECTIF (§4) + incertitude (§2/§3). Défauts sûrs : aucune paire.
+    clv_n_events: int = 0                 # nombre d'ÉVÉNEMENTS indépendants (jamais le n° de lignes)
+    clv_lower_bound: float | None = None  # borne de confiance inférieure de la CLV moyenne
 
 
 def _expected_checksum(data: dict) -> str:
@@ -141,6 +151,42 @@ def _max_criterion(name, required, observed, threshold, unit=""):
                            f"observé {observed}{unit} vs max {threshold}{unit}")
 
 
+def _positive_clv_result(o: "MaturityObservations", required: bool, min_events) -> CriterionResult:
+    """Verdict ROBUSTE de la CLV (§1-§6). Quatre états audit, mappés sur le verdict :
+      - NOT_MEASURABLE    (aucune paire)                 -> Verdict.NOT_MEASURABLE
+      - INSUFFICIENT_SAMPLE (n_events < min_clv_events)  -> Verdict.NOT_MEASURABLE (indécidable)
+      - MEASURABLE_NOT_POSITIVE (borne basse <= 0)       -> Verdict.FAIL
+      - PASS (n_events >= min ET borne basse > 0)        -> Verdict.PASS
+    L'état fin est porté dans `observed` (dict) + `detail` : l'audit distingue toujours
+    « insuffisant » de « non mesurable » et de « mesuré négatif »."""
+    name, thr = "positive_clv", {"min_clv_events": min_events, "lower_bound": "> 0"}
+    if o.clv_status != CLV_MEASURABLE:
+        return CriterionResult(name, required, "> 0 (borne basse) & n>=min", None,
+                               Verdict.NOT_MEASURABLE,
+                               f"CLV {CLV_STATE_NOT_MEASURABLE} (aucune paire décision/clôture)")
+
+    def observed(state: str) -> dict:
+        # Valeurs JSON-natives (comme must_beat_baselines) : le CriterionResult doit rester
+        # sérialisable au ledger. mean_clv peut être un Decimal (chemin réel) -> float.
+        mean = float(o.clv_mean) if o.clv_mean is not None else None
+        return {"state": state, "n_events": o.clv_n_events,
+                "mean_clv": mean, "lower_bound": o.clv_lower_bound}
+
+    if min_events is not None and o.clv_n_events < min_events:
+        return CriterionResult(
+            name, required, thr, observed(CLV_STATE_INSUFFICIENT_SAMPLE), Verdict.NOT_MEASURABLE,
+            f"CLV {CLV_STATE_INSUFFICIENT_SAMPLE} : {o.clv_n_events} événement(s) < min {min_events}")
+    if o.clv_lower_bound is None or o.clv_lower_bound <= 0:
+        return CriterionResult(
+            name, required, thr, observed(CLV_STATE_NOT_POSITIVE), Verdict.FAIL,
+            f"CLV {CLV_STATE_NOT_POSITIVE} : borne basse {o.clv_lower_bound} <= 0 "
+            f"(moyenne {o.clv_mean}, n={o.clv_n_events})")
+    return CriterionResult(
+        name, required, thr, observed(CLV_STATE_PASS), Verdict.PASS,
+        f"CLV {CLV_STATE_PASS} : borne basse {o.clv_lower_bound} > 0 "
+        f"(moyenne {o.clv_mean}, n={o.clv_n_events} >= {min_events})")
+
+
 def evaluate_maturity(
     *,
     model_name: str,
@@ -181,18 +227,12 @@ def evaluate_maturity(
     results.append(_min_criterion("min_data_quality", req("min_data_quality"), o.mean_data_quality, c["min_data_quality"]))
     results.append(_max_criterion("max_fold_brier_spread", req("max_fold_brier_spread"), o.fold_brier_spread, c["max_fold_brier_spread"]))
 
-    # CLV : Definition of Done PRD-BE ('CLV positif en moyenne'). NON mesurable
-    # (aucun odds_history ouverture->clôture) -> NOT_MEASURABLE, jamais CLV=0.
-    # Requis en V1 (required_for_support.positive_clv) : absence != CLV positive.
-    if o.clv_status != CLV_MEASURABLE:
-        results.append(CriterionResult("positive_clv", req("positive_clv"), "> 0", None,
-                                       Verdict.NOT_MEASURABLE,
-                                       f"CLV {o.clv_status} (aucune paire décision/clôture)"))
-    else:
-        results.append(CriterionResult(
-            "positive_clv", req("positive_clv"), "> 0", o.clv_mean,
-            Verdict.PASS if (o.clv_mean is not None and o.clv_mean > 0) else Verdict.FAIL,
-            f"CLV moyenne observée {o.clv_mean}"))
+    # CLV : Definition of Done PRD-BE ('CLV positif en moyenne'), rendue ROBUSTE (§1-§6).
+    # Ne peut JAMAIS passer sur une observation isolée ni sur `mean_clv > 0` seul : exige
+    # (a) un échantillon EFFECTIF suffisant (n_events >= min_clv_events) ET (b) une borne
+    # de confiance inférieure > 0 (l'incertitude ne doit pas inclure 0). Sépare quatre
+    # états AUDIT distincts (jamais « 3 obs positives » requalifiées en NOT_MEASURABLE).
+    results.append(_positive_clv_result(o, req("positive_clv"), c.get("min_clv_events")))
 
     # Freshness mesurée au point de décision live (câblée Gateway->BE).
     if o.live_freshness_status != FRESHNESS_MEASURABLE:

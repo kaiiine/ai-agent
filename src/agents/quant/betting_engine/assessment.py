@@ -67,7 +67,8 @@ def assess_one_x_two_maturity(
     coverage = (run.n_evaluated / run.n_total) if run.n_total else None
     mean_dq = (sum(run.data_qualities) / len(run.data_qualities)) if run.data_qualities else None
 
-    readiness = clv_readiness(list(odds_observations))
+    readiness = clv_readiness(list(odds_observations),
+                              confidence=policy.criteria["clv_confidence_level"])
 
     observations = MaturityObservations(
         n_evaluated=run.n_evaluated,
@@ -80,6 +81,8 @@ def assess_one_x_two_maturity(
         fold_brier_spread=round(fold_spread, 4) if fold_spread is not None else None,
         clv_status=readiness.status,
         clv_mean=readiness.mean_clv,                     # Decimal ou None — jamais 0
+        clv_n_events=readiness.n_events,                 # échantillon EFFECTIF (§4)
+        clv_lower_bound=readiness.clv_lower_bound,        # borne de confiance inférieure
         live_freshness_status=live_freshness_status,
     )
     decision = evaluate_maturity(

@@ -51,10 +51,13 @@ def load_nhl_regulation(path: Path = _FIXTURE) -> tuple[list[ThreeWayGame], str]
     return games, dataset_fingerprint(raw)
 
 
-def assess_nhl(path: Path = _FIXTURE) -> ThreeWayAssessment:
+def assess_nhl(path: Path = _FIXTURE, *, odds_observations=()) -> ThreeWayAssessment:
     games, _fp = load_nhl_regulation(path)
     # La fraîcheur live est CÂBLÉE (live_model -> evaluate_live_event -> Gateway.data_freshness,
     # prouvé par test_hockey_live) : capacité MEASURABLE. Distinct de la CLV, qui reste
     # NOT_YET_MEASURABLE tant qu'aucune paire décision/clôture réelle n'est collectée.
+    # `odds_observations` (vide en réel) permet de PROUVER la mécanique de promotion avec
+    # un échantillon CLV explicitement SYNTHÉTIQUE (test), sans jamais fabriquer de réel.
     return assess_threeway(games, NHL_PARAMS, MODEL_NAME, MODEL_VERSION,
+                           odds_observations=odds_observations,
                            live_freshness_status=FRESHNESS_MEASURABLE)

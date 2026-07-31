@@ -1,15 +1,17 @@
 {
-  "config_version": "1",
-  "effective_from": "2026-07-29",
-  "checksum": "5b62cf603b0408d181329777acec64c301e9f8962984cb399fc5711c7f52828f",
+  "config_version": "2",
+  "effective_from": "2026-08-01",
+  "checksum": "410fd3c542fbd773c821c866eeef56116bb735ccdec30242395316d90bca6ed0",
   "criteria": {
     "min_sample_size": 500,
     "min_temporal_folds": 3,
     "max_calibration_error": 0.05,
     "must_beat_baselines": true,
-    "min_data_coverage": 0.90,
-    "min_data_quality": 0.80,
-    "max_fold_brier_spread": 0.15
+    "min_data_coverage": 0.9,
+    "min_data_quality": 0.8,
+    "max_fold_brier_spread": 0.15,
+    "min_clv_events": 30,
+    "clv_confidence_level": 0.95
   },
   "required_for_support": {
     "min_sample_size": true,
@@ -22,5 +24,5 @@
     "positive_clv": true,
     "measurable_live_freshness": true
   },
-  "notes": "Politique de maturité modèle (BE, §7). SÉMANTIQUE EXPLICITE (ADR-BE-001) : `criteria` porte les seuils/valeurs ; `required_for_support` porte, PAR critère, si l'absence de mesure (NOT_MEASURABLE) ou l'échec (FAIL) BLOQUE la promotion. État de mesure = PASS/FAIL/NOT_MEASURABLE ; blocage = required_for_support. Verdict : SUPPORTED ssi tout critère `required_for_support=true` est PASS ; un critère requis FAIL ou NOT_MEASURABLE -> EXPERIMENTAL. Un critère `required_for_support=false` est du MONITORING (reporté, jamais bloquant). Décisions V1 : positive_clv REQUIS (Definition of Done PRD-BE : « CLV positif en moyenne » ; collecter un odds_history réel est un prérequis réel à SUPPORTED ; absence != CLV positive). measurable_live_freshness REQUIS (le chemin live doit exposer une fraîcheur mesurée avant qu'un modèle soit promu — désormais câblé Gateway->BE). max_fold_brier_spread MONITORING : la stabilité inter-folds sur UNE seule saison/ligue (FL1 2025-26) n'est pas une preuve de robustesse inter-saisons, donc informative et non bloquante en V1. SEUILS = POLICY THRESHOLDS V1, pas des vérités statistiques : 500 n'est PAS démontré à partir des 296 observations, c'est « strictement > une saison » ; à recalibrer avec plus de données ; interdiction de les ajuster rétrospectivement pour promouvoir un modèle précis. checksum = sha256 de config_version|effective_from|criteria|required_for_support (sort_keys)."
+  "notes": "Politique de maturité modèle (BE, §7). SÉMANTIQUE EXPLICITE (ADR-BE-001) : `criteria` porte les seuils/valeurs ; `required_for_support` porte, PAR critère, si l'absence de mesure (NOT_MEASURABLE) ou l'échec (FAIL) BLOQUE la promotion. État de mesure = PASS/FAIL/NOT_MEASURABLE ; blocage = required_for_support. Verdict : SUPPORTED ssi tout critère `required_for_support=true` est PASS ; un critère requis FAIL ou NOT_MEASURABLE -> EXPERIMENTAL. Un critère `required_for_support=false` est du MONITORING (reporté, jamais bloquant). Décisions V1 : positive_clv REQUIS et ROBUSTE (Definition of Done PRD-BE : « CLV positif en moyenne »). V2 : positive_clv ne peut PLUS passer sur `mean_clv > 0` seul ni sur une observation isolée — il exige (a) un échantillon EFFECTIF `min_clv_events` d'ÉVÉNEMENTS indépendants (une CLV = un événement ; home/away, snapshots répétés et bookmakers multiples du même match NE sont PAS des observations indépendantes) ET (b) une borne de confiance inférieure > 0 au niveau `clv_confidence_level` (bootstrap percentile non-paramétrique — aucune hypothèse de normalité, robuste aux queues lourdes et outliers). États audit : NOT_MEASURABLE / INSUFFICIENT_SAMPLE / MEASURABLE_NOT_POSITIVE / PASS. min_mean_clv NON nécessaire (borne basse > 0 implique mean > 0). measurable_live_freshness REQUIS (le chemin live doit exposer une fraîcheur mesurée avant promotion — câblé Gateway->BE). max_fold_brier_spread MONITORING : stabilité inter-folds sur une seule saison, informative et non bloquante en V1. SEUILS = POLICY THRESHOLDS conservateurs, PAS des vérités statistiques : 500 n'est pas démontré ; min_clv_events=30 est un plancher conservateur NON dérivé des données (odds_history réel encore vide) — plancher classique « grand échantillon », à recalibrer dès que la vraie collecte CLV existe ; clv_confidence_level=0.95 unilatéral. Interdiction d'ajuster ces seuils rétrospectivement pour promouvoir un modèle précis. checksum = sha256 de config_version|effective_from|criteria|required_for_support (sort_keys)."
 }

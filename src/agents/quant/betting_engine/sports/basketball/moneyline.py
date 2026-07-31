@@ -194,9 +194,11 @@ class BasketballAssessment:
     metrics: dict
 
 
-def assess_nba(path: Path = _FIXTURE) -> BasketballAssessment:
+def assess_nba(path: Path = _FIXTURE, *, odds_observations=(),
+               live_freshness_status: str = FRESHNESS_NOT_MEASURABLE) -> BasketballAssessment:
     """Verdict de maturité MÉCANIQUE du modèle NBA moneyline (walk-forward réel).
     EXPERIMENTAL tant que les critères requis ne passent pas — jamais un faux SUPPORTED."""
+    policy = load_maturity_policy()
     games, _fp = load_nba_games(path)
     run = run_elo_walk_forward(games)
 
@@ -215,7 +217,8 @@ def assess_nba(path: Path = _FIXTURE) -> BasketballAssessment:
     month_briers = [sum(v) / len(v) for v in by_month.values()]
     fold_spread = (max(month_briers) - min(month_briers)) if len(month_briers) >= 2 else None
 
-    readiness = clv_readiness([])   # aucune paire décision/clôture -> NOT_YET_MEASURABLE (jamais 0)
+    readiness = clv_readiness(list(odds_observations),
+                              confidence=policy.criteria["clv_confidence_level"])
 
     observations = MaturityObservations(
         n_evaluated=run.n_evaluated,
@@ -228,12 +231,14 @@ def assess_nba(path: Path = _FIXTURE) -> BasketballAssessment:
         fold_brier_spread=round(fold_spread, 4) if fold_spread is not None else None,
         clv_status=readiness.status,
         clv_mean=readiness.mean_clv,
-        # Pas de chemin live basket câblé -> freshness NON mesurable (jamais fabriquée frais).
-        live_freshness_status=FRESHNESS_NOT_MEASURABLE,
+        clv_n_events=readiness.n_events,
+        clv_lower_bound=readiness.clv_lower_bound,
+        # Freshness déclarée par l'appelant : NON mesurable tant que le live n'est pas câblé.
+        live_freshness_status=live_freshness_status,
     )
     decision = evaluate_maturity(
         model_name=MODEL_NAME, model_version=MODEL_VERSION,
-        observations=observations, policy=load_maturity_policy())
+        observations=observations, policy=policy)
     metrics = {"model_brier": model_brier, "uniform_brier": uniform_brier,
                "home_rate_baseline_brier": base_brier, "ece": ece,
                "beats_baseline": model_brier < best_baseline}

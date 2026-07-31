@@ -43,6 +43,8 @@ def _passing_observations(**overrides) -> MaturityObservations:
         fold_brier_spread=0.05,
         clv_status=CLV_MEASURABLE,
         clv_mean=0.012,
+        clv_n_events=60,           # échantillon EFFECTIF suffisant (>= min_clv_events)
+        clv_lower_bound=0.004,     # borne de confiance inférieure > 0 (CLV robuste)
         live_freshness_status=FRESHNESS_MEASURABLE,
     )
     base.update(overrides)
@@ -130,10 +132,43 @@ def test_unmeasurable_freshness_blocks_promotion():
 
 
 def test_measurable_but_negative_clv_fails_not_notmeasurable():
-    d = _decide(clv_status=CLV_MEASURABLE, clv_mean=-0.03)
+    # Échantillon SUFFISANT mais borne basse <= 0 -> MEASURABLE_NOT_POSITIVE = FAIL.
+    d = _decide(clv_status=CLV_MEASURABLE, clv_mean=-0.03, clv_n_events=60, clv_lower_bound=-0.02)
     clv = next(c for c in d.criteria if c.name == "positive_clv")
     assert clv.verdict is Verdict.FAIL              # mesurée et négative = FAIL, pas NOT_MEASURABLE
+    assert clv.observed["state"] == "MEASURABLE_NOT_POSITIVE"
     assert d.status == "EXPERIMENTAL"
+
+
+# --- CLV robuste (§1-§7) : jamais SUPPORTED sur une observation isolée ------------
+def test_single_lucky_clv_pair_never_passes():
+    # 1 seul événement, CLV très positive -> INSUFFICIENT_SAMPLE, jamais PASS.
+    d = _decide(clv_status=CLV_MEASURABLE, clv_mean=0.30, clv_n_events=1, clv_lower_bound=0.30)
+    clv = next(c for c in d.criteria if c.name == "positive_clv")
+    assert clv.verdict is not Verdict.PASS
+    assert clv.observed["state"] == "INSUFFICIENT_SAMPLE"
+    assert d.status == "EXPERIMENTAL"
+
+
+def test_sample_below_minimum_never_passes():
+    d = _decide(clv_status=CLV_MEASURABLE, clv_mean=0.05,
+                clv_n_events=_POLICY.criteria["min_clv_events"] - 1, clv_lower_bound=0.02)
+    clv = next(c for c in d.criteria if c.name == "positive_clv")
+    assert clv.observed["state"] == "INSUFFICIENT_SAMPLE" and clv.verdict is not Verdict.PASS
+
+
+def test_sufficient_sample_positive_mean_but_uncertainty_includes_zero_never_passes():
+    # moyenne positive mais borne basse <= 0 (incertitude inclut 0) -> jamais PASS.
+    d = _decide(clv_status=CLV_MEASURABLE, clv_mean=0.02, clv_n_events=60, clv_lower_bound=-0.001)
+    clv = next(c for c in d.criteria if c.name == "positive_clv")
+    assert clv.observed["state"] == "MEASURABLE_NOT_POSITIVE" and clv.verdict is Verdict.FAIL
+
+
+def test_sufficient_sample_and_robust_positive_bound_passes():
+    d = _decide(clv_status=CLV_MEASURABLE, clv_mean=0.02, clv_n_events=60, clv_lower_bound=0.006)
+    clv = next(c for c in d.criteria if c.name == "positive_clv")
+    assert clv.observed["state"] == "PASS" and clv.verdict is Verdict.PASS
+    assert d.status == "SUPPORTED"
 
 
 # --- Sémantique NOT_MEASURABLE : required_for_support gouverne le blocage --------

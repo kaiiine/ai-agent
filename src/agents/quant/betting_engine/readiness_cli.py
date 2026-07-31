@@ -64,6 +64,9 @@ def render(assessment) -> list[str]:
         f"  calibration (ECE) : {o.calibration_error}   | Brier {o.model_brier} vs baseline {o.best_baseline_brier}",
         f"  coverage : {o.data_coverage}   | data_quality : {o.mean_data_quality}",
         f"  CLV : {o.clv_status}   | freshness live : {o.live_freshness_status}",
+        # §17 : progression empirique CLV visible sans ouvrir les fichiers.
+        f"  CLV échantillon : {o.clv_n_events} événement(s) indép. | moyenne : {o.clv_mean}"
+        f" | borne basse : {o.clv_lower_bound}",
         "  critères :",
     ]
     for c in d.criteria:

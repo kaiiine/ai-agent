@@ -147,9 +147,13 @@ class PairwiseAssessment:
 
 def assess_pairwise_elo(
     games: list[PairwiseGame], params: EloParams, model_name: str, model_version: str,
+    *, odds_observations=(), live_freshness_status: str = FRESHNESS_NOT_MEASURABLE,
 ) -> PairwiseAssessment:
     """Verdict de maturité MÉCANIQUE. EXPERIMENTAL tant que les critères ne passent pas.
-    `beats_baseline` est MESURÉ hors échantillon — jamais présumé."""
+    `beats_baseline` est MESURÉ hors échantillon — jamais présumé. `odds_observations`
+    (vide par défaut) alimente la CLV réelle ; `live_freshness_status` est déclaré par
+    le sport quand son chemin live est câblé (sinon NOT_MEASURABLE)."""
+    policy = load_maturity_policy()
     run = run_pairwise_elo(games, params)
     n = run.n_evaluated
     model_brier = sum(_brier2(p, o) for p, o in run.model_predictions) / n
@@ -164,7 +168,8 @@ def assess_pairwise_elo(
         by_month.setdefault(m, []).append(_brier2(p, o))
     month_briers = [sum(v) / len(v) for v in by_month.values()]
     fold_spread = (max(month_briers) - min(month_briers)) if len(month_briers) >= 2 else None
-    readiness = clv_readiness([])
+    readiness = clv_readiness(list(odds_observations),
+                              confidence=policy.criteria["clv_confidence_level"])
 
     observations = MaturityObservations(
         n_evaluated=n, n_temporal_folds=len(by_month), calibration_error=ece,
@@ -172,9 +177,10 @@ def assess_pairwise_elo(
         data_coverage=round(n / run.n_total, 4) if run.n_total else None,
         mean_data_quality=1.0, fold_brier_spread=round(fold_spread, 4) if fold_spread is not None else None,
         clv_status=readiness.status, clv_mean=readiness.mean_clv,
-        live_freshness_status=FRESHNESS_NOT_MEASURABLE)
+        clv_n_events=readiness.n_events, clv_lower_bound=readiness.clv_lower_bound,
+        live_freshness_status=live_freshness_status)
     decision = evaluate_maturity(model_name=model_name, model_version=model_version,
-                                 observations=observations, policy=load_maturity_policy())
+                                 observations=observations, policy=policy)
     metrics = {"model_brier": model_brier, "uniform_brier": uniform_brier,
                "home_rate_baseline_brier": base_brier, "ece": ece,
                "beats_baseline": model_brier < best_baseline}
