@@ -1,6 +1,16 @@
 """Tools LangChain du module value betting (axon-quant).
 
-Le LLM orchestre ces tools mais ne calcule JAMAIS une probabilité lui-même.
+REROUTE_VERS_STRUCTURE (ADR legacy) : ces tools sont désormais de MINCES wrappers
+au-dessus du pipeline STRUCTURÉ (`structured_decision` -> Betting Engine / Advisor).
+Ils ne calculent JAMAIS eux-mêmes une probabilité, un EV, un edge, une proba jointe,
+un Kelly ni une « value ». Il n'existe plus de seconde pile de décision betting.
+
+Invariants (traversent jusqu'au rendu) :
+- ABSTAIN structuré -> ABSTAIN outil. Une cote basse n'est JAMAIS « value » sans
+  `fair_probability` d'un modèle. Le cap BE-FR-011 (non-SUPPORTED ⇒ jamais BET) tient.
+- Marché sans modèle structuré (over/under, BTTS, …) -> `MARKET_UNAVAILABLE`.
+- Aucun import de `dixon_coles` / `ev_engine` / `probability_engine` ici (garde-fou
+  testé : `tests/test_legacy_reroute.py`).
 """
 
 from __future__ import annotations
@@ -8,25 +18,53 @@ import json
 
 from langchain_core.tools import tool
 
+from src.agents.quant.structured_decision import (
+    EVALUATED,
+    MARKET_UNAVAILABLE,
+    MatchDecision,
+    SelectionDecision,
+    decide_match,
+    decide_single,
+)
+
+
+# ── Rendu (JSON-able) des décisions structurées ───────────────────────────────
+def _selection_payload(sd: SelectionDecision) -> dict:
+    return {
+        "selection": sd.selection,
+        "decision": sd.decision,                       # BET | ABSTAIN (jamais BET hors SUPPORTED)
+        "bookmaker_odds": sd.bookmaker_odds,
+        "fair_probability": sd.fair_probability,
+        "confidence_interval": list(sd.probability_interval) if sd.probability_interval else None,
+        "expected_value": sd.expected_value,           # audit ; jamais présenté comme « value » sûre
+        "worst_case_ev": sd.worst_case_ev,
+        "no_vig_probability": sd.no_vig_probability,
+        "edge": sd.edge,
+        "reasons": list(sd.reasons),
+    }
+
+
+def _match_meta(md: MatchDecision) -> dict:
+    return {"home": md.home_team, "away": md.away_team,
+            "competition": md.competition, "bookmaker": md.bookmaker}
+
 
 @tool("winamax_odds_fetch")
 def winamax_odds_fetch(sport: str = "football", team: str = "") -> str:
-    """Récupère les cotes Winamax en temps réel.
+    """Récupère les cotes Winamax en temps réel (PRIMITIVE DATA — aucune décision).
 
-    Utilise ce tool quand l'utilisateur veut :
-    - connaître les cotes d'un match ou d'un sport
-    - analyser un pari sportif (première étape obligatoire)
-
-    Mots-clés : cotes, winamax, pari, match, prono, bookmaker
+    Retourne les cotes brutes + la probabilité IMPLICITE (1/cote, marge INCLUSE —
+    ce n'est PAS une probabilité no-vig ni un edge : aucun jugement de valeur ici).
+    L'évaluation d'un pari passe ensuite par `ev_analyze` (pipeline structuré).
 
     Args:
         sport: football, tennis, basketball ou rugby (défaut football)
         team: filtre optionnel sur un nom d'équipe (ex: "PSG")
     Returns:
-        JSON des matchs avec cotes 1N2 horodatées
+        JSON des matchs avec cotes 1N2 horodatées + implied_probability (brute)
     """
     from src.agents.quant.gateway.providers.odds_provider import WinamaxOddsProvider
-    from src.agents.quant.ev_engine import no_vig_probabilities
+    from src.agents.quant.betting_engine.value_engine import margin_removal
     try:
         quotes = WinamaxOddsProvider().fetch_matches(sport, team)
         if not quotes:
@@ -36,7 +74,10 @@ def winamax_odds_fetch(sport: str = "football", team: str = "") -> str:
                 "match_id": q.match_id, "competition": q.competition,
                 "home": q.home_team, "away": q.away_team,
                 "start_time": q.start_time, "status": q.status,
-                "odds": q.odds, "no_vig_probability": no_vig_probabilities(q.odds),
+                "odds": q.odds,
+                # Implicite = 1/cote (marge incluse) via la primitive CANONIQUE — pas
+                # une seconde formule ni une proba no-vig. Donnée, pas recommandation.
+                "implied_probability": {k: round(margin_removal.implied_raw(v), 4) for k, v in q.odds.items()},
                 "bookmaker": q.bookmaker, "fetched_at": q.fetched_at,
             }
             for q in quotes
@@ -48,9 +89,10 @@ def winamax_odds_fetch(sport: str = "football", team: str = "") -> str:
 
 @tool("sports_stats_fetch")
 def sports_stats_fetch(home_team: str, away_team: str) -> str:
-    """Récupère la forme récente de deux équipes (Ligue 1, Premier League en v1).
+    """Récupère la forme récente de deux équipes (PRIMITIVE DATA — aucune décision).
 
-    Utilise ce tool pour obtenir les données nécessaires au calcul de probabilité.
+    Ne recalcule AUCUNE décision betting : sert uniquement à exposer la donnée de
+    forme. La décision passe par `ev_analyze` (pipeline structuré).
     Nécessite FOOTBALL_DATA_ORG_KEY et/ou API_FOOTBALL_KEY dans .env.
 
     Args:
@@ -78,50 +120,34 @@ def sports_stats_fetch(home_team: str, away_team: str) -> str:
 
 
 @tool("probability_compute")
-def probability_compute(home_team: str, away_team: str, model: str = "dixon_coles") -> str:
-    """Calcule les probabilités d'un match (modèle statistique, PAS le LLM).
+def probability_compute(home_team: str, away_team: str, model: str = "structured") -> str:
+    """Probabilités 1X2 d'un match — via le MODÈLE STRUCTURÉ du Betting Engine.
 
-    Modèle par défaut : Dixon-Coles (Poisson bivarié) — donne 1N2, over/under
-    1.5/2.5/3.5, BTTS et les 5 scores exacts les plus probables.
-    Fallback : "elo" — 1N2 uniquement, plus simple.
-
-    Retourne les probas avec intervalle de confiance à 90%.
-    TOUJOURS restituer l'intervalle, jamais un chiffre sec.
+    Ne possède plus de moteur probabiliste parallèle : délègue à `decide_match`
+    (evaluate_live_event). Si aucun modèle/données ne s'applique -> statut explicite
+    (MODEL_UNAVAILABLE / IDENTITY_UNRESOLVED / …), JAMAIS un fallback legacy.
+    Le paramètre `model` est ignoré (un seul modèle structuré fait foi).
 
     Args:
         home_team: équipe à domicile
         away_team: équipe à l'extérieur
-        model: "dixon_coles" (défaut) ou "elo"
+        model: ignoré (conservé pour compat) — le modèle structuré fait foi
     Returns:
-        JSON {probabilities, confidence_90, strengths, sample_size}
+        JSON {status, probabilities par sélection (fair + intervalle), source}
     """
-    from src.agents.quant.gateway import gateway
     try:
-        home = gateway.search_team(home_team)
-        away = gateway.search_team(away_team)
-        if not home or not away:
-            missing = home_team if not home else away_team
-            return json.dumps({"status": "error", "message": f"Équipe introuvable (v1 : Ligue 1, Premier League) : {missing}"})
-
-        home_form = gateway.recent_form(home["canonical_id"])
-        away_form = gateway.recent_form(away["canonical_id"])
-
-        if model == "elo":
-            from src.agents.quant.probability_engine import probabilities_with_confidence
-            result = probabilities_with_confidence(home_form, away_form)
-            result["model"] = "elo_dynamique"
-        else:
-            from src.agents.quant.dixon_coles import dixon_coles_probabilities
-            ratings = gateway.opponent_ratings_for_form(home_form + away_form)
-            result = dixon_coles_probabilities(home_form, away_form, opponent_ratings=ratings or None)
-            result["model"] = "poisson_dc"  # Poisson forme + correction DC, pas le MLE ligue complet
-
-        result["status"] = "ok"
-        result["caveat"] = (
-            "Le modèle ne capture pas : blessures de dernière minute, météo, "
-            "enjeu psychologique, compos. À rappeler à l'utilisateur."
-        )
-        return json.dumps(result, ensure_ascii=False)
+        md = decide_match(home_team, away_team)
+        meta = _match_meta(md)
+        if not md.evaluated:
+            return json.dumps({"status": md.status, "message": md.detail, "source": "betting_engine", **meta},
+                              ensure_ascii=False)
+        probs = {sel: {"fair_probability": sd.fair_probability,
+                       "confidence_interval": list(sd.probability_interval) if sd.probability_interval else None}
+                 for sel, sd in md.selections.items()}
+        return json.dumps({"status": "ok", "source": "betting_engine", "model": "one_x_two.dixon_coles.v0 (EXPERIMENTAL)",
+                           "probabilities": probs,
+                           "caveat": "Modèle EXPERIMENTAL — aucune mise réelle. Intervalle à toujours restituer.",
+                           **meta}, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
@@ -134,44 +160,69 @@ def ev_analyze(
     odds: float,
     bankroll: float = 100.0,
 ) -> str:
-    """Calcule la probabilité (Poisson-DC) d'un marché et décide BET/WATCH/ABSTAIN.
+    """Décision BET/ABSTAIN d'un marché — 100 % via le pipeline STRUCTURÉ.
 
-    Le calcul de probabilité se fait ENTIÈREMENT ici — ne jamais lui donner une
-    probabilité devinée ou recopiée d'un autre message.
-    Marchés : home, draw, away, over_1_5/2_5/3_5, under_1_5/2_5/3_5, btts_yes, btts_no.
+    Ne recalcule PLUS indépendamment fair_probability / edge / EV / Kelly / mise :
+    délègue à `decide_single` (Betting Engine). La décision utilise les VRAIES cotes
+    du catalogue (jamais une cote saisie). Si le structuré dit ABSTAIN -> ABSTAIN ;
+    marché hors modèle -> MARKET_UNAVAILABLE. Aucune « value » sur cote seule.
+    Marchés modélisés : home, draw, away (MATCH_WINNER). over/under/BTTS -> non modélisés.
 
     Args:
         home_team: équipe à domicile
         away_team: équipe à l'extérieur
-        market: marché à analyser (ex: "home", "over_2_5")
-        odds: cote Winamax de ce marché
-        bankroll: bankroll de l'utilisateur en euros (défaut 100)
+        market: marché (home/draw/away ; autres -> MARKET_UNAVAILABLE)
+        odds: cote observée par l'utilisateur (INDICATIVE — la décision utilise la cote du catalogue)
+        bankroll: bankroll en euros (le sizing réel vit dans l'Advisor, sur modèle SUPPORTED)
     Returns:
-        JSON avec probabilité, incertitude, décision (BET/WATCH/ABSTAIN) et mise recommandée
+        JSON {status, decision, structured metrics, reasons}
     """
-    from src.agents.quant.gateway import gateway
-    from src.agents.quant.dixon_coles import market_probability
-    from src.agents.quant.ev_engine import analyze_bet
     try:
-        home = gateway.search_team(home_team)
-        away = gateway.search_team(away_team)
-        if not home or not away:
-            missing = home_team if not home else away_team
-            return json.dumps({"status": "error", "message": f"Équipe introuvable (v1 : Ligue 1, Premier League) : {missing}"})
-
-        home_form = gateway.recent_form(home["canonical_id"])
-        away_form = gateway.recent_form(away["canonical_id"])
-        ratings = gateway.opponent_ratings_for_form(home_form + away_form)
-
-        proba = market_probability(home_form, away_form, market, opponent_ratings=ratings or None)
-        result = analyze_bet(proba["probability"], proba["confidence_90"], proba["samples"], odds, bankroll)
-        result["status"] = "ok"
-        result["market"] = market
-        if result["decision"] != "BET":
-            result["message"] = "Pas d'edge confirmé — ne pas recommander ce pari."
-        return json.dumps(result, ensure_ascii=False)
+        md, sd = decide_single(home_team, away_team, market)
+        meta = _match_meta(md)
+        if sd is None:
+            # Marché non modélisé, identité non résolue, événement absent, modèle indispo…
+            return json.dumps({"status": md.status, "decision": "ABSTAIN", "market": market,
+                               "message": md.detail, "requested_odds": odds, "source": "betting_engine",
+                               **meta}, ensure_ascii=False)
+        payload = {"status": EVALUATED, "market": market, "requested_odds": odds,
+                   "source": "betting_engine", **meta, **_selection_payload(sd)}
+        if sd.decision != "BET":
+            payload["message"] = "Pas de BET structuré — ne pas recommander ce pari (modèle EXPERIMENTAL / edge non confirmé)."
+        return json.dumps(payload, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
+
+
+# ── Combos : refus de toute math combinée locale (pricing/sizing = Combo Builder) ─
+def _combo_verdict(legs: list[dict]) -> dict:
+    """Évalue chaque jambe via le pipeline STRUCTURÉ. Ne calcule JAMAIS de proba
+    jointe, d'EV combiné ni de Kelly combiné (ce serait la seconde formule bannie).
+
+    Un combiné n'est « BET » que si TOUTES les jambes sont un BET structuré ; sinon
+    ABSTAIN. Le pricing/sizing d'un combiné admissible appartient exclusivement au
+    Combo Builder structuré (`axon recommend --allow-combos`, ADR-ADV-014) — ce tool
+    ne price rien.
+    """
+    leg_results = []
+    all_bet = True
+    for leg in legs:
+        md, sd = decide_single(leg["home_team"], leg["away_team"], leg["market"])
+        if sd is None:
+            all_bet = False
+            leg_results.append({"leg": leg, "status": md.status, "decision": "ABSTAIN", "message": md.detail,
+                                **_match_meta(md)})
+        else:
+            all_bet = all_bet and (sd.decision == "BET")
+            leg_results.append({"leg": leg, "status": EVALUATED, **_match_meta(md), **_selection_payload(sd)})
+
+    if all_bet and leg_results:
+        return {"status": "ok", "combo_decision": "ALL_LEGS_BET", "legs": leg_results,
+                "message": ("Toutes les jambes sont un BET structuré. Le pricing et le sizing du combiné "
+                            "sont délégués au Combo Builder structuré : `axon recommend --allow-combos` "
+                            "(ADR-ADV-014). Ce tool ne price aucun combiné.")}
+    return {"status": "ok", "combo_decision": "ABSTAIN", "legs": leg_results,
+            "message": "Au moins une jambe n'est pas un BET structuré — ne pas recommander ce combiné."}
 
 
 @tool("same_match_combo_analyze")
@@ -182,161 +233,52 @@ def same_match_combo_analyze(
     odds: float,
     bankroll: float = 100.0,
 ) -> str:
-    """Analyse un combiné INTRA-match avec la probabilité jointe EXACTE.
+    """Combiné INTRA-match — via le pipeline STRUCTURÉ (aucune proba jointe locale).
 
-    Contrairement à parlay_analyze (matchs différents), ce tool calcule la
-    proba jointe depuis la matrice de scores — le produit des probas
-    marginales est faux quand les événements sont corrélés (ex: "victoire
-    domicile" et "over 2.5" se renforcent).
-
-    Marchés supportés : home, draw, away, over_1_5, over_2_5, over_3_5,
-    under_1_5, under_2_5, under_3_5, btts_yes, btts_no.
+    Ne calcule plus la matrice de scores ni la proba jointe : chaque marché est
+    évalué structurellement, et le combiné est refusé tant que toutes les jambes ne
+    sont pas un BET structuré. Le pricing/sizing appartient au Combo Builder.
 
     Args:
-        home_team: équipe à domicile
-        away_team: équipe à l'extérieur
-        markets_json: JSON d'une liste de marchés, ex: '["home", "over_2_5"]'
-        odds: cote Winamax du combiné
-        bankroll: bankroll en euros (défaut 100)
+        home_team, away_team: équipes
+        markets_json: JSON d'une liste de marchés, ex: '["home", "away"]'
+        odds: cote observée du combiné (indicative)
+        bankroll: bankroll (sizing = Advisor/Combo Builder, pas ce tool)
     Returns:
-        JSON avec proba jointe, effet de corrélation, décision et mise recommandée
+        JSON {combo_decision, legs (décisions structurées)}
     """
-    from src.agents.quant.gateway import gateway
-    from src.agents.quant.dixon_coles import same_match_combo
-    from src.agents.quant.ev_engine import analyze_bet
     try:
         markets = json.loads(markets_json)
-        home = gateway.search_team(home_team)
-        away = gateway.search_team(away_team)
-        if not home or not away:
-            missing = home_team if not home else away_team
-            return json.dumps({"status": "error", "message": f"Équipe introuvable (v1 : Ligue 1, Premier League) : {missing}"})
-
-        home_form = gateway.recent_form(home["canonical_id"])
-        away_form = gateway.recent_form(away["canonical_id"])
-        ratings = gateway.opponent_ratings_for_form(home_form + away_form)
-
-        combo = same_match_combo(home_form, away_form, markets, opponent_ratings=ratings or None)
-        result = analyze_bet(combo["joint_probability"], combo["confidence_90"], combo["samples"], odds, bankroll)
-        result["markets"] = combo["markets"]
-        result["naive_product"] = combo["naive_product"]
-        result["correlation_effect"] = combo["correlation_effect"]
-        result["status"] = "ok"
-        if result["decision"] != "BET":
-            result["message"] = "Pas d'edge confirmé — ne pas recommander ce combiné."
-        return json.dumps(result, ensure_ascii=False)
+        legs = [{"home_team": home_team, "away_team": away_team, "market": m} for m in markets]
+        out = _combo_verdict(legs)
+        out["requested_combo_odds"] = odds
+        return json.dumps(out, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
 
 
-def _match_key(home_team: str, away_team: str) -> str:
-    return f"{home_team.strip().lower()}|{away_team.strip().lower()}"
-
-
-def _resolve_parlay_legs(raw_legs: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Regroupe les legs de parlay par match et calcule leur probabilité.
-
-    Chaque leg brut porte {home_team, away_team, market, odds} — jamais une
-    probabilité toute faite. Les legs partageant un match sont fusionnés en
-    probabilité jointe exacte (via same_match_combo), les autres passent par
-    market_probability individuellement.
-
-    Retourne (legs_prêts_pour_analyze_parlay, détails_des_fusions_intra_match).
-    """
-    from src.agents.quant.gateway import gateway
-    from src.agents.quant.dixon_coles import market_probability, same_match_combo
-
-    groups: dict[str, list[dict]] = {}
-    for leg in raw_legs:
-        key = _match_key(leg["home_team"], leg["away_team"])
-        groups.setdefault(key, []).append(leg)
-
-    resolved_legs: list[dict] = []
-    merges: list[dict] = []
-
-    for match_id, group in groups.items():
-        home = gateway.search_team(group[0]["home_team"])
-        away = gateway.search_team(group[0]["away_team"])
-        if not home or not away:
-            missing = group[0]["home_team"] if not home else group[0]["away_team"]
-            raise ValueError(f"Équipe introuvable (v1 : Ligue 1, Premier League) : {missing}")
-
-        home_form = gateway.recent_form(home["canonical_id"])
-        away_form = gateway.recent_form(away["canonical_id"])
-        ratings = gateway.opponent_ratings_for_form(home_form + away_form)
-
-        combined_odds = 1.0
-        for leg in group:
-            combined_odds *= leg["odds"]
-
-        if len(group) >= 2:
-            markets = [leg["market"] for leg in group]
-            combo = same_match_combo(home_form, away_form, markets, opponent_ratings=ratings or None)
-            resolved_legs.append({
-                "model_prob": combo["joint_probability"],
-                "confidence_90": combo["confidence_90"],
-                "samples": combo["samples"],
-                "odds": combined_odds,
-                "match_id": match_id,
-            })
-            merges.append({
-                "match_id": match_id,
-                "markets": markets,
-                "joint_probability": combo["joint_probability"],
-                "naive_product": combo["naive_product"],
-                "correlation_effect": combo["correlation_effect"],
-            })
-        else:
-            leg = group[0]
-            proba = market_probability(home_form, away_form, leg["market"], opponent_ratings=ratings or None)
-            resolved_legs.append({
-                "model_prob": proba["probability"],
-                "confidence_90": proba["confidence_90"],
-                "samples": proba["samples"],
-                "odds": leg["odds"],
-                "match_id": match_id,
-            })
-
-    return resolved_legs, merges
-
-
 @tool("parlay_analyze")
 def parlay_analyze(legs_json: str, bankroll: float = 100.0) -> str:
-    """Analyse un combiné (parlay) multi-matchs : décision, EV, corrélation.
+    """Combiné multi-matchs (parlay) — via le pipeline STRUCTURÉ.
 
-    Chaque leg référence une équipe et un marché — jamais une probabilité
-    toute faite (le calcul se fait ici). Les legs partageant le même match
-    sont automatiquement fusionnés en probabilité jointe exacte.
+    Ne calcule plus d'EV/Kelly de combiné ni de fusion intra-match maison : chaque
+    jambe passe par `decide_single` (Betting Engine). Le combiné n'est « BET » que si
+    toutes les jambes le sont ; le pricing/sizing appartient au Combo Builder
+    structuré (`axon recommend --allow-combos`, ADR-ADV-014).
 
     Args:
         legs_json: JSON d'une liste de legs :
-            [{"home_team": "PSG", "away_team": "Lyon", "market": "home", "odds": 1.8},
-             {"home_team": "PSG", "away_team": "Lyon", "market": "over_2_5", "odds": 1.9},
-             {"home_team": "Real Madrid", "away_team": "Barcelone", "market": "away", "odds": 2.4}]
-        bankroll: bankroll en euros (défaut 100)
+            [{"home_team": "PSG", "away_team": "Lyon", "market": "home"},
+             {"home_team": "Arsenal", "away_team": "Chelsea", "market": "away"}]
+        bankroll: bankroll (sizing = Advisor/Combo Builder)
     Returns:
-        JSON avec décision, EV du combiné et détail des fusions intra-match
+        JSON {combo_decision, legs (décisions structurées)}
     """
-    from src.agents.quant.ev_engine import analyze_bet, analyze_parlay
     try:
         raw_legs = json.loads(legs_json)
         if len(raw_legs) < 2:
             return json.dumps({"status": "error", "message": "Un combiné doit avoir au moins 2 sélections"})
-
-        resolved_legs, merges = _resolve_parlay_legs(raw_legs)
-
-        if len(resolved_legs) == 1:
-            # Toutes les legs portaient sur le même match → pari simple à proba jointe
-            leg = resolved_legs[0]
-            result = analyze_bet(leg["model_prob"], leg["confidence_90"], leg["samples"], leg["odds"], bankroll)
-            result["note"] = "Combiné entièrement intra-match — analysé via la probabilité jointe exacte."
-        else:
-            result = analyze_parlay(resolved_legs, bankroll)
-
-        result["same_match_merges"] = merges
-        result["status"] = "ok"
-        if result["decision"] != "BET":
-            result["message"] = "Pas d'edge confirmé — ne pas recommander ce combiné."
-        return json.dumps(result, ensure_ascii=False)
+        out = _combo_verdict(raw_legs)
+        return json.dumps(out, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e)})
