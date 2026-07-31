@@ -19,8 +19,14 @@ from decimal import Decimal
 
 from ..bookmakers.canonical_binding import build_canonical_event
 from ..bookmakers.market_canonicalizer import canonicalize_market, resolve_participant_roles
-from ..bookmakers.protocol import MarketType
+from ..core.market_model import FOOTBALL_1X2, MarketSchema
+from ..sports.model_registry import VALIDATED_MODELS
 from .observation import ObservationPhase, OddsObservation
+
+# Schéma de collecte MULTISPORT (§2) : le marché « vainqueur » d'un sport dépend de son
+# nombre d'issues, JAMAIS d'une hypothèse football. 3-way (football/hockey réglementaire)
+# vs 2-way (basket/baseball/NFL/volley). Dérivé du registre de modèles validés.
+_TWO_WAY = MarketSchema("MATCH_WINNER", "2way", ("home", "away"), ("slot_1", "slot_2"), False)
 
 
 @dataclass(frozen=True)
@@ -30,9 +36,17 @@ class RecordSummary:
     events_skipped: int
 
 
-def _first_1x2_market(raw_event):
+def _schema_for_sport(sport: str) -> MarketSchema | None:
+    """Schéma du marché vainqueur pour un sport collecté (None si sport non modélisé)."""
+    model = VALIDATED_MODELS.get(sport)
+    if model is None:
+        return None
+    return FOOTBALL_1X2 if model.outcomes == 3 else _TWO_WAY
+
+
+def _find_winner_market(raw_event, schema: MarketSchema):
     for market in raw_event.markets:
-        if market.market_type is MarketType.MATCH_WINNER and market.template == "3way":
+        if market.market_type.value == schema.market_type and market.template == schema.template:
             return market
     return None
 
@@ -55,16 +69,20 @@ def record_odds(
     convertie en `Decimal` via `str` (aucun artefact binaire)."""
     written = recorded = skipped = 0
     for raw_event in events:
+        schema = _schema_for_sport(raw_event.sport)
+        if schema is None:                       # sport non modélisé : rien à collecter (visible, pas fabriqué)
+            skipped += 1
+            continue
         mapping = event_resolver.resolve_event(raw_event)
         if not mapping.is_usable:
             skipped += 1
             continue
-        market = _first_1x2_market(raw_event)
+        market = _find_winner_market(raw_event, schema)
         if market is None:
             skipped += 1
             continue
         role_resolution = resolve_participant_roles(raw_event, role_resolver)
-        canon = canonicalize_market(raw_event, market, mapping, role_resolution)
+        canon = canonicalize_market(raw_event, market, mapping, role_resolution, schema=schema)
         if not canon.is_ok:
             skipped += 1
             continue

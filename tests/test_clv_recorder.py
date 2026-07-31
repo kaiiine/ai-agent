@@ -97,6 +97,47 @@ def test_decision_then_closing_makes_clv_measurable(tmp_path):
     assert readiness.mean_clv is not None                # valeur réelle, jamais None->0
 
 
+def _nba_resolver():
+    identity = IdentityResolver([
+        CanonicalEntity("team:basketball:usa:celtics", "Boston Celtics", ["Celtics"], {}),
+        CanonicalEntity("team:basketball:usa:lakers", "Los Angeles Lakers", ["LA Lakers"], {})])
+    comp = lambda tid: (("competition:basketball:usa:nba", "RESOLVED", "competition_table")
+                        if tid == "55" else (None, "UNRESOLVED", "none"))
+    return BookmakerEventResolver(identity, competition_resolver=comp)
+
+
+def _nba_state(*, home_odds):
+    return {
+        "matches": {"88001": {
+            "sportId": 2, "tournamentId": 55, "isOutright": False,
+            "competitor1Id": 2001, "competitor1Name": "Boston Celtics",
+            "competitor2Id": 2002, "competitor2Name": "Los Angeles Lakers",
+            "matchStart": _KO_EPOCH, "status": "PREMATCH"}},
+        "bets": {"9002": {"matchId": 88001, "betType": 1, "betTypeName": "Vainqueur",
+                          "template": "2way", "betTypeIsLive": False, "outcomes": [601, 602]}},
+        "outcomes": {"601": {"code": "1", "label": "BOS"}, "602": {"code": "2", "label": "LAL"}},
+        "odds": {"601": home_odds, "602": 2.10},
+        "tournaments": {"55": {"tournamentName": "NBA"}}}
+
+
+def test_multisport_records_two_way_sport(tmp_path):
+    # §2 : la collecte CLV n'est plus football-only — un sport 2-way (basket) est enregistré.
+    store = JsonlOddsHistoryStore(tmp_path / "odds.jsonl")
+    t0 = datetime(2026, 3, 1, 10, tzinfo=timezone.utc)
+    cap = synthetic_capture(_nba_state(home_odds=1.80), "basketball")
+    summary = record_from_capture(cap, event_resolver=_nba_resolver(), store=store,
+                                  phase=ObservationPhase.DECISION, now=t0)
+    assert summary.events_recorded == 1
+    assert summary.observations_written == 2            # home/away, PAS de nul (2-way)
+    assert {o.selection for o in store.all()} == {"home", "away"}
+    # DECISION puis CLOSING -> CLV mesurable, comme le football.
+    record_from_capture(synthetic_capture(_nba_state(home_odds=1.60), "basketball"),
+                        event_resolver=_nba_resolver(), store=store,
+                        phase=ObservationPhase.CLOSING, now=t0 + timedelta(hours=6))
+    r = clv_readiness(store.all())
+    assert r.status == MEASURABLE and r.n_complete_pairs == 2
+
+
 def test_unresolved_events_are_skipped_never_fabricated(tmp_path):
     store = JsonlOddsHistoryStore(tmp_path / "odds.jsonl")
     t0 = datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc)
