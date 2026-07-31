@@ -27,10 +27,15 @@ def _assess_nba(_odds=()):
     return assess_nba()
 
 
+def _assess_mlb(_odds=()):
+    from .sports.baseball.moneyline import assess_mlb
+    return assess_mlb()
+
+
 _ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a,
               "laliga": assess_laliga, "bundesliga": assess_bundesliga,
               "championship": assess_championship, "eredivisie": assess_eredivisie,
-              "primeira-liga": assess_primeira_liga, "nba": _assess_nba}
+              "primeira-liga": assess_primeira_liga, "nba": _assess_nba, "mlb": _assess_mlb}
 
 
 def render(assessment) -> list[str]:
