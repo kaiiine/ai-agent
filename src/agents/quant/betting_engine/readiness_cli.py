@@ -21,10 +21,16 @@ from .assessment import (
 from .maturity import Verdict
 
 # Compétitions ayant un dataset réel embarqué -> readiness mesurable par walk-forward.
+# Football (Dixon-Coles 1X2) + basket NBA (Elo moneyline, famille statistique PROPRE).
+def _assess_nba(_odds=()):
+    from .sports.basketball.moneyline import assess_nba
+    return assess_nba()
+
+
 _ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a,
               "laliga": assess_laliga, "bundesliga": assess_bundesliga,
               "championship": assess_championship, "eredivisie": assess_eredivisie,
-              "primeira-liga": assess_primeira_liga}
+              "primeira-liga": assess_primeira_liga, "nba": _assess_nba}
 
 
 def render(assessment) -> list[str]:
