@@ -12,11 +12,14 @@ import pytest
 
 from src.agents.quant.gateway.core.identity_data import TEAMS, LEAGUE_TEAMS
 from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
-from src.agents.quant.betting_engine.assessment import assess_laliga, assess_bundesliga
+from src.agents.quant.betting_engine.assessment import (
+    assess_bundesliga, assess_championship, assess_eredivisie, assess_laliga, assess_primeira_liga,
+)
 from src.agents.quant.betting_engine.bookmakers.bookmaker_registry import BookmakerEventResolver
 from src.agents.quant.betting_engine.bookmakers.winamax.competition_mapping import resolve_competition
 from src.agents.quant.betting_engine.calibration.historical_dataset import (
-    DEFAULT_BL1_FIXTURE, DEFAULT_PD_FIXTURE, load_bl1_2025, load_pd_2025,
+    DEFAULT_BL1_FIXTURE, DEFAULT_PD_FIXTURE, load_bl1_2025, load_ded_2025, load_elc_2025,
+    load_pd_2025, load_ppl_2025,
 )
 from src.agents.quant.betting_engine.competition_identity import (
     COMPETITION_IDENTITY_RESOLVED, disambiguate,
@@ -32,6 +35,15 @@ _LEAGUES = [
     ("bundesliga", "42", load_bl1_2025, "competition:football:deu:bundesliga", 306,
      {"Bayern Munich": "team:football:deu:bayern", "Borussia Dortmund": "team:football:deu:dortmund",
       "FC Cologne": "team:football:deu:koln", "Mayence": "team:football:deu:mainz"}),
+    ("championship", "2", load_elc_2025, "competition:football:eng:championship", 557,
+     {"Norwich": "team:football:eng:norwich", "Sheffield United": "team:football:eng:sheffield_utd",
+      "Stoke City": "team:football:eng:stoke", "West Bromwich": "team:football:eng:west_brom"}),
+    ("eredivisie", "39", load_ded_2025, "competition:football:nld:eredivisie", 306,
+     {"Ajax Amsterdam": "team:football:nld:ajax", "PSV Eindhoven": "team:football:nld:psv",
+      "Feyenoord": "team:football:nld:feyenoord", "Groningue": "team:football:nld:groningen"}),
+    ("primeira_liga", "52", load_ppl_2025, "competition:football:prt:primeira_liga", 306,
+     {"Benfica": "team:football:prt:benfica", "FC Porto": "team:football:prt:porto",
+      "Sporting Portugal": "team:football:prt:sporting", "Braga": "team:football:prt:braga"}),
 ]
 
 
@@ -60,14 +72,20 @@ def test_historical_fully_resolved(slug, tid, loader, comp_id, n_fin, samples):
     assert fingerprint.startswith("sha256:")
 
 
-@pytest.mark.parametrize("slug,assessor", [("laliga", assess_laliga), ("bundesliga", assess_bundesliga)])
+@pytest.mark.parametrize("slug,assessor", [
+    ("laliga", assess_laliga), ("bundesliga", assess_bundesliga),
+    ("championship", assess_championship), ("eredivisie", assess_eredivisie),
+    ("primeira_liga", assess_primeira_liga)])
 def test_walk_forward_experimental_beats_baseline(slug, assessor):
     a = assessor()
     o, d = a.observations, a.decision
     assert d.status == "EXPERIMENTAL"                         # mécanique, jamais SUPPORTED
     assert o.n_evaluated > 250 and o.n_temporal_folds >= 3
-    assert o.model_brier < o.best_baseline_brier
-    assert "min_sample_size" in {c.name for c in d.criteria if c.required and c.verdict.value != "PASS"}
+    assert o.model_brier < o.best_baseline_brier             # bat la baseline (mesuré)
+    # positive_clv bloque TOUTES les compétitions (aucune paire décision/clôture collectée) ;
+    # le modèle réel reste donc EXPERIMENTAL même quand min_sample_size passe (Championship).
+    blockers = {c.name for c in d.criteria if c.required and c.verdict.value != "PASS"}
+    assert "positive_clv" in blockers
 
 
 def test_bundesliga_homonym_resolved_by_real_roster_not_name():

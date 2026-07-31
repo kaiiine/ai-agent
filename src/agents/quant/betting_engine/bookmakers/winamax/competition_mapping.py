@@ -70,6 +70,18 @@ WINAMAX_COMPETITION_MAPPINGS: list[WinamaxCompetitionMapping] = [
         "tid 42 = « Bundesliga » (Allemagne) désambiguïsé par roster (0.556 vs BL1 ; "
         "tid 29 autrichien = 0.0) ; équipes peuplées (IDs football_data_org BL1)",
     ),
+    WinamaxCompetitionMapping(
+        "2", "competition:football:eng:championship", _VERIFIED, "roster_overlap",
+        "tid 2 = « Championship » confirmé par roster (0.83 vs ELC) ; équipes peuplées (ELC)",
+    ),
+    WinamaxCompetitionMapping(
+        "39", "competition:football:nld:eredivisie", _VERIFIED, "roster_overlap",
+        "tid 39 = « Eredivisie » confirmé par roster (0.61 vs DED) ; équipes peuplées (DED)",
+    ),
+    WinamaxCompetitionMapping(
+        "52", "competition:football:prt:primeira_liga", _VERIFIED, "roster_overlap",
+        "tid 52 = « Liga Portugal » confirmé par roster (0.88 vs PPL) ; équipes peuplées (PPL)",
+    ),
 ]
 
 _BY_TID: dict[str, WinamaxCompetitionMapping] = {

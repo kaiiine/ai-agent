@@ -39,6 +39,18 @@ BL1_LEAGUE_ID = "competition:football:deu:bundesliga"
 BL1_SEASON = "2025"
 DEFAULT_BL1_FIXTURE = _FIXTURES / "bl1_2025_matches.json"
 
+ELC_LEAGUE_ID = "competition:football:eng:championship"
+ELC_SEASON = "2025"
+DEFAULT_ELC_FIXTURE = _FIXTURES / "elc_2025_matches.json"
+
+DED_LEAGUE_ID = "competition:football:nld:eredivisie"
+DED_SEASON = "2025"
+DEFAULT_DED_FIXTURE = _FIXTURES / "ded_2025_matches.json"
+
+PPL_LEAGUE_ID = "competition:football:prt:primeira_liga"
+PPL_SEASON = "2025"
+DEFAULT_PPL_FIXTURE = _FIXTURES / "ppl_2025_matches.json"
+
 
 def load_competition_season(
     resolver: IdentityResolver, path: Path, league_id: str, season: str,
@@ -97,3 +109,18 @@ def load_pd_2025(resolver: IdentityResolver, path: Path = DEFAULT_PD_FIXTURE):
 def load_bl1_2025(resolver: IdentityResolver, path: Path = DEFAULT_BL1_FIXTURE):
     """Bundesliga (Allemagne) 2025-26 (wrapper du chargeur générique)."""
     return load_competition_season(resolver, path, BL1_LEAGUE_ID, BL1_SEASON)
+
+
+def load_elc_2025(resolver: IdentityResolver, path: Path = DEFAULT_ELC_FIXTURE):
+    """Championship anglaise 2025-26 (wrapper du chargeur générique)."""
+    return load_competition_season(resolver, path, ELC_LEAGUE_ID, ELC_SEASON)
+
+
+def load_ded_2025(resolver: IdentityResolver, path: Path = DEFAULT_DED_FIXTURE):
+    """Eredivisie 2025-26 (wrapper du chargeur générique)."""
+    return load_competition_season(resolver, path, DED_LEAGUE_ID, DED_SEASON)
+
+
+def load_ppl_2025(resolver: IdentityResolver, path: Path = DEFAULT_PPL_FIXTURE):
+    """Primeira Liga 2025-26 (wrapper du chargeur générique)."""
+    return load_competition_season(resolver, path, PPL_LEAGUE_ID, PPL_SEASON)

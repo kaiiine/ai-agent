@@ -11,15 +11,20 @@ import argparse
 
 from .assessment import (
     assess_bundesliga,
+    assess_championship,
     assess_default_one_x_two,
+    assess_eredivisie,
     assess_laliga,
+    assess_primeira_liga,
     assess_serie_a,
 )
 from .maturity import Verdict
 
 # Compétitions ayant un dataset réel embarqué -> readiness mesurable par walk-forward.
 _ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a,
-              "laliga": assess_laliga, "bundesliga": assess_bundesliga}
+              "laliga": assess_laliga, "bundesliga": assess_bundesliga,
+              "championship": assess_championship, "eredivisie": assess_eredivisie,
+              "primeira-liga": assess_primeira_liga}
 
 
 def render(assessment) -> list[str]:

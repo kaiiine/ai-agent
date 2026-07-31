@@ -148,3 +148,21 @@ def assess_bundesliga(odds_observations: Sequence[OddsObservation] = ()) -> Matu
     """Bundesliga (Allemagne) 2025-26 (dataset réel football-data.org) — mécanique EXPERIMENTAL."""
     from .calibration.historical_dataset import BL1_LEAGUE_ID, BL1_SEASON, load_bl1_2025
     return _assess_competition(load_bl1_2025, BL1_LEAGUE_ID, BL1_SEASON, odds_observations)
+
+
+def assess_championship(odds_observations: Sequence[OddsObservation] = ()) -> MaturityAssessment:
+    """Championship anglaise 2025-26 (dataset réel football-data.org) — mécanique EXPERIMENTAL."""
+    from .calibration.historical_dataset import ELC_LEAGUE_ID, ELC_SEASON, load_elc_2025
+    return _assess_competition(load_elc_2025, ELC_LEAGUE_ID, ELC_SEASON, odds_observations)
+
+
+def assess_eredivisie(odds_observations: Sequence[OddsObservation] = ()) -> MaturityAssessment:
+    """Eredivisie 2025-26 (dataset réel football-data.org) — mécanique EXPERIMENTAL."""
+    from .calibration.historical_dataset import DED_LEAGUE_ID, DED_SEASON, load_ded_2025
+    return _assess_competition(load_ded_2025, DED_LEAGUE_ID, DED_SEASON, odds_observations)
+
+
+def assess_primeira_liga(odds_observations: Sequence[OddsObservation] = ()) -> MaturityAssessment:
+    """Primeira Liga 2025-26 (dataset réel football-data.org) — mécanique EXPERIMENTAL."""
+    from .calibration.historical_dataset import PPL_LEAGUE_ID, PPL_SEASON, load_ppl_2025
+    return _assess_competition(load_ppl_2025, PPL_LEAGUE_ID, PPL_SEASON, odds_observations)

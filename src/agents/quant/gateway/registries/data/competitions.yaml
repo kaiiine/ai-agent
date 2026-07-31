@@ -45,3 +45,27 @@
   competition_type: league
   tier: 1
   status: active
+
+- canonical_id: "competition:football:eng:championship"
+  sport: football
+  name: "Championship"
+  country_code: GB
+  competition_type: league
+  tier: 2
+  status: active
+
+- canonical_id: "competition:football:nld:eredivisie"
+  sport: football
+  name: "Eredivisie"
+  country_code: NL
+  competition_type: league
+  tier: 1
+  status: active
+
+- canonical_id: "competition:football:prt:primeira_liga"
+  sport: football
+  name: "Primeira Liga"
+  country_code: PT
+  competition_type: league
+  tier: 1
+  status: active

@@ -41,6 +41,9 @@ def test_active_competitions_filter():
         "competition:football:ita:serie_a",
         "competition:football:esp:laliga",
         "competition:football:deu:bundesliga",
+        "competition:football:eng:championship",
+        "competition:football:nld:eredivisie",
+        "competition:football:prt:primeira_liga",
     }
 
 
