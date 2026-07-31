@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import argparse
 
-from .assessment import assess_default_one_x_two
+from .assessment import assess_default_one_x_two, assess_serie_a
 from .maturity import Verdict
+
+# Compétitions ayant un dataset réel embarqué -> readiness mesurable par walk-forward.
+_ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a}
 
 
 def render(assessment) -> list[str]:
@@ -34,9 +37,12 @@ def render(assessment) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    argparse.ArgumentParser(prog="axon readiness",
-                            description="Maturité mécanique du modèle (§16).").parse_args(argv)
-    for line in render(assess_default_one_x_two()):
+    p = argparse.ArgumentParser(prog="axon readiness",
+                                description="Maturité mécanique du modèle (§16).")
+    p.add_argument("--competition", choices=tuple(_ASSESSORS), default="fl1",
+                   help="compétition à évaluer (dataset réel embarqué)")
+    args = p.parse_args(argv)
+    for line in render(_ASSESSORS[args.competition]()):
         print(line)
     return 0
 

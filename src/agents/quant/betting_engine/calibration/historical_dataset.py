@@ -1,11 +1,14 @@
-"""Chargement du dataset RÉEL (Ligue 1 2025-26) -> list[CanonicalMatch].
+"""Chargement de datasets RÉELS football-data.org -> list[CanonicalMatch].
 
-Source : la fixture football-data.org enregistrée (`fl1_2025_matches.json`),
-donnée réelle (mêmes matchs que les golden tests de la gateway). Chaque équipe
-est résolue en `canonical_id` via l'identity_resolver de la gateway ; le
-`dataset_fingerprint` (sha256 du fichier brut) ancre la reproductibilité.
+Source : fixtures football-data.org enregistrées (`fl1_2025_matches.json`,
+`sa_2025_matches.json`…), données réelles (mêmes payloads que les endpoints live,
+provenance football_data_org). Chaque équipe est résolue en `canonical_id` via
+l'identity_resolver de la gateway ; le `dataset_fingerprint` (sha256 du fichier
+brut) ancre la reproductibilité.
 
-Aucune donnée synthétique ici : ce chargeur alimente le PREMIER run officiel.
+Aucune donnée synthétique ici. Le chargeur est GÉNÉRIQUE (compétition-agnostique) :
+onboarder une compétition = fournir sa fixture + son `league_id` canonique + saison
+(mêmes IDs football_data_org, même walk-forward, aucune adaptation ad hoc — §6/§10).
 """
 
 from __future__ import annotations
@@ -18,19 +21,25 @@ from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
 from src.agents.quant.gateway.sports.football.canonical_facts import CanonicalMatch
 from src.agents.quant.betting_engine.calibration.experiment_registry import dataset_fingerprint
 
+_FIXTURES = Path(__file__).resolve().parents[5] / "tests" / "fixtures"
+
 FL1_LEAGUE_ID = "competition:football:fra:ligue1"
 FL1_SEASON = "2025"
-DEFAULT_FL1_FIXTURE = (
-    Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "fl1_2025_matches.json"
-)
+DEFAULT_FL1_FIXTURE = _FIXTURES / "fl1_2025_matches.json"
+
+SA_LEAGUE_ID = "competition:football:ita:serie_a"
+SA_SEASON = "2025"
+DEFAULT_SA_FIXTURE = _FIXTURES / "sa_2025_matches.json"
 
 
-def load_fl1_2025(resolver: IdentityResolver, path: Path = DEFAULT_FL1_FIXTURE):
-    """`(matches: list[CanonicalMatch], dataset_fingerprint, n_total_finished)`.
+def load_competition_season(
+    resolver: IdentityResolver, path: Path, league_id: str, season: str,
+):
+    """GÉNÉRIQUE — `(matches, dataset_fingerprint, n_total_finished)`.
 
     Ne garde que les matchs FINISHED avec score ET dont les deux équipes résolvent
-    en canonical_id (comptés à part sinon).
-    """
+    en canonical_id (comptés dans `n_total_finished` mais écartés sinon : une équipe
+    non résolue reste explicitement absente, jamais devinée)."""
     raw = path.read_bytes()
     data = json.loads(raw)
 
@@ -50,8 +59,8 @@ def load_fl1_2025(resolver: IdentityResolver, path: Path = DEFAULT_FL1_FIXTURE):
             continue
         matches.append(CanonicalMatch(
             canonical_match_id=str(m["id"]),
-            league_id=FL1_LEAGUE_ID,
-            season=FL1_SEASON,
+            league_id=league_id,
+            season=season,
             home_team_id=home_id,
             away_team_id=away_id,
             kickoff=datetime.fromisoformat(m["utcDate"].replace("Z", "+00:00")),
@@ -60,3 +69,13 @@ def load_fl1_2025(resolver: IdentityResolver, path: Path = DEFAULT_FL1_FIXTURE):
             goals_away=int(ga),
         ))
     return matches, dataset_fingerprint(raw), n_finished
+
+
+def load_fl1_2025(resolver: IdentityResolver, path: Path = DEFAULT_FL1_FIXTURE):
+    """Ligue 1 2025-26 (wrapper du chargeur générique)."""
+    return load_competition_season(resolver, path, FL1_LEAGUE_ID, FL1_SEASON)
+
+
+def load_sa_2025(resolver: IdentityResolver, path: Path = DEFAULT_SA_FIXTURE):
+    """Serie A 2025-26 (wrapper du chargeur générique) — onboardée le 2026-07-31."""
+    return load_competition_season(resolver, path, SA_LEAGUE_ID, SA_SEASON)

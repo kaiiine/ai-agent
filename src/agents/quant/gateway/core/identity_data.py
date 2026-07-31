@@ -84,6 +84,32 @@ TEAMS: list[CanonicalEntity] = [
                      {"api_sports": "48", "football_data_org": "563"}),
     CanonicalEntity("team:football:eng:burnley", "Burnley", ["Burnley"], {"api_sports": "44", "football_data_org": "328"}),
     CanonicalEntity("team:football:eng:wolves", "Wolves", ["Wolves", "Wolverhampton"], {"api_sports": "39", "football_data_org": "76"}),
+
+    # Serie A (20 équipes, saison 2025-2026) — scope ita.
+    # IDs football_data_org VÉRIFIÉS EN DIRECT (endpoint competitions/SA/matches, 2026-07-31,
+    # 380 matchs FINISHED) : chaque ID voyage avec son nom provider (autoritatif). Les alias
+    # incluent le nom EXACT affiché par Winamax (scan live tid 33) pour la résolution live —
+    # un alias absent -> UNRESOLVED (isolé), jamais une mauvaise résolution (résolution EXACTE).
+    CanonicalEntity("team:football:ita:milan", "AC Milan", ["Milan AC", "AC Milan", "Milan"], {"football_data_org": "98"}),
+    CanonicalEntity("team:football:ita:fiorentina", "ACF Fiorentina", ["Fiorentina"], {"football_data_org": "99"}),
+    CanonicalEntity("team:football:ita:roma", "AS Roma", ["AS Rome", "AS Roma", "Roma", "Rome"], {"football_data_org": "100"}),
+    CanonicalEntity("team:football:ita:atalanta", "Atalanta BC", ["Atalanta Bergame", "Atalanta"], {"football_data_org": "102"}),
+    CanonicalEntity("team:football:ita:bologna", "Bologna FC 1909", ["Bologne", "Bologna"], {"football_data_org": "103"}),
+    CanonicalEntity("team:football:ita:cagliari", "Cagliari Calcio", ["Cagliari"], {"football_data_org": "104"}),
+    CanonicalEntity("team:football:ita:genoa", "Genoa CFC", ["Genoa"], {"football_data_org": "107"}),
+    CanonicalEntity("team:football:ita:inter", "FC Internazionale Milano", ["Inter Milan", "Inter"], {"football_data_org": "108"}),
+    CanonicalEntity("team:football:ita:juventus", "Juventus FC", ["Juventus Turin", "Juventus"], {"football_data_org": "109"}),
+    CanonicalEntity("team:football:ita:lazio", "SS Lazio", ["Lazio Rome", "Lazio"], {"football_data_org": "110"}),
+    CanonicalEntity("team:football:ita:parma", "Parma Calcio 1913", ["Parme", "Parma"], {"football_data_org": "112"}),
+    CanonicalEntity("team:football:ita:napoli", "SSC Napoli", ["Naples", "Napoli"], {"football_data_org": "113"}),
+    CanonicalEntity("team:football:ita:udinese", "Udinese Calcio", ["Udinese"], {"football_data_org": "115"}),
+    CanonicalEntity("team:football:ita:hellas_verona", "Hellas Verona FC", ["Hellas Verona", "Verona", "Vérone"], {"football_data_org": "450"}),
+    CanonicalEntity("team:football:ita:cremonese", "US Cremonese", ["Cremonese"], {"football_data_org": "457"}),
+    CanonicalEntity("team:football:ita:sassuolo", "US Sassuolo Calcio", ["Sassuolo"], {"football_data_org": "471"}),
+    CanonicalEntity("team:football:ita:pisa", "AC Pisa 1909", ["Pisa", "Pise"], {"football_data_org": "487"}),
+    CanonicalEntity("team:football:ita:torino", "Torino FC", ["Torino"], {"football_data_org": "586"}),
+    CanonicalEntity("team:football:ita:lecce", "US Lecce", ["Lecce"], {"football_data_org": "5890"}),
+    CanonicalEntity("team:football:ita:como", "Como 1907", ["Côme", "Como"], {"football_data_org": "7397"}),
 ]
 
 LEAGUE_TEAMS: dict[str, list[str]] = {
@@ -103,5 +129,14 @@ LEAGUE_TEAMS: dict[str, list[str]] = {
         "team:football:eng:everton", "team:football:eng:leeds_united", "team:football:eng:crystal_palace",
         "team:football:eng:nottingham_forest", "team:football:eng:tottenham", "team:football:eng:west_ham",
         "team:football:eng:burnley", "team:football:eng:wolves",
+    ],
+    "competition:football:ita:serie_a": [
+        "team:football:ita:milan", "team:football:ita:fiorentina", "team:football:ita:roma",
+        "team:football:ita:atalanta", "team:football:ita:bologna", "team:football:ita:cagliari",
+        "team:football:ita:genoa", "team:football:ita:inter", "team:football:ita:juventus",
+        "team:football:ita:lazio", "team:football:ita:parma", "team:football:ita:napoli",
+        "team:football:ita:udinese", "team:football:ita:hellas_verona", "team:football:ita:cremonese",
+        "team:football:ita:sassuolo", "team:football:ita:pisa", "team:football:ita:torino",
+        "team:football:ita:lecce", "team:football:ita:como",
     ],
 }

@@ -52,8 +52,9 @@ WINAMAX_COMPETITION_MAPPINGS: list[WinamaxCompetitionMapping] = [
         "carto §3 : tournamentId 1 = « Premier League »",
     ),
     WinamaxCompetitionMapping(
-        "33", "competition:football:ita:serie_a", None, "unverified",
-        "à vérifier : équipes Serie A pas encore au registre",
+        "33", "competition:football:ita:serie_a", _VERIFIED, "live_call",
+        "carto §3 : tournamentId 33 = « Serie A » (scan live 2026-07-31) ; équipes Serie A "
+        "peuplées au registre (IDs football_data_org vérifiés en direct, endpoint SA/matches)",
     ),
 ]
 

@@ -30,13 +30,21 @@ def test_unknown_tournament_is_unresolved():
     assert resolve_competition(None) == (None, "UNRESOLVED", "none")
 
 
-def test_unverified_mapping_is_never_served():
-    # Serie A (tid 33) existe dans la table mais n'est pas vérifiée : inutilisable,
-    # exactement comme une couverture UNVERIFIED côté gateway.
-    cid, status, method = resolve_competition("33")
-    assert cid is None
-    assert status == "UNRESOLVED"
-    assert method == "unverified"
+def test_serie_a_resolves_after_onboarding():
+    # Serie A (tid 33) : équipes peuplées (IDs football_data_org vérifiés en direct)
+    # + mapping vérifié (live_call) -> désormais RÉSOLUE (onboarding 2026-07-31).
+    cid, status, _ = resolve_competition("33")
+    assert cid == "competition:football:ita:serie_a"
+    assert status == "RESOLVED"
+
+
+def test_unverified_mapping_is_never_served(monkeypatch):
+    # Invariant GW-FR-005 (indépendant du seed) : une entrée NON vérifiée n'est
+    # JAMAIS servie. On l'exerce en injectant une entrée unverified dans la table.
+    import src.agents.quant.betting_engine.bookmakers.winamax.competition_mapping as cm
+    entry = WinamaxCompetitionMapping("77777", "competition:football:fra:ligue1", None, "unverified")
+    monkeypatch.setitem(cm._BY_TID, "77777", entry)
+    assert resolve_competition("77777") == (None, "UNRESOLVED", "unverified")
 
 
 def test_is_verified_property():

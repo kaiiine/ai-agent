@@ -37,6 +37,7 @@ def test_active_competitions_filter():
     assert {c.canonical_id for c in active} == {
         "competition:football:fra:ligue1",
         "competition:football:eng:premier_league",
+        "competition:football:ita:serie_a",       # onboardée (données réelles football-data.org)
     }
 
 

@@ -21,3 +21,11 @@
   competition_type: league
   tier: 1
   status: active
+
+- canonical_id: "competition:football:ita:serie_a"
+  sport: football
+  name: "Serie A"
+  country_code: IT
+  competition_type: league
+  tier: 1
+  status: active
