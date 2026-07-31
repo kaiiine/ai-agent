@@ -209,3 +209,27 @@ def test_policy_component_absent_from_decomposition():
         "value_component", "reliability_component", "quality_component",
         "freshness_component", "liquidity_component", "uncertainty_penalty",
         "concentration_penalty", "base_score", "ranking_score"}
+
+
+# ── Neutralité cross-sport (§11/§12, DoD #7) ──────────────────────────────────
+# Le score ne lit QUE le contrat économique normalisé (value/reliability/quality/
+# freshness/liquidity/uncertainty). `sport`/`competition_id` sont portés par le
+# candidat (identité/exposition/audit) mais ne doivent JAMAIS biaiser le classement :
+# pas de bonus historique au football (§12). Candidats de test explicitement
+# synthétiques — aucune sortie de modèle fabriquée.
+def test_ranking_is_sport_neutral_identical_economics_identical_score():
+    from dataclasses import replace
+    from src.agents.quant.advisor.ranking.scorer import score_base
+    profile = _profile()
+    fb = _cand("c1")                                   # sport="football"
+    tn = replace(fb, sport="tennis", competition_id="comp:atp")
+    assert score_base(fb, profile).base_score == score_base(tn, profile).base_score
+
+
+def test_ranking_gives_no_bonus_to_football():
+    from dataclasses import replace
+    fb = _cand("fb", "e1", ev_low=Decimal("0.04"))     # football, EV plus faible
+    tn = replace(_cand("tn", "e2", ev_low=Decimal("0.12")),
+                 sport="tennis", competition_id="comp:atp")   # autre sport, EV plus forte
+    res = rank([_elig(fb), _elig(tn)], profile=_profile())
+    assert _ranked_ids(res)[0] == "tn"                 # l'économie prime, jamais le sport
