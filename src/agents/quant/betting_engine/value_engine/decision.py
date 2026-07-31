@@ -104,6 +104,7 @@ def evaluate_selection(
     market_odds: Sequence[OddsSnapshot],
     *,
     policy: BetDecisionPolicy | None = None,
+    expected_selections: frozenset[str] | None = None,
 ) -> BettingDecision:
     policy = policy or default_bet_decision_policy()
     target = next((o for o in market_odds if o.selection == prediction.selection), None)
@@ -120,7 +121,7 @@ def evaluate_selection(
         )
 
     # Sinon, un marché cohérent et complet est requis pour évaluer.
-    validate_market(market_odds, prediction)     # -> MarketCoherenceError si incohérent
+    validate_market(market_odds, prediction, expected_selections=expected_selections)  # -> MarketCoherenceError
     target = next(o for o in market_odds if o.selection == prediction.selection)
 
     model_p = prediction.fair_probability

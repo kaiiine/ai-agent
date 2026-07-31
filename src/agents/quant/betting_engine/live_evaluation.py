@@ -32,10 +32,10 @@ from .bookmakers.market_canonicalizer import (
     resolve_participant_roles,
 )
 from .bookmakers.participant_role_resolver import ParticipantRoleResolver
-from .bookmakers.protocol import MarketType, RawBookmakerEvent
+from .bookmakers.protocol import RawBookmakerEvent
 from .core.canonical_event import CanonicalEvent
 from .core.feature_set import EventFeatureSet
-from .core.market_model import DataReadiness, MarketPrediction
+from .core.market_model import FOOTBALL_1X2, DataReadiness, MarketPrediction, MarketSchema
 from .sports.registry import SPORT_MODULES, SportModule
 from .value_engine import BettingDecision, evaluate_selection
 
@@ -56,7 +56,18 @@ _FRESHNESS_DEGRADED = (
     "pas d'horodatage fiable (repli sur fetched_at) ; staleness non mesurable — "
     "aucune fraîcheur favorable inventée"
 )
-_SELECTIONS = ("home", "draw", "away")
+def _model_schema(module: SportModule) -> MarketSchema:
+    """Schéma de marché DÉCLARÉ par le modèle du sport (défaut football 1X2). C'est
+    lui — jamais un `if sport ==` — qui porte le nombre d'issues (2-way vs 3-way)."""
+    return getattr(module.model, "schema", FOOTBALL_1X2)
+
+
+def _find_market(raw_event: RawBookmakerEvent, schema: MarketSchema):
+    """Premier marché correspondant au (market_type, template) du schéma — générique."""
+    for market in raw_event.markets:
+        if market.market_type.value == schema.market_type and market.template == schema.template:
+            return market
+    return None
 
 
 class LiveEvaluationStatus(str, Enum):
@@ -106,13 +117,6 @@ def _season_of(dt: datetime) -> str:
     return str(dt.year if dt.month >= 7 else dt.year - 1)
 
 
-def _first_1x2_market(raw_event: RawBookmakerEvent):
-    for market in raw_event.markets:
-        if market.market_type is MarketType.MATCH_WINNER and market.template == "3way":
-            return market
-    return None
-
-
 def evaluate_live_event(
     raw_event: RawBookmakerEvent,
     *,
@@ -147,13 +151,14 @@ def evaluate_live_event(
         return result(LiveEvaluationStatus.EVENT_NOT_RESOLVED,
                       f"identity={mapping.identity_status} eligibility={mapping.eligibility_status}")
 
-    # 3) Canonicalisation ATOMIQUE du marché 1X2 (cotes).
-    market = _first_1x2_market(raw_event)
+    # 3) Canonicalisation ATOMIQUE du marché — piloté par le SCHÉMA du sport (2/3-way).
+    schema = _model_schema(module)
+    market = _find_market(raw_event, schema)
     if market is None:
         return result(LiveEvaluationStatus.MARKET_CANONICALIZATION_FAILED,
-                      "aucun marché 1X2 (MATCH_WINNER/3way) dans l'événement")
+                      f"aucun marché {schema.market_type}/{schema.template} dans l'événement")
     role_resolution = resolve_participant_roles(raw_event, role_resolver)
-    canon = canonicalize_market(raw_event, market, mapping, role_resolution)
+    canon = canonicalize_market(raw_event, market, mapping, role_resolution, schema=schema)
     if canon.status is not MarketCanonicalizationStatus.OK:
         return result(LiveEvaluationStatus.MARKET_CANONICALIZATION_FAILED,
                       f"{canon.status.value}: {canon.reason}")
@@ -224,9 +229,11 @@ def evaluate_live_event(
             for sel, pred in predictions.items()
         }
 
-    # 9) Décision par sélection (toujours ABSTAIN, BE-FR-011).
+    # 9) Décision par sélection (toujours ABSTAIN, BE-FR-011). Issues du SCHÉMA (2/3-way).
+    expected = frozenset(schema.selections)
     decisions = tuple(
-        evaluate_selection(predictions[sel], canon.snapshots) for sel in _SELECTIONS
+        evaluate_selection(predictions[sel], canon.snapshots, expected_selections=expected)
+        for sel in schema.selections
     )
 
     return result(LiveEvaluationStatus.EVALUATED, "ok",

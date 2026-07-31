@@ -44,6 +44,29 @@ class PredictionExplanation:
 
 
 @dataclass(frozen=True)
+class MarketSchema:
+    """Schéma d'un marché — NEUTRE au sport. Porté par le modèle, il pilote la
+    canonicalisation + la décision live sans hypothèse `home/draw/away` codée en dur.
+
+    `selections` = issues canoniques ORDONNÉES ; `slot_codes` = codes bruts attendus
+    (`RawSelection.canonical_selection`, triés) pour la complétude structurelle. Un 1X2
+    football est 3-way (avec `draw`) ; un moneyline basket/tennis est 2-way (sans `draw`).
+    La sémantique vient du marché réel, jamais du nom du sport (PRD multisport §8)."""
+    market_type: str
+    template: str                          # "3way" | "2way"
+    selections: tuple[str, ...]            # issues canoniques ordonnées
+    slot_codes: tuple[str, ...]            # codes bruts attendus (triés) : complétude structurelle
+    has_draw: bool
+
+
+# Schéma football 1X2 — DÉFAUT rétro-compatible de la canonicalisation/cohérence.
+FOOTBALL_1X2 = MarketSchema(
+    market_type="MATCH_WINNER", template="3way",
+    selections=("home", "draw", "away"),
+    slot_codes=("draw", "slot_1", "slot_2"), has_draw=True)
+
+
+@dataclass(frozen=True)
 class MarketPrediction:
     sport: str
     market_type: str

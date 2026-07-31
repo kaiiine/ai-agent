@@ -21,12 +21,19 @@ from src.agents.quant.betting_engine.core.odds import OddsSnapshot
 MAX_SNAPSHOT_SKEW = timedelta(minutes=2)
 
 # Ensemble EXACT des issues attendues par market_type (complétude structurelle).
+# Défaut football 1X2 ; un marché 2-way passe son propre ensemble via `expected_selections`
+# (la sémantique vient du marché réel, jamais du nom du sport — PRD multisport §8).
 _EXPECTED_SELECTIONS: dict[str, frozenset[str]] = {
     "MATCH_WINNER": frozenset({"home", "draw", "away"}),
 }
 
 
-def validate_market(market_odds: Sequence[OddsSnapshot], prediction: MarketPrediction) -> None:
+def validate_market(
+    market_odds: Sequence[OddsSnapshot],
+    prediction: MarketPrediction,
+    *,
+    expected_selections: frozenset[str] | None = None,
+) -> None:
     if not market_odds:
         raise MarketCoherenceError("marché vide")
 
@@ -55,8 +62,9 @@ def validate_market(market_odds: Sequence[OddsSnapshot], prediction: MarketPredi
     if len(selections) != len(set(selections)):
         raise MarketCoherenceError(f"sélections dupliquées : {selections}")
 
-    # Complétude structurelle : l'ensemble EXACT des issues attendues.
-    expected = _EXPECTED_SELECTIONS.get(market_type)
+    # Complétude structurelle : l'ensemble EXACT des issues attendues. Le schéma du
+    # marché (2-way/3-way) prime, sinon repli sur la table football par market_type.
+    expected = expected_selections if expected_selections is not None else _EXPECTED_SELECTIONS.get(market_type)
     if expected is not None and set(selections) != expected:
         raise MarketCoherenceError(
             f"ensemble d'issues incomplet/inconnu pour {market_type} : "

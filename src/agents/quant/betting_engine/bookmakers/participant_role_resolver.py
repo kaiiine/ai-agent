@@ -29,6 +29,9 @@ class UnknownSportRoleMapping(Exception):
 # tennis / tennis de table : ordre arbitraire mais stable, jamais de domicile.
 _SLOT_ROLES_BY_SPORT: dict[str, tuple[str, str]] = {
     "football": ("home", "away"),
+    # basket/baseball/hockey : domicile réel (slot_1 = home Winamax), issue 2-way sans nul.
+    "basketball": ("home", "away"),
+    "baseball": ("home", "away"),
     "tennis": ("player_a", "player_b"),
     "table_tennis": ("player_a", "player_b"),
 }

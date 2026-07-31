@@ -27,6 +27,7 @@ from src.agents.quant.betting_engine.core.errors import (
 )
 from src.agents.quant.betting_engine.core.feature_set import EventFeatureSet
 from src.agents.quant.betting_engine.core.market_model import (
+    FOOTBALL_1X2,
     DataReadiness,
     MarketPrediction,
     PredictionExplanation,
@@ -39,6 +40,7 @@ class OneXTwoModel:
     market_type = "MATCH_WINNER"
     model_name = "one_x_two"
     model_version = "football.one_x_two.dixon_coles.v0"
+    schema = FOOTBALL_1X2                    # 3-way (home/draw/away) — pilote la canonicalisation/décision
 
     _REQUIRED = frozenset({"attack_strength", "defense_strength"})
     _SELECTIONS = ("home", "draw", "away")

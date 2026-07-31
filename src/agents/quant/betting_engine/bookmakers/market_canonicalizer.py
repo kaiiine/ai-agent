@@ -22,14 +22,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
+from src.agents.quant.betting_engine.core.market_model import FOOTBALL_1X2, MarketSchema
 from src.agents.quant.betting_engine.core.odds import OddsSnapshot
 
 from .bookmaker_registry import BookmakerEventMapping
 from .participant_role_resolver import ParticipantRoleResolver
-from .protocol import MarketType, RawBookmakerEvent, RawMarket
-
-_CANONICAL_MARKET_TYPE = "MATCH_WINNER"
-_EXPECTED_1X2_SLOTS = ("draw", "slot_1", "slot_2")   # trié
+from .protocol import RawBookmakerEvent, RawMarket
 
 
 class MarketCanonicalizationStatus(str, Enum):
@@ -100,7 +98,10 @@ def canonicalize_market(
     role_resolution: ParticipantRoleResolution,
     *,
     observed_at: datetime | None = None,
+    schema: MarketSchema | None = None,
 ) -> MarketCanonicalizationResult:
+    # Schéma NEUTRE au sport (défaut = football 1X2 3-way, rétro-compat).
+    schema = schema or FOOTBALL_1X2
     bem_id = event_mapping.bookmaker_event_id
 
     # 1) Cohérence d'assemblage : les 3 objets concernent le MÊME événement bookmaker.
@@ -129,24 +130,26 @@ def canonicalize_market(
                      f"eligibility_status={event_mapping.eligibility_status}", event_mapping,
                      details={"eligibility_status": event_mapping.eligibility_status})
 
-    # 3) Marché supporté : 1X2 = MATCH_WINNER + template 3way (avec nul).
-    if raw_market.market_type is not MarketType.MATCH_WINNER or raw_market.template != "3way":
+    # 3) Marché supporté : le (market_type, template) doit correspondre au SCHÉMA du sport.
+    if raw_market.market_type.value != schema.market_type or raw_market.template != schema.template:
         return _fail(MarketCanonicalizationStatus.UNSUPPORTED_MARKET,
-                     f"marché hors scope ({raw_market.market_type.value}/{raw_market.template})",
+                     f"marché hors scope ({raw_market.market_type.value}/{raw_market.template}), "
+                     f"attendu {schema.market_type}/{schema.template}",
                      event_mapping,
                      details={"market_type": raw_market.market_type.value, "template": raw_market.template})
 
-    # 4) Issues : exactement {slot_1, draw, slot_2}, aucune dupliquée/inconnue, cotes>1.
+    # 4) Issues : exactement l'ensemble attendu par le schéma (2-way ou 3-way), cotes>1.
     selections = list(raw_market.selections)
     canon = [s.canonical_selection for s in selections]
-    if len(canon) != 3:
+    expected_codes = sorted(schema.slot_codes)
+    if len(canon) != len(expected_codes):
         return _fail(MarketCanonicalizationStatus.INVALID_MARKET_DATA,
-                     f"nombre d'issues 1X2 != 3 (reçu {len(canon)})", event_mapping,
+                     f"nombre d'issues != {len(expected_codes)} (reçu {len(canon)})", event_mapping,
                      details={"selections": canon})
-    if sorted(canon) != list(_EXPECTED_1X2_SLOTS):
+    if sorted(canon) != expected_codes:
         return _fail(MarketCanonicalizationStatus.INVALID_MARKET_DATA,
-                     "issues 1X2 invalides (dupliquée / inconnue / nul manquant)", event_mapping,
-                     details={"selections": canon, "attendu": list(_EXPECTED_1X2_SLOTS)})
+                     "issues invalides (dupliquée / inconnue / issue attendue manquante)", event_mapping,
+                     details={"selections": canon, "attendu": expected_codes})
     invalid_odds = [s.canonical_selection for s in selections if s.decimal_odds <= 1.0]
     if invalid_odds:
         return _fail(MarketCanonicalizationStatus.INVALID_MARKET_DATA,
@@ -161,12 +164,12 @@ def canonicalize_market(
 
     # 6) Traduction ATOMIQUE : la cote suit le rôle résolu (jamais slot_1==home).
     canonical_event_id = event_mapping.canonical_event_id
-    market_id = build_market_id(event_mapping.bookmaker, canonical_event_id, _CANONICAL_MARKET_TYPE)
+    market_id = build_market_id(event_mapping.bookmaker, canonical_event_id, schema.market_type)
     when = observed_at or raw_event.fetched_at
     snapshots = tuple(
         OddsSnapshot(
             event_id=canonical_event_id,
-            market_type=_CANONICAL_MARKET_TYPE,
+            market_type=schema.market_type,
             selection=("draw" if s.canonical_selection == "draw"
                        else role_resolution.roles[s.canonical_selection]),
             decimal_odds=s.decimal_odds,
