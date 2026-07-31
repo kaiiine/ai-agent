@@ -20,9 +20,9 @@ Vérifié en direct : `GET v1.basketball.api-sports.io/status` … `v1.mma…/st
 | sport | catalogue Winamax | données provider | modèle | maturité | live câblé | classe | raison exacte |
 |---|---|---|---|---|---|---|---|
 | **football** | oui (61 comp / 527 ev) | oui (8 ligues data-capable) | Dixon-Coles 1X2 | **EXPERIMENTAL** | **oui** | `EXPERIMENTAL` | bloqué SUPPORTED par CLV + sample (cf. readiness) |
-| **basketball** | oui (sportId 2) | **oui** (API-Basketball, NBA 1386 games réels) | **Elo moneyline v0** | **EXPERIMENTAL** | non | `EXPERIMENTAL (modèle) / live à câbler` | modèle réel validé (bat baseline) ; live nécessite `evaluate_live_event` 2-way |
-| baseball | oui (sportId 3) | oui (API-Baseball, Free) | — | — | non | `IMPLEMENTABLE_NOW` | données ok ; méthodologie moneyline (Elo/pairwise) à implémenter |
-| hockey | oui | oui (API-Hockey, Free) | — | — | non | `IMPLEMENTABLE_NOW` | idem baseball |
+| **basketball** | oui (sportId 2) | **oui** (API-Basketball, NBA 1386 games réels) | **Elo moneyline v0** | **EXPERIMENTAL** | **oui** (chemin technique complet, hermétique) | `EXPERIMENTAL` | bat baseline ; ABSTAIN (EXPERIMENTAL) ; mapping Winamax NBA en attente (hors-saison) |
+| **baseball** | oui (sportId 3) | **oui** (API-Baseball, MLB 2715 games réels) | **Elo moneyline v0** (harness générique, K=4/HE=24) | **EXPERIMENTAL** | non | `EXPERIMENTAL (modèle)` | skill validé (Brier 0.485<0.499) ; live à câbler (identité Winamax MLB) |
+| hockey | oui | oui (API-Hockey, Free) | — | — | non | `IMPLEMENTABLE_NOW` | harness prêt ; ATTENTION §10 : reg. 3-way vs moneyline-OT 2-way (marché à trancher) |
 | volleyball / handball / rugby / NFL / AFL | oui | oui (api-sports, Free) | — | — | non | `IMPLEMENTABLE_NOW` | pairwise team-vs-team ; recette Elo transférable, à valider par sport |
 | **tennis** | oui (sportId 5) | **non** | — | — | non | `EXTERNAL_PROVIDER_REQUIRED` | **aucun provider tennis configuré** (api-sports.io n'en propose pas) — STOP |
 | F1 / golf / courses | oui | (F1 : api-sports) | — | — | non | `ARCHITECTURAL` | **non pairwise** (outright multi-participant) ; les contrats canoniques actuels sont A-vs-B — ne pas déformer (§10), fork architectural |
@@ -43,12 +43,13 @@ Vérifié en direct : `GET v1.basketball.api-sports.io/status` … `v1.mma…/st
 | contrats économiques (`CandidateBet`, `MarketPrediction`, `OddsSnapshot`, `BettingDecision`) | oui | champ `sport` porté, jamais lu par la décision |
 | **frontière de décision** `evaluate_selection` | **oui** | `test_sport_neutral_decision` : marché 2-way + SUPPORTED synthétique → BET sans bypass ; EXPERIMENTAL → ABSTAIN tout sport |
 | ranking Advisor | oui | `test_ranking_is_sport_neutral` : même économie → même score ; aucun bonus football |
-| framework de maturité (`evaluate_maturity`) | oui | réutilisé tel quel par le basket (observations propres) |
-| **orchestration live** `evaluate_live_event` | **NON** | verrouillé 1X2/3-way (`_first_1x2_market`, `_SELECTIONS=home/draw/away`, `_EXPECTED_SELECTIONS[MATCH_WINNER]`) — football-spécifique |
+| framework de maturité (`evaluate_maturity`) | oui | réutilisé par basket + baseball (observations propres) |
+| harness Elo pairwise (`pairwise_elo`) | oui | générique, params par sport ; basket-live + baseball |
+| **orchestration live** `evaluate_live_event` | **oui (schema-driven)** | piloté par `MarketSchema` déclaré par le modèle (2-way/3-way) ; `test_live_evaluation_multisport` + `test_basketball_live` |
 
-→ AXON est multisport **au niveau modèle + maturité + décision**, mais l'orchestration
-LIVE reste football-1X2. Câbler le live d'un sport 2-way = généraliser
-`evaluate_live_event` + `_EXPECTED_SELECTIONS` (unité déterminable, non faite ici).
+→ AXON est multisport **de bout en bout** : le chemin live est neutre au marché (basket
+2-way réel y transite). Câbler un nouveau sport pairwise = données + identité Winamax +
+harness (déterminable, sans refactor du money-path).
 
 ## Procédure d'onboarding d'un nouveau sport (pairwise)
 
@@ -66,7 +67,7 @@ LIVE reste football-1X2. Câbler le live d'un sport 2-way = généraliser
 
 - **DATA** : CLV (toutes maturités) ; sample/calibration par modèle.
 - **EXTERNAL** : provider **tennis** (aucun configuré) ; tiers payant pour ligues football hors free tier.
-- **STATISTICAL** : méthodologie de marché pour baseball/hockey/volley/handball/rugby/NFL/AFL/MMA (données présentes ; modèle à écrire + valider) ; F1/golf = famille de contrats outright (non pairwise).
-- **ARCHITECTURAL** : `evaluate_live_event` 1X2-only (bloque le LIVE non-football) ; contrats outright pour sports non pairwise (§10).
+- **STATISTICAL** : méthodologie de marché pour hockey/volley/handball/rugby/NFL/AFL/MMA (données présentes ; harness Elo prêt, à VALIDER par sport — peut rejeter). baseball + basketball = FAITS (skill validé). F1/golf = famille outright (non pairwise).
+- **ARCHITECTURAL** : ~~`evaluate_live_event` 1X2-only~~ **RÉSOLU** (schema-driven, 2/3-way). Reste : contrats **outright** pour sports non pairwise (F1/golf, §10) ; hockey/rugby = 3-way (reg.) vs 2-way (OT) à trancher par marché réel (§8/§10).
 - **CODE** : aucune sur le chemin structuré.
 - **OPERATIONS** : collecte odds/CLV, seed coverage DB, monitoring.
