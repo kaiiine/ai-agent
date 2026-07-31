@@ -87,6 +87,24 @@ def _p_home(rating_home: float, rating_away: float) -> float:
     return 1.0 / (1.0 + 10 ** (-(rating_home - rating_away + HOME_EDGE) / 400.0))
 
 
+def elo_ratings_as_of(games: list[BasketballGame], cutoff: datetime):
+    """Notes Elo + nombre de matchs joués par équipe, à partir des SEULS matchs
+    STRICTEMENT antérieurs à `cutoff` — sans fuite par construction. Réutilisé par le
+    walk-forward ET l'évaluation live point-in-time (une seule implémentation Elo)."""
+    ratings: dict[str, float] = {}
+    played: Counter = Counter()
+    for g in sorted((x for x in games if x.tipoff < cutoff), key=lambda x: x.tipoff):
+        rh = ratings.get(g.home_team_id, INIT_RATING)
+        ra = ratings.get(g.away_team_id, INIT_RATING)
+        ph = _p_home(rh, ra)
+        y = 1.0 if g.outcome == "home" else 0.0
+        ratings[g.home_team_id] = rh + K_FACTOR * (y - ph)
+        ratings[g.away_team_id] = ra + K_FACTOR * ((1.0 - y) - (1.0 - ph))
+        played[g.home_team_id] += 1
+        played[g.away_team_id] += 1
+    return ratings, played
+
+
 def _brier2(prob: dict[str, float], outcome: str) -> float:
     return sum((prob[c] - (1.0 if c == outcome else 0.0)) ** 2 for c in _CLASSES)
 
