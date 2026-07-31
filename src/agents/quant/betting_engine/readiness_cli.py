@@ -42,11 +42,16 @@ def _assess_volley(_odds=()):
     return assess_volleyball()
 
 
+def _assess_nhl(_odds=()):
+    from .sports.hockey.regulation import assess_nhl
+    return assess_nhl()
+
+
 _ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a,
               "laliga": assess_laliga, "bundesliga": assess_bundesliga,
               "championship": assess_championship, "eredivisie": assess_eredivisie,
               "primeira-liga": assess_primeira_liga, "nba": _assess_nba, "mlb": _assess_mlb,
-              "nfl": _assess_nfl, "volley": _assess_volley}
+              "nfl": _assess_nfl, "volley": _assess_volley, "nhl": _assess_nhl}
 
 
 def render(assessment) -> list[str]:
