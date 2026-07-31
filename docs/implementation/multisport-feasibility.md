@@ -22,9 +22,13 @@ Vérifié en direct : `GET v1.basketball.api-sports.io/status` … `v1.mma…/st
 | **football** | oui (61 comp / 527 ev) | oui (8 ligues data-capable) | Dixon-Coles 1X2 | **EXPERIMENTAL** | **oui** | `EXPERIMENTAL` | bloqué SUPPORTED par CLV + sample (cf. readiness) |
 | **basketball** | oui (sportId 2) | **oui** (API-Basketball, NBA 1386 games réels) | **Elo moneyline v0** | **EXPERIMENTAL** | **oui** (chemin technique complet, hermétique) | `EXPERIMENTAL` | bat baseline ; ABSTAIN (EXPERIMENTAL) ; mapping Winamax NBA en attente (hors-saison) |
 | **baseball** | oui (sportId 3) | **oui** (API-Baseball, MLB 2715 games réels) | **Elo moneyline v0** (harness générique, K=4/HE=24) | **EXPERIMENTAL** | non | `EXPERIMENTAL (modèle)` | skill validé (Brier 0.485<0.499) ; live à câbler (identité Winamax MLB) |
-| hockey | oui | oui (API-Hockey, Free) | — | — | non | `IMPLEMENTABLE_NOW` | harness prêt ; ATTENTION §10 : reg. 3-way vs moneyline-OT 2-way (marché à trancher) |
-| volleyball / handball / rugby / NFL / AFL | oui | oui (api-sports, Free) | — | — | non | `IMPLEMENTABLE_NOW` | pairwise team-vs-team ; recette Elo transférable, à valider par sport |
-| **tennis** | oui (sportId 5) | **non** | — | — | non | `EXTERNAL_PROVIDER_REQUIRED` | **aucun provider tennis configuré** (api-sports.io n'en propose pas) — STOP |
+| **NFL** (sportId 16) | oui (marché « Vainqueur » **2-way**, vérifié payload) | oui (API-Am.Football) | **Elo moneyline v0** (K=20/HE=48) | **EXPERIMENTAL** | non | `EXPERIMENTAL (modèle)` | skill validé (Brier 0.468<0.492, 533 OOS≥500) ; live à câbler |
+| hockey (sportId 4) | oui, mais « Résultat » **3-way** (nul, réglementaire) | oui (API-Hockey) | — | — | non | `MARKET_MODEL_MISMATCH` | Winamax = 3-way reg. ; l'Elo 2-way ne settle PAS ce marché (§2/§10) — modèle 3-way requis |
+| rugby XV (sportId 12) | oui, « Résultat » **3-way** (nul) | oui (API-Rugby) | — | — | non | `MARKET_MODEL_MISMATCH` | idem hockey : 3-way réglementaire |
+| volleyball (23) / AFL (13) | oui, « Vainqueur » **2-way** (vérifié) | oui (api-sports) | — | — | non | `IMPLEMENTABLE_NOW` | sémantique 2-way OK ; schéma de réponse api-sports (volley/AFL) à intégrer (shape ≠ football) |
+| handball (sportId 6) | **0 event live** (intersaison) | oui (API-Handball) | — | — | non | `INSUFFICIENT_DATA (live)` | + nul réglementaire probable (3-way) à vérifier en saison |
+| MMA (sportId 117) | oui | oui (API-MMA) | — | — | non | `IMPLEMENTABLE_NOW*` | pairwise ; faible fréquence/identité combattants — prudence |
+| **tennis** (sportId 5) | oui | **candidats DÉCOUVERTS** (Tavily) mais non confirmés accessibles ici | — | — | non | `EXTERNAL_PROVIDER_REQUIRED` | candidats : tennisabstract / Kaggle ATP-WTA / tennis-api / bigdataball ; aucun provenance+auth-free confirmé en env — STOP §9 |
 | F1 / golf / courses | oui | (F1 : api-sports) | — | — | non | `ARCHITECTURAL` | **non pairwise** (outright multi-participant) ; les contrats canoniques actuels sont A-vs-B — ne pas déformer (§10), fork architectural |
 | MMA / combat | oui | oui (API-MMA, Free) | — | — | non | `IMPLEMENTABLE_NOW*` | pairwise mais méthodologie combat propre à définir |
 
