@@ -20,6 +20,7 @@ from datetime import datetime
 
 from src.agents.quant.betting_engine.clv import clv_readiness
 from src.agents.quant.betting_engine.maturity import (
+    FRESHNESS_MEASURABLE,
     FRESHNESS_NOT_MEASURABLE,
     MaturityObservations,
     ModelSupportDecision,
@@ -60,6 +61,29 @@ def davidson_probs(rh: float, ra: float, home_edge: float, nu: float) -> dict[st
     d = nu * math.sqrt(Rh * Ra)
     tot = Rh + Ra + d
     return {"home": Rh / tot, "draw": d / tot, "away": Ra / tot}
+
+
+def regulation_ratings_as_of(games: list[ThreeWayGame], cutoff: datetime, params: Davidson3Params):
+    """Notes Elo, matchs joués et taux de nul, à partir des SEULS matchs réglementaires
+    STRICTEMENT antérieurs à `cutoff` (sans fuite). Réutilisé par le walk-forward ET
+    l'évaluation live point-in-time — une seule implémentation Elo+Davidson."""
+    ratings: dict[str, float] = {}
+    played: Counter = Counter()
+    prior: list[str] = []
+    for g in sorted((x for x in games if x.tipoff < cutoff), key=lambda x: x.tipoff):
+        rh = ratings.get(g.home_id, params.init_rating)
+        ra = ratings.get(g.away_id, params.init_rating)
+        dr = (prior.count("draw") / len(prior)) if len(prior) >= 100 else params.default_draw_rate
+        p = davidson_probs(rh, ra, params.home_edge, _nu(dr))
+        exp = p["home"] + 0.5 * p["draw"]
+        y = {"home": 1.0, "draw": 0.5, "away": 0.0}[g.outcome]
+        ratings[g.home_id] = rh + params.k_factor * (y - exp)
+        ratings[g.away_id] = ra + params.k_factor * ((1.0 - y) - (1.0 - exp))
+        played[g.home_id] += 1
+        played[g.away_id] += 1
+        prior.append(g.outcome)
+    draw_rate = (prior.count("draw") / len(prior)) if len(prior) >= 100 else params.default_draw_rate
+    return ratings, played, draw_rate
 
 
 def _brier3(prob: dict[str, float], outcome: str) -> float:
@@ -144,6 +168,7 @@ class ThreeWayAssessment:
 
 def assess_threeway(
     games: list[ThreeWayGame], params: Davidson3Params, model_name: str, model_version: str,
+    *, live_freshness_status: str = FRESHNESS_NOT_MEASURABLE,
 ) -> ThreeWayAssessment:
     run = run_threeway_elo(games, params)
     n = run.n_evaluated
@@ -164,7 +189,7 @@ def assess_threeway(
         data_coverage=round(n / run.n_total, 4) if run.n_total else None,
         mean_data_quality=1.0, fold_brier_spread=round(fold_spread, 4) if fold_spread is not None else None,
         clv_status=readiness.status, clv_mean=readiness.mean_clv,
-        live_freshness_status=FRESHNESS_NOT_MEASURABLE)
+        live_freshness_status=live_freshness_status)
     decision = evaluate_maturity(model_name=model_name, model_version=model_version,
                                  observations=observations, policy=load_maturity_policy())
     metrics = {"model_brier3": model_brier, "baseline_brier3": base_brier, "ece": ece,

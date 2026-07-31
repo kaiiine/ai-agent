@@ -39,10 +39,10 @@ def test_experimental_beats_baseline_on_brier_and_logloss():
     assert d.status == "EXPERIMENTAL"                        # mécanique, jamais SUPPORTED
     assert m["beats_baseline"] is True and o.model_brier < o.best_baseline_brier
     assert o.n_evaluated > 500 and o.calibration_error < 0.05
-    # Passe data/calibration/sample ; bloqué seulement par CLV/freshness (comme Championship).
+    # Freshness désormais CÂBLÉE (test_hockey_live) -> le SEUL blocker restant est la CLV
+    # réelle (positive_clv), infabricable. Hockey est à une donnée de SUPPORTED (§2).
     blockers = {c.name for c in d.criteria if c.required and c.verdict.value != "PASS"}
-    assert blockers <= {"positive_clv", "measurable_live_freshness"}
-    assert "positive_clv" in blockers
+    assert blockers == {"positive_clv"}
 
 
 def test_no_future_leakage_threeway():

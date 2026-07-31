@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.agents.quant.betting_engine.calibration.experiment_registry import dataset_fingerprint
+from src.agents.quant.betting_engine.maturity import FRESHNESS_MEASURABLE
 from src.agents.quant.betting_engine.sports.threeway_davidson import (
     Davidson3Params,
     ThreeWayAssessment,
@@ -52,4 +53,8 @@ def load_nhl_regulation(path: Path = _FIXTURE) -> tuple[list[ThreeWayGame], str]
 
 def assess_nhl(path: Path = _FIXTURE) -> ThreeWayAssessment:
     games, _fp = load_nhl_regulation(path)
-    return assess_threeway(games, NHL_PARAMS, MODEL_NAME, MODEL_VERSION)
+    # La fraîcheur live est CÂBLÉE (live_model -> evaluate_live_event -> Gateway.data_freshness,
+    # prouvé par test_hockey_live) : capacité MEASURABLE. Distinct de la CLV, qui reste
+    # NOT_YET_MEASURABLE tant qu'aucune paire décision/clôture réelle n'est collectée.
+    return assess_threeway(games, NHL_PARAMS, MODEL_NAME, MODEL_VERSION,
+                           live_freshness_status=FRESHNESS_MEASURABLE)
