@@ -30,18 +30,29 @@ _PHASES = {
 }
 
 
-def main(argv: list[str] | None = None) -> int:
+def _load_live(sport: str):   # pragma: no cover (I/O réseau réelle)
+    """Capture LIVE d'un sport (SOURCE_LIVE) — scheduler-friendly (§3) : une commande,
+    aucune gestion manuelle de fichier de capture. Lève si le réseau échoue (jamais un
+    repli synthétique déguisé en réel)."""
+    from ..bookmakers.winamax.record_replay import capture_live_state
+    return capture_live_state(sport)
+
+
+def main(argv: list[str] | None = None, *, live_loader=_load_live) -> int:
     p = argparse.ArgumentParser(
         prog="axon record-odds",
-        description="Collecte odds_history (BE-FR-015) depuis une capture Winamax.")
-    p.add_argument("--capture", required=True, help="fichier de capture (record_replay.save_capture)")
+        description="Collecte odds_history multisport (BE-FR-015). Capture fichier OU live (§3).")
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--capture", help="fichier de capture (record_replay.save_capture)")
+    src.add_argument("--live", metavar="SPORT",
+                     help="capture LIVE ce sport (ex. hockey, volleyball) — scheduler-ready")
     p.add_argument("--phase", choices=tuple(_PHASES), default="decision")
     p.add_argument("--store", default=None, help="chemin odds_history.jsonl (défaut : var/ repo)")
     p.add_argument("--run-id", default=None)
     p.add_argument("--now", default=None, help="instant d'observation ISO 8601 (défaut : maintenant)")
     args = p.parse_args(argv)
 
-    capture = load_capture(pathlib.Path(args.capture))
+    capture = live_loader(args.live) if args.live else load_capture(pathlib.Path(args.capture))
     store = JsonlOddsHistoryStore(None if args.store is None else pathlib.Path(args.store))
     resolver = BookmakerEventResolver(IdentityResolver(TEAMS))
     now = None if args.now is None else datetime.fromisoformat(args.now)
