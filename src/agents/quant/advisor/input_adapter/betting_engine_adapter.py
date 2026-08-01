@@ -45,8 +45,6 @@ from .schema import (
     SkippedEvaluation,
 )
 
-_SELECTIONS = ("home", "draw", "away")
-
 
 def _to_decimal(value: float, field: str) -> Decimal:
     """float du moteur -> Decimal via `str` (aucun artefact binaire). Ne
@@ -149,9 +147,16 @@ def adapt_result(
         raise MissingRequiredFieldError(
             f"résultat EVALUATED sans canonical_event ({result.bookmaker_event_id})")
 
+    # SCHÉMA-DRIVEN (§3) : les sélections viennent du résultat (2-way OU 3-way), jamais
+    # d'un home/draw/away codé en dur — sinon un marché 2-way (basket/baseball/NFL/volley)
+    # ferait échouer l'adaptation sur un « draw » inexistant.
     decisions = {d.selection: d for d in result.decisions}
+    selections = tuple(d.selection for d in result.decisions)
+    if not selections:
+        raise MissingRequiredFieldError(
+            f"résultat EVALUATED sans sélection ({result.bookmaker_event_id})")
     evaluations: list[AdaptedEvaluation] = []
-    for sel in _SELECTIONS:
+    for sel in selections:
         prediction = result.predictions.get(sel)
         decision = decisions.get(sel)
         if prediction is None or decision is None:

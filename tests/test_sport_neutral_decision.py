@@ -73,10 +73,12 @@ def test_sport_label_does_not_change_decision():
            (dq_tennis.decision, dq_tennis.expected_value, dq_tennis.worst_case_ev)
 
 
-def test_unregistered_sport_is_model_unavailable():
-    # Aucun module live enregistré pour basket/tennis -> capability MODEL_UNAVAILABLE.
-    assert market_capability("basketball", "MONEYLINE") == (False, "UNAVAILABLE")
-    assert market_capability("tennis", "MATCH_WINNER") == (False, "UNAVAILABLE")
+def test_unmodelled_market_or_sport_is_unavailable():
+    # basket est ENREGISTRÉ mais seulement pour MATCH_WINNER : un marché non modélisé
+    # (MONEYLINE) reste UNAVAILABLE. tennis n'a aucun module -> UNAVAILABLE.
+    assert market_capability("basketball", "MONEYLINE") == (False, "UNAVAILABLE")   # marché non modélisé
+    assert market_capability("basketball", "MATCH_WINNER") == (True, "EXPERIMENTAL")  # modélisé, dérivé du ledger
+    assert market_capability("tennis", "MATCH_WINNER") == (False, "UNAVAILABLE")     # sport non enregistré
 
 
 def test_selection_order_does_not_change_decision():

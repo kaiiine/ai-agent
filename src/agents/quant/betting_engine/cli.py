@@ -23,8 +23,6 @@ from .bookmakers.protocol import RawBookmakerEvent
 from .live_batch import evaluate_live_batch
 from .live_evaluation import LiveEvaluationResult
 
-_SELECTIONS = ("home", "draw", "away")
-
 
 def exit_code_for(results) -> int:
     """0 si au moins un résultat exploitable, sinon 2 (scan supposé réussi)."""
@@ -54,9 +52,10 @@ def render_human(event: RawBookmakerEvent, result: LiveEvaluationResult) -> list
     existe ; sinon « Probabilities: unavailable » — jamais de fausse valeur."""
     if result.has_actionable_evaluation:
         reason = result.decisions[0].reasons[0] if result.decisions else "MODEL_NOT_SUPPORTED"
+        # SCHÉMA-DRIVEN : issues réellement prédites (2-way OU 3-way), jamais home/draw/away figé.
         probs = " | ".join(
-            f"{s.capitalize()} {result.predictions[s].fair_probability * 100:.1f}%"
-            for s in _SELECTIONS
+            f"{sel.capitalize()} {pred.fair_probability * 100:.1f}%"
+            for sel, pred in result.predictions.items()
         )
         tags = ", ".join(_warning_tags(result)) or "none"
         return [f"{_title(event)} | ABSTAIN | {reason}",
@@ -76,7 +75,7 @@ def build_json_record(event: RawBookmakerEvent, result: LiveEvaluationResult) ->
         "reason": (result.decisions[0].reasons[0] if actionable and result.decisions
                    else "MODEL_NOT_SUPPORTED") if actionable else result.reason,
         "probabilities": (
-            {s: round(result.predictions[s].fair_probability, 4) for s in _SELECTIONS}
+            {sel: round(pred.fair_probability, 4) for sel, pred in result.predictions.items()}
             if actionable else None
         ),
         "warnings": list(result.warnings),

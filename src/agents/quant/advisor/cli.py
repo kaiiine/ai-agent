@@ -124,16 +124,20 @@ def _default_batch_loader(decision_time: datetime) -> AdaptedBatch:  # pragma: n
     # Imports lazy : `axon recommend --help` ne charge pas la chaîne Betting Engine.
     from .input_adapter.betting_engine_adapter import load_and_adapt
     from ..betting_engine.bookmakers.winamax.connector import WinamaxConnector
-    from ..betting_engine.bookmakers.winamax.catalogue import all_events
+    from ..betting_engine.bookmakers.winamax.catalogue import multisport_events
     from ..betting_engine.bookmakers.bookmaker_registry import BookmakerEventResolver
+    from ..betting_engine.sports.registry import SPORT_MODULES
+    from ..betting_engine.sports.identity_aggregate import all_sport_teams
     from ..gateway.core.identity_resolver import IdentityResolver
-    from ..gateway.core.identity_data import TEAMS
     from ..gateway import gateway as sports_gateway
-    resolver = BookmakerEventResolver(IdentityResolver(TEAMS))
-    # DÉCOUVERTE complète (toutes compétitions) : les non-supportés sont ISOLÉS
-    # (SkippedEvaluation avec raison typée), jamais écartés au scan ni arrêtant le run.
+    # Identité + scan MULTISPORT (§3) : les 6 sports enregistrés sont réellement
+    # atteignables. DÉCOUVERTE complète (toutes compétitions) : les non-résolus sont
+    # ISOLÉS (SkippedEvaluation avec raison typée), jamais écartés au scan ni arrêtant le run.
+    resolver = BookmakerEventResolver(IdentityResolver(list(all_sport_teams())))
+    sports = sorted(SPORT_MODULES)
     return load_and_adapt(WinamaxConnector(), sports_gateway=sports_gateway,
-                          event_resolver=resolver, catalogue=all_events,
+                          event_resolver=resolver,
+                          catalogue=lambda conn: multisport_events(conn, sports),
                           now_fn=lambda: decision_time)
 
 

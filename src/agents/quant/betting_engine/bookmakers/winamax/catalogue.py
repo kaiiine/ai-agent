@@ -25,6 +25,18 @@ def all_events(connector, sport: str = "football") -> Sequence[RawBookmakerEvent
     return connector.scan_catalog(sport)
 
 
+def multisport_events(connector, sports: Sequence[str]) -> Sequence[RawBookmakerEvent]:
+    """DÉCOUVERTE MULTISPORT (§3) : agrège les événements de CHAQUE sport demandé.
+    Chaque `RawBookmakerEvent` porte son propre `sport` -> dispatch en aval via
+    `SPORT_MODULES` (aucun `if sport ==`). L'isolation par ÉVÉNEMENT reste garantie par
+    `evaluate_live_batch` : un événement non résolu (identité/compétition) devient un
+    résultat typé, jamais un arrêt du run ni une perte au scan."""
+    events: list[RawBookmakerEvent] = []
+    for sport in sports:
+        events.extend(connector.scan_catalog(sport))
+    return events
+
+
 def supported_events(connector, sport: str = "football") -> Sequence[RawBookmakerEvent]:
     """Filtre ÉTROIT (compétitions RESOLVED uniquement). Propage toute erreur de scan.
     NB : écarte silencieusement les compétitions non mappées — préférer `all_events`
