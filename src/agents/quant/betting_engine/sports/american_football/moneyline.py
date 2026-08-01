@@ -13,7 +13,7 @@ Skill VALIDÉ hors échantillon (Brier modèle < baseline). Verdict mécanique E
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from src.agents.quant.betting_engine.calibration.experiment_registry import dataset_fingerprint
@@ -38,10 +38,14 @@ _FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "nfl_202
 def load_nfl_games(path: Path = _FIXTURE) -> tuple[list[PairwiseGame], str]:
     raw = path.read_bytes()
     data = json.loads(raw)
+    def _ts(raw: str) -> datetime:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)   # dates NFL = jour seul -> UTC
+
     games = [
         PairwiseGame(
             game_id=str(g["id"]),
-            tipoff=datetime.fromisoformat(str(g["date"]).replace("Z", "+00:00")),
+            tipoff=_ts(str(g["date"])),
             home_id=str(g["home"]), away_id=str(g["away"]),
             home_score=int(g["hs"]), away_score=int(g["as"]),
         )

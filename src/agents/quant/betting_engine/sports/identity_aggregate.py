@@ -20,8 +20,14 @@ from src.agents.quant.gateway.core.identity_resolver import CanonicalEntity
 
 @lru_cache(maxsize=1)
 def all_sport_teams() -> tuple[CanonicalEntity, ...]:
-    """Toutes les identités d'équipes des sports live-câblés (football + basket + hockey)."""
+    """Toutes les identités d'équipes des 6 sports live-câblés (football + basket + hockey
+    + baseball + NFL + volley). Espaces de noms disjoints par préfixe `team:{sport}:` →
+    aucune collision inter-sports (le résolveur filtre déjà par sport)."""
     from src.agents.quant.gateway.core.identity_data import TEAMS
     from .basketball.live_model import NBA_TEAMS
     from .hockey.live_model import NHL_TEAMS
-    return tuple(TEAMS) + tuple(NBA_TEAMS) + tuple(NHL_TEAMS)
+    from .baseball.live_model import MLB_TEAMS
+    from .american_football.live_model import NFL_TEAMS
+    from .volleyball.live_model import VOLLEY_TEAMS
+    return (tuple(TEAMS) + tuple(NBA_TEAMS) + tuple(NHL_TEAMS)
+            + tuple(MLB_TEAMS) + tuple(NFL_TEAMS) + tuple(VOLLEY_TEAMS))
