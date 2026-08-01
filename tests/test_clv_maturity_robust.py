@@ -146,11 +146,46 @@ def test_real_hockey_insufficient_clv_sample_stays_experimental():
 def test_real_hockey_promotes_with_robust_synthetic_clv():
     # Preuve de la mécanique de promotion (§8/§18 cas 2) : échantillon robuste -> SUPPORTED.
     d = _decide_with(_events([0.02] * 60))
-    assert _clv_criterion(d).verdict.value == "PASS"
+    clv = _clv_criterion(d)
+    assert clv.verdict.value == "PASS"
+    assert clv.observed["n_events"] >= _MIN     # ne contourne JAMAIS le minimum d'échantillon
     assert d.status == "SUPPORTED"          # tous les critères requis PASS
     # …mais UNIQUEMENT parce que les cotes sont SYNTHÉTIQUES : rien n'est persisté au ledger.
     from src.agents.quant.betting_engine.support_status import resolve_market_status
     assert resolve_market_status(d.model_name, d.model_version).value == "EXPERIMENTAL"
+
+
+# ── Frontière EXACTE de l'échantillon (§1) via le VRAI modèle hockey ──────────────
+def test_single_positive_event_never_supported():
+    # 1 événement CLV très positif + min=30 -> INSUFFICIENT_SAMPLE -> EXPERIMENTAL.
+    d = _decide_with(_events([0.5]))
+    assert _clv_criterion(d).observed["state"] == "INSUFFICIENT_SAMPLE"
+    assert d.status == "EXPERIMENTAL"
+
+
+def test_one_below_minimum_is_insufficient():
+    # min-1 (=29) événements positifs -> INSUFFICIENT_SAMPLE (jamais PASS).
+    d = _decide_with(_events([0.02] * (_MIN - 1)))
+    clv = _clv_criterion(d)
+    assert clv.observed["n_events"] == _MIN - 1
+    assert clv.observed["state"] == "INSUFFICIENT_SAMPLE" and d.status == "EXPERIMENTAL"
+
+
+def test_exact_minimum_with_nonpositive_bound_is_not_positive():
+    # EXACTEMENT min événements mais forte variance (borne basse <= 0) -> MEASURABLE_NOT_POSITIVE.
+    d = _decide_with(_events([0.1, -0.1] * (_MIN // 2)))       # _MIN événements, moyenne ~ 0
+    clv = _clv_criterion(d)
+    assert clv.observed["n_events"] == _MIN
+    assert clv.observed["state"] == "MEASURABLE_NOT_POSITIVE"
+    assert clv.verdict.value == "FAIL" and d.status == "EXPERIMENTAL"
+
+
+def test_exact_minimum_with_positive_bound_passes():
+    # EXACTEMENT min événements avec borne basse > 0 -> PASS -> SUPPORTED (frontière).
+    d = _decide_with(_events([0.02] * _MIN))
+    clv = _clv_criterion(d)
+    assert clv.observed["n_events"] == _MIN and clv.observed["lower_bound"] > 0
+    assert clv.observed["state"] == "PASS" and d.status == "SUPPORTED"
 
 
 # ── §18 cas 3 : réévaluation avec CLV dégradé -> redéclassement (contrat ledger) ──
