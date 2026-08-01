@@ -40,6 +40,7 @@ class WinamaxCompetitionMapping:
 
 
 _VERIFIED = datetime(2026, 7, 26, tzinfo=timezone.utc)
+_LIVE_2026 = datetime(2026, 8, 1, tzinfo=timezone.utc)   # scan live réel des ligues US
 
 # Seed : uniquement des compétitions dont les équipes sont peuplées dans
 # l'identity_resolver (Ligue 1, Premier League). Serie A est là pour mémoire
@@ -81,6 +82,23 @@ WINAMAX_COMPETITION_MAPPINGS: list[WinamaxCompetitionMapping] = [
     WinamaxCompetitionMapping(
         "52", "competition:football:prt:primeira_liga", _VERIFIED, "roster_overlap",
         "tid 52 = « Liga Portugal » confirmé par roster (0.88 vs PPL) ; équipes peuplées (PPL)",
+    ),
+    # ── Ligues US multisports — vérifiées par SCAN LIVE réel + roster_overlap (2026-08-01).
+    # tournamentId Winamax (globalement unique) confirmé par l'id Sportradar autoritaire ET
+    # par le chevauchement de roster avec le modèle embarqué (jamais le nom seul). Une équipe
+    # hors roster (relocation récente, alias manquant) reste UNRESOLVED à l'identité — jamais
+    # mal résolue.
+    WinamaxCompetitionMapping(
+        "25", "competition:baseball:usa:mlb", _LIVE_2026, "roster_overlap",
+        "tid 25 = « MLB » (sr:tournament:109) ; roster_overlap 28/30 avec le modèle MLB embarqué",
+    ),
+    WinamaxCompetitionMapping(
+        "142", "competition:hockey:usa:nhl", _LIVE_2026, "roster_overlap",
+        "tid 142 = « NHL » (sr:tournament:234) ; roster_overlap 25/27 avec le modèle NHL embarqué",
+    ),
+    WinamaxCompetitionMapping(
+        "47", "competition:american_football:usa:nfl", _LIVE_2026, "roster_overlap",
+        "tid 47 = « NFL » (sr:tournament:31) ; roster_overlap 32/32 avec le modèle NFL embarqué",
     ),
 ]
 

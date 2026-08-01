@@ -32,7 +32,7 @@ from src.agents.quant.betting_engine.core.market_model import (
 )
 from src.agents.quant.betting_engine.support_status import resolve_market_status
 from src.agents.quant.betting_engine.sports.pairwise_elo import EloParams, elo_ratings_as_of, p_home
-from src.agents.quant.betting_engine.sports.registry import SportModule
+from src.agents.quant.betting_engine.sports.sport_module import SportModule
 
 # Marché « Vainqueur » 2-way (aucun nul) — sémantique Winamax vérifiée (NFL/AFL/volley/baseball).
 MONEYLINE_2WAY = MarketSchema("MATCH_WINNER", "2way", ("home", "away"), ("slot_1", "slot_2"), False)

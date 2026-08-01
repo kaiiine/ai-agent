@@ -26,7 +26,7 @@ from src.agents.quant.betting_engine.core.market_model import (
     UncertaintyStatus,
 )
 from src.agents.quant.betting_engine.support_status import resolve_market_status
-from src.agents.quant.betting_engine.sports.registry import SportModule
+from src.agents.quant.betting_engine.sports.sport_module import SportModule
 from .moneyline import HOME_EDGE, MIN_PRIOR_GAMES, _p_home, elo_ratings_as_of, load_nba_games
 
 BASKET_MONEYLINE = MarketSchema("MATCH_WINNER", "2way", ("home", "away"), ("slot_1", "slot_2"), False)

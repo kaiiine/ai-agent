@@ -26,7 +26,7 @@ from src.agents.quant.betting_engine.core.market_model import (
     UncertaintyStatus,
 )
 from src.agents.quant.betting_engine.support_status import resolve_market_status
-from src.agents.quant.betting_engine.sports.registry import SportModule
+from src.agents.quant.betting_engine.sports.sport_module import SportModule
 from src.agents.quant.betting_engine.sports.threeway_davidson import (
     _nu, davidson_probs, regulation_ratings_as_of,
 )

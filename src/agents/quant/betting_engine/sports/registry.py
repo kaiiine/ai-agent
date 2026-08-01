@@ -13,15 +13,11 @@ n'importent que `SportModule` d'ici) — pas de cycle.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable
+# SportModule vit dans un module SANS import (sport_module) pour casser le cycle
+# registry <-> live_models. Ré-exporté ici pour rétro-compatibilité des imports existants.
+from .sport_module import SportModule
 
-
-@dataclass(frozen=True)
-class SportModule:
-    sport: str
-    build_feature_set: Callable        # (event, *, gateway, as_of) -> EventFeatureSet
-    model: object                      # assess_data_readiness + predict_selections
+__all__ = ["SportModule", "SPORT_MODULES"]
 
 
 def _registry() -> dict[str, SportModule]:

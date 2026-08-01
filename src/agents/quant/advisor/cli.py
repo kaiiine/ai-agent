@@ -122,10 +122,13 @@ def _load_configs() -> dict:
 
 def _default_batch_loader(decision_time: datetime) -> AdaptedBatch:  # pragma: no cover (I/O réelle)
     # Imports lazy : `axon recommend --help` ne charge pas la chaîne Betting Engine.
+    import functools
     from .input_adapter.betting_engine_adapter import load_and_adapt
     from ..betting_engine.bookmakers.winamax.connector import WinamaxConnector
     from ..betting_engine.bookmakers.winamax.catalogue import multisport_events
     from ..betting_engine.bookmakers.bookmaker_registry import BookmakerEventResolver
+    from ..betting_engine.live_coverage import evaluation_coverage_check
+    from ..betting_engine.live_evaluation import evaluate_live_event
     from ..betting_engine.sports.registry import SPORT_MODULES
     from ..betting_engine.sports.identity_aggregate import all_sport_teams
     from ..gateway.core.identity_resolver import IdentityResolver
@@ -133,12 +136,16 @@ def _default_batch_loader(decision_time: datetime) -> AdaptedBatch:  # pragma: n
     # Identité + scan MULTISPORT (§3) : les 6 sports enregistrés sont réellement
     # atteignables. DÉCOUVERTE complète (toutes compétitions) : les non-résolus sont
     # ISOLÉS (SkippedEvaluation avec raison typée), jamais écartés au scan ni arrêtant le run.
+    # Couverture d'évaluation model-backed (Unité A) : une compétition CANONIQUE d'un modèle
+    # validé est couverte par son dataset embarqué quand aucun provider live ne couvre la
+    # saison courante -> l'événement atteint le modèle (ABSTAIN car EXPERIMENTAL).
     resolver = BookmakerEventResolver(IdentityResolver(list(all_sport_teams())))
     sports = sorted(SPORT_MODULES)
+    evaluate = functools.partial(evaluate_live_event, coverage_check=evaluation_coverage_check)
     return load_and_adapt(WinamaxConnector(), sports_gateway=sports_gateway,
                           event_resolver=resolver,
                           catalogue=lambda conn: multisport_events(conn, sports),
-                          now_fn=lambda: decision_time)
+                          evaluate=evaluate, now_fn=lambda: decision_time)
 
 
 def _default_audit_store():
