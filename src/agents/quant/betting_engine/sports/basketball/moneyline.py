@@ -30,7 +30,7 @@ from pathlib import Path
 from src.agents.quant.betting_engine.calibration.experiment_registry import dataset_fingerprint
 from src.agents.quant.betting_engine.clv import clv_readiness
 from src.agents.quant.betting_engine.maturity import (
-    FRESHNESS_NOT_MEASURABLE,
+    FRESHNESS_MEASURABLE,
     MaturityObservations,
     ModelSupportDecision,
     evaluate_maturity,
@@ -195,7 +195,7 @@ class BasketballAssessment:
 
 
 def assess_nba(path: Path = _FIXTURE, *, odds_observations=(),
-               live_freshness_status: str = FRESHNESS_NOT_MEASURABLE) -> BasketballAssessment:
+               live_freshness_status: str = FRESHNESS_MEASURABLE) -> BasketballAssessment:
     """Verdict de maturité MÉCANIQUE du modèle NBA moneyline (walk-forward réel).
     EXPERIMENTAL tant que les critères requis ne passent pas — jamais un faux SUPPORTED."""
     policy = load_maturity_policy()

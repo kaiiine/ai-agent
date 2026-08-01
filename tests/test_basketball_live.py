@@ -8,7 +8,7 @@ mais le chemin est techniquement complet. Aucune note Elo n'utilise un match pos
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
 from src.agents.quant.betting_engine.bookmakers.bookmaker_registry import BookmakerEventResolver
@@ -24,6 +24,24 @@ from src.agents.quant.betting_engine.sports.basketball.live_model import BASKETB
 # Mi-saison 2022-23 : Celtics/Lakers ont largement > 10 matchs antérieurs.
 _DECISION = datetime(2023, 3, 1, 12, tzinfo=timezone.utc)
 _TIPOFF = datetime(2023, 3, 2, 2, tzinfo=timezone.utc)
+
+
+class _Freshness:
+    def __init__(self, effective_time, *, score=0.9, degraded=False):
+        self.effective_time, self.freshness_score, self.degraded = effective_time, score, degraded
+
+
+class _Gateway:
+    """Gateway EXPOSANT la fraîcheur (Gateway mesure -> BE lit), comme les 5 autres sports."""
+    def __init__(self, info):
+        self._info = info
+
+    def data_freshness(self, competition_id, season):
+        return self._info
+
+
+def _fresh():        # récent (T-2h) -> mesuré, non stale
+    return _Gateway(_Freshness(_DECISION - timedelta(hours=2)))
 
 
 def _resolver():
@@ -46,10 +64,11 @@ def _event(slot_1="Boston Celtics", slot_2="Los Angeles Lakers"):
         markets=[_moneyline()], fetched_at=_DECISION, raw_tournament_id="NBA")
 
 
-def _run(event=None):
+def _run(event=None, *, gateway=None):
     return evaluate_live_event(
         event or _event(), decision_time=_DECISION, event_resolver=_resolver(),
-        sports_gateway=object(), sport_modules={"basketball": BASKETBALL_MODULE},
+        sports_gateway=gateway if gateway is not None else _fresh(),
+        sport_modules={"basketball": BASKETBALL_MODULE},
         coverage_check=lambda comp, season, dt: ["api_sports"])
 
 
@@ -63,6 +82,23 @@ def test_real_elo_model_evaluates_through_generic_live_path():
     assert res.predictions["home"].calibration_status.value == "EXPERIMENTAL"
     # Cap BE-FR-011 : EXPERIMENTAL -> ABSTAIN (jamais BET).
     assert all(d.decision == "ABSTAIN" for d in res.decisions)
+
+
+# ── Freshness Gateway->BE, CÂBLÉE comme les 5 autres sports (§2) ─────────────────
+def test_recent_data_freshness_is_measured():
+    res = _run()
+    assert res.freshness_score == 0.9                       # mesurée, non fabriquée
+
+
+def test_stale_data_is_rejected():
+    stale = _Gateway(_Freshness(_DECISION - timedelta(days=30)))   # > tolérance (48h)
+    assert _run(gateway=stale).status is S.DATA_TOO_STALE
+
+
+def test_degraded_timestamp_is_not_measurable_never_fabricated():
+    degraded = _Gateway(_Freshness(None, degraded=True))    # capacité présente, horodatage non fiable
+    res = _run(gateway=degraded)
+    assert res.status is S.EVALUATED and res.freshness_score is None   # jamais une fraîcheur inventée
 
 
 def test_point_in_time_features_use_only_prior_games():
