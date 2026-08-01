@@ -39,9 +39,12 @@ STATE_MARKER = "var PRELOADED_STATE = "
 # pas l'odds_fetcher gelé (qui contient des IDs faux).
 SPORT_IDS: dict[str, int] = {
     "football": 1,
-    "tennis": 5,
-    "baseball": 3,
     "basketball": 2,
+    "baseball": 3,
+    "hockey": 4,
+    "tennis": 5,
+    "american_football": 16,   # NFL — payload « Vainqueur » 2-way vérifié
+    "volleyball": 23,          # payload « Vainqueur » 2-way vérifié
 }
 
 
