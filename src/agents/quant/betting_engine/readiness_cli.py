@@ -47,11 +47,22 @@ def _assess_nhl(_odds=()):
     return assess_nhl()
 
 
+def _assess_atp(_odds=()):
+    from .sports.tennis.elo_model import assess_tennis
+    return assess_tennis("atp")
+
+
+def _assess_wta(_odds=()):
+    from .sports.tennis.elo_model import assess_tennis
+    return assess_tennis("wta")
+
+
 _ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a,
               "laliga": assess_laliga, "bundesliga": assess_bundesliga,
               "championship": assess_championship, "eredivisie": assess_eredivisie,
               "primeira-liga": assess_primeira_liga, "nba": _assess_nba, "mlb": _assess_mlb,
-              "nfl": _assess_nfl, "volley": _assess_volley, "nhl": _assess_nhl}
+              "nfl": _assess_nfl, "volley": _assess_volley, "nhl": _assess_nhl,
+              "atp": _assess_atp, "wta": _assess_wta}
 
 
 def render(assessment) -> list[str]:
