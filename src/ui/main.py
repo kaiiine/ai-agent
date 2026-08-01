@@ -43,6 +43,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "readiness":
     from src.agents.quant.betting_engine.readiness_cli import main as _readiness
     sys.exit(_readiness(sys.argv[2:]))
 
+# ── 0sexies-bis. `axon tennis-inventory` — inventaire dataset tennis LOCAL (Unité B), aucun DL ─
+if len(sys.argv) > 1 and sys.argv[1] == "tennis-inventory":
+    from src.agents.quant.betting_engine.sports.tennis.inventory_cli import main as _tennis_inv
+    sys.exit(_tennis_inv(sys.argv[2:]))
+
 # ── 0sexies. `axon providers-discover` — découverte de sources (Tavily), hors money-path (§25) ─
 if len(sys.argv) > 1 and sys.argv[1] == "providers-discover":
     from dotenv import load_dotenv
