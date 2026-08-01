@@ -50,9 +50,16 @@ class TennisMatch:
     # Deux joueurs — p1 = vainqueur, p2 = perdant. `outcome="p1"` EST l'issue (post-match).
     p1_id: str; p1_name: str; p1_rank: int | None; p1_rank_points: int | None
     p2_id: str; p2_name: str; p2_rank: int | None; p2_rank_points: int | None
-    outcome: str                     # "p1" (le vainqueur Sackmann) — POST-MATCH
+    outcome: str                     # "p1" (le vainqueur) — POST-MATCH
     score: str | None                # POST-MATCH
     minutes: int | None              # POST-MATCH
+    # Optionnels (source tennis-data.co.uk). `comment` = statut (Completed/Retired/Walkover)
+    # — POST-MATCH mais utile pour filtrer les non-matchs. Les cotes de CLÔTURE sont
+    # PRÉ-MATCH (« most recent before play starts ») : admissibles en baseline/CLV, mais
+    # étiquetées p1/p2 (vainqueur/perdant) → à ne lire que SYMÉTRIQUEMENT.
+    comment: str | None = None
+    p1_close_odds: float | None = None
+    p2_close_odds: float | None = None
 
     @property
     def is_pre_match_complete(self) -> bool:
