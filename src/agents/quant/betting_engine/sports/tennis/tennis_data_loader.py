@@ -1,6 +1,6 @@
 """Loader tennis-data.co.uk (source RÉCUPÉRÉE automatiquement — Unité B).
 
-Lit les fixtures compactées `tests/fixtures/tennis/tennis_data_{atp,wta}_2015_2024.csv.gz`
+Lit les fixtures compactées `tests/fixtures/tennis/tennis_data_{atp,wta}_2000_2026.csv.gz`
 (provenance + checksums dans docs/implementation/PROVENANCE-tennis-data.md). Produit des
 `TennisMatch` (même contrat que le loader Sackmann) enrichis des cotes de CLÔTURE.
 
@@ -76,7 +76,7 @@ def load_tennis_data(tour: str, path: Path | None = None) -> TennisDataset:
     tour = tour.lower()
     if tour not in ("atp", "wta"):
         raise ValueError(f"tour invalide : {tour!r}")
-    p = Path(path) if path is not None else _FIXTURES / f"tennis_data_{tour}_2015_2024.csv.gz"
+    p = Path(path) if path is not None else _FIXTURES / f"tennis_data_{tour}_2000_2026.csv.gz"
     raw = p.read_bytes()
     checksum = "sha256:" + hashlib.sha256(raw).hexdigest()
     text = gzip.decompress(raw).decode("utf-8")

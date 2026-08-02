@@ -37,6 +37,8 @@ VALIDATED_MODELS: dict[str, ValidatedSportModel] = {
         "volleyball", 23, "MATCH_WINNER", 2, "volleyball_moneyline", "volleyball.moneyline.elo.v0", "pairwise_elo"),
     "hockey": ValidatedSportModel(
         "hockey", 4, "MATCH_WINNER", 3, "hockey_regulation", "nhl.regulation.davidson.v0", "davidson_elo"),
+    "tennis": ValidatedSportModel(
+        "tennis", 5, "MATCH_WINNER", 2, "tennis_moneyline", "tennis.moneyline.elo.v0", "pairwise_elo"),
 }
 
 BY_WINAMAX_SPORT_ID: dict[int, ValidatedSportModel] = {

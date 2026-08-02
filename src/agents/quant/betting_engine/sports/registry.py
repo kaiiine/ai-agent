@@ -28,6 +28,7 @@ def _registry() -> dict[str, SportModule]:
     from .american_football.live_model import NFL_MODULE
     from .volleyball.live_model import VOLLEYBALL_MODULE
     from .hockey.live_model import HOCKEY_MODULE
+    from .tennis.live_model import TENNIS_MODULE
     return {
         "football": SportModule("football", build_event_feature_set, OneXTwoModel()),
         "basketball": BASKETBALL_MODULE,
@@ -35,6 +36,7 @@ def _registry() -> dict[str, SportModule]:
         "american_football": NFL_MODULE,
         "volleyball": VOLLEYBALL_MODULE,
         "hockey": HOCKEY_MODULE,
+        "tennis": TENNIS_MODULE,
     }
 
 

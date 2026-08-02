@@ -29,5 +29,9 @@ def all_sport_teams() -> tuple[CanonicalEntity, ...]:
     from .baseball.live_model import MLB_TEAMS
     from .american_football.live_model import NFL_TEAMS
     from .volleyball.live_model import VOLLEY_TEAMS
+    # Tennis : entités JOUEUR (`player:tennis:{tour}:…`) — espace de noms distinct des
+    # équipes, donc aucune collision possible avec les 6 sports d'équipes.
+    from .tennis.live_model import all_tennis_players
     return (tuple(TEAMS) + tuple(NBA_TEAMS) + tuple(NHL_TEAMS)
-            + tuple(MLB_TEAMS) + tuple(NFL_TEAMS) + tuple(VOLLEY_TEAMS))
+            + tuple(MLB_TEAMS) + tuple(NFL_TEAMS) + tuple(VOLLEY_TEAMS)
+            + all_tennis_players())

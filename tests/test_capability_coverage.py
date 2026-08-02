@@ -56,7 +56,7 @@ def test_market_capability_derived_from_modules_and_ledger():
     available, maturity = market_capability("football", "MATCH_WINNER")
     assert available is True and maturity == "EXPERIMENTAL"    # dérivé du ledger, jamais SUPPORTED
     assert market_capability("football", "OVER_UNDER_2_5") == (False, "UNAVAILABLE")
-    assert market_capability("tennis", "MATCH_WINNER") == (False, "UNAVAILABLE")   # pas de module
+    assert market_capability("handball", "MATCH_WINNER") == (False, "UNAVAILABLE")  # pas de module
 
 
 # --- Couverture : découverte vs évaluable --------------------------------------
@@ -99,8 +99,8 @@ def test_capability_lattice_distinguishes_data_gap_from_model_gap():
 
 
 def test_capability_state_sport_unavailable_when_no_module():
-    # Vu comme du "tennis" (aucun module) : ni modèle ni données -> SPORT_UNAVAILABLE.
-    m = coverage_matrix(_events(), "tennis")
+    # Vu comme du "handball" (aucun module) : ni modèle ni données -> SPORT_UNAVAILABLE.
+    m = coverage_matrix(_events(), "handball")
     for c in m.capabilities:
         assert c.model_capable is False and c.data_capable is False
         assert c.capability_state == SPORT_UNAVAILABLE

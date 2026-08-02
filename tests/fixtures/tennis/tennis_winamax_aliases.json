@@ -1,0 +1,330 @@
+{
+ "aliases": {
+  "atp": {
+   "Altmaier D.": [
+    "Daniel Altmaier"
+   ],
+   "Atmane T.": [
+    "Terence Atmane"
+   ],
+   "Baez S.": [
+    "Sebastian Baez"
+   ],
+   "Bellucci M.": [
+    "Mattia Bellucci"
+   ],
+   "Berrettini M.": [
+    "Matteo Berrettini"
+   ],
+   "Bonzi B.": [
+    "Benjamin Bonzi"
+   ],
+   "Borges N.": [
+    "Nuno Borges"
+   ],
+   "Brooksby J.": [
+    "Jenson Brooksby"
+   ],
+   "Carreno-Busta P.": [
+    "Pablo Carreno-Busta"
+   ],
+   "Cilic M.": [
+    "Marin Cilic"
+   ],
+   "Diallo G.": [
+    "Gabriel Diallo"
+   ],
+   "Draper J.": [
+    "Jack Draper"
+   ],
+   "Draxl L.": [
+    "Liam Draxl"
+   ],
+   "Droguet T.": [
+    "Titouan Droguet"
+   ],
+   "Duckworth J.": [
+    "James Duckworth"
+   ],
+   "Fearnley J.": [
+    "Jacob Fearnley"
+   ],
+   "Fritz T.": [
+    "Taylor Fritz"
+   ],
+   "Fucsovics M.": [
+    "Marton Fucsovics"
+   ],
+   "Galarneau A.": [
+    "Alexis Galarneau"
+   ],
+   "Giron M.": [
+    "Marcos Giron"
+   ],
+   "Griekspoor T.": [
+    "Tallon Griekspoor"
+   ],
+   "Hanfmann Y.": [
+    "Yannick Hanfmann"
+   ],
+   "Hurkacz H.": [
+    "Hubert Hurkacz"
+   ],
+   "Jacquet K.": [
+    "Kyrian Jacquet"
+   ],
+   "Jodar R.": [
+    "Rafael Jodar"
+   ],
+   "Kecmanovic M.": [
+    "Miomir Kecmanovic"
+   ],
+   "Kopriva V.": [
+    "Vit Kopriva"
+   ],
+   "Kovacevic A.": [
+    "Aleksandar Kovacevic"
+   ],
+   "Landaluce M.": [
+    "Martin Landaluce"
+   ],
+   "Majchrzak K.": [
+    "Kamil Majchrzak"
+   ],
+   "Mannarino A.": [
+    "Adrian Mannarino"
+   ],
+   "Marozsan F.": [
+    "Fabian Marozsan"
+   ],
+   "Medjedovic H.": [
+    "Hamad Medjedovic"
+   ],
+   "Mejia N.": [
+    "Nicolas Mejia"
+   ],
+   "Michelsen A.": [
+    "Alex Michelsen"
+   ],
+   "Mochizuki S.": [
+    "Shintaro Mochizuki"
+   ],
+   "Monfils G.": [
+    "Gaël Monfils"
+   ],
+   "Moutet C.": [
+    "Corentin Moutet"
+   ],
+   "Navone M.": [
+    "Mariano Navone"
+   ],
+   "Norrie C.": [
+    "Cameron Norrie"
+   ],
+   "O'Connell C.": [
+    "Christopher O'Connell"
+   ],
+   "Popyrin A.": [
+    "Alexei Popyrin"
+   ],
+   "Royer V.": [
+    "Valentin Royer"
+   ],
+   "Shimabukuro S.": [
+    "Sho Shimabukuro"
+   ],
+   "Sonego L.": [
+    "Lorenzo Sonego"
+   ],
+   "Struff J.L.": [
+    "Jan-Lennard Struff"
+   ],
+   "Tirante T.A.": [
+    "Thiago Tirante"
+   ],
+   "Tsitsipas S.": [
+    "Stefanos Tsitsipas"
+   ],
+   "Vukic A.": [
+    "Aleksandar Vukic"
+   ],
+   "Walton A.": [
+    "Adam Walton"
+   ],
+   "Zheng M.": [
+    "Michael Zheng"
+   ]
+  },
+  "wta": {
+   "Andreescu B.": [
+    "Bianca Andreescu"
+   ],
+   "Bartunkova N.": [
+    "Nikola Bartunkova"
+   ],
+   "Bejlek S.": [
+    "Sara Bejlek"
+   ],
+   "Blinkova A.": [
+    "Anna Blinkova"
+   ],
+   "Boisson L.": [
+    "Loïs Boisson"
+   ],
+   "Bondar A.": [
+    "Anna Bondar"
+   ],
+   "Boulter K.": [
+    "Katie Boulter"
+   ],
+   "Brace C.": [
+    "Cadence Brace"
+   ],
+   "Bucsa C.": [
+    "Cristina Bucsa"
+   ],
+   "Cilic M.": [
+    "Marin Cilic"
+   ],
+   "Cocciaretto E.": [
+    "Elisabetta Cocciaretto"
+   ],
+   "Cross K.": [
+    "Kayla Cross"
+   ],
+   "Day K.": [
+    "Kayla Day"
+   ],
+   "Eala A.": [
+    "Alexandra Eala"
+   ],
+   "Frech M.": [
+    "Magdalena Frech"
+   ],
+   "Gibson T.": [
+    "Talia Gibson"
+   ],
+   "Ito A.": [
+    "Aoi Ito"
+   ],
+   "Jeanjean L.": [
+    "Leolia Jeanjean"
+   ],
+   "Joint M.": [
+    "Maya Joint"
+   ],
+   "Jones E.": [
+    "Emerson Jones"
+   ],
+   "Kalinina A.": [
+    "Anhelina Kalinina"
+   ],
+   "Kasatkina D.": [
+    "Daria Kasatkina"
+   ],
+   "Kessler M.": [
+    "McCartney Kessler"
+   ],
+   "Korneeva A.": [
+    "Alina Korneeva"
+   ],
+   "Korpatsch T.": [
+    "Tamara Korpatsch"
+   ],
+   "Kudermetova P.": [
+    "Polina Kudermetova"
+   ],
+   "Linette M.": [
+    "Magda Linette"
+   ],
+   "Lys E.": [
+    "Eva Lys"
+   ],
+   "Maria T.": [
+    "Tatjana Maria"
+   ],
+   "Marino R.": [
+    "Rebecca Marino"
+   ],
+   "Monfils G.": [
+    "Gaël Monfils"
+   ],
+   "Oliynykova O.": [
+    "Oleksandra Oliynykova"
+   ],
+   "Parks A.": [
+    "Alycia Parks"
+   ],
+   "Parry D.": [
+    "Diane Parry"
+   ],
+   "Pegula J.": [
+    "Jessica Pegula"
+   ],
+   "Putintseva Y.": [
+    "Yulia Putintseva"
+   ],
+   "Ruzic A.": [
+    "Antonia Ruzic"
+   ],
+   "Samsonova L.": [
+    "Ludmilla Samsonova"
+   ],
+   "Sebov K.": [
+    "Katherine Sebov"
+   ],
+   "Sierra S.": [
+    "Solana Sierra"
+   ],
+   "Sonmez Z.": [
+    "Zeynep Sonmez"
+   ],
+   "Sramkova R.": [
+    "Rebecca Sramkova"
+   ],
+   "Starodubtseva Y.": [
+    "Yulia Starodubtseva"
+   ],
+   "Stearns P.": [
+    "Peyton Stearns"
+   ],
+   "Stefanini L.": [
+    "Lucrezia Stefanini"
+   ],
+   "Stephens S.": [
+    "Sloane Stephens"
+   ],
+   "Tararudee L.": [
+    "Lanlana Tararudee"
+   ],
+   "Tjen J.": [
+    "Janice Tjen"
+   ],
+   "Townsend T.": [
+    "Taylor Townsend"
+   ],
+   "Uchijima M.": [
+    "Moyuka Uchijima"
+   ],
+   "Udvardy P.": [
+    "Panna Udvardy"
+   ],
+   "Valentova T.": [
+    "Tereza Valentova"
+   ],
+   "Zarazua R.": [
+    "Renata Zarazua"
+   ],
+   "Zhang S.": [
+    "Shuai Zhang"
+   ],
+   "Zhao C.": [
+    "Carol Zhao"
+   ]
+  }
+ },
+ "method": "clé normalisée (nom_de_famille, initiale) — exacte, jamais fuzzy ; clés ambiguës et paires de double exclues",
+ "n_live_names": 118,
+ "refreshed_at": "2026-08-02T21:37:10.514110+00:00",
+ "source": "winamax PRELOADED_STATE (scan live)"
+}

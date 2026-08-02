@@ -142,7 +142,7 @@ def test_data_too_stale_refuses():
 
 # ── Refus explicites, jamais de probabilités fabriquées ───────────────────────
 def test_sport_not_supported():
-    res = _run(_full_gateway(), event=_event(sport="tennis"))
+    res = _run(_full_gateway(), event=_event(sport="handball"))
     assert res.status is S.SPORT_NOT_SUPPORTED
     assert res.predictions == {}
 

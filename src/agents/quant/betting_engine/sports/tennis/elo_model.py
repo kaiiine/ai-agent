@@ -1,11 +1,22 @@
-"""Tennis — modèle Elo SURFACE-AWARE (ATP/WTA séparés), walk-forward sans fuite.
+"""Tennis — modèle Elo (ATP/WTA séparés), walk-forward sans fuite.
 
-CHOIX MÉTHODOLOGIQUE (justifié par la caractérisation des VRAIES données) :
+CHOIX MÉTHODOLOGIQUE — issu d'une COMPARAISON MESURÉE (`model_comparison.py`), pas d'une
+supposition. Protocole : DEV (saisons ≤2021) pour choisir, HOLDOUT (≥2022) pour confirmer,
+comparaisons de Brier APPARIÉES PAR MATCH avec IC bootstrap 95 %.
+
+Résultat (holdout, ATP puis WTA) :
+- elo vs `rank_logistic` : delta -0.0041 / -0.0077, IC EXCLUANT 0 -> Elo bat significativement
+  la baseline classement (et a fortiori `rank_favorite` : -0.0135 / -0.0162) ;
+- elo vs `elo_surface` et vs `glicko2` : IC CONTENANT 0 -> aucune supériorité démontrée des
+  variantes plus complexes.
+=> À skill statistiquement ÉQUIVALENT, on retient le modèle le PLUS SIMPLE et le MIEUX
+CALIBRÉ : Elo classique. ECE holdout : elo 0.0247/0.0209 vs elo_surface 0.0286/0.0287 vs
+glicko2 0.0302/0.0285. La calibration prime ici car la décision de pari consomme une
+PROBABILITÉ (EV), pas un classement. Surface-aware et Glicko-2 sont CONSERVÉS dans le
+module de comparaison (réévaluables quand l'historique s'allongera), jamais en production
+sans preuve.
+
 - ATP et WTA SÉPARÉS : régimes best-of différents (ATP Bo3+Bo5, WTA Bo3), pools disjoints.
-- SURFACE-AWARE : chaque joueur a une note GLOBALE + une note PAR SURFACE ; la prédiction
-  utilise un mélange `blend*surface + (1-blend)*global`. Justifié : Hard/Clay/Grass ont
-  chacun des milliers de matchs par tour (surface-aware viable, pas fragmenté), et la
-  surface est l'effet dominant du tennis (spécialistes terre/gazon).
 - SANS FUITE : notes issues des seuls matchs STRICTEMENT antérieurs ; étiquetage par ORDRE
   CANONIQUE (nom) pour que le modèle n'exploite jamais « la colonne vainqueur ».
 - Pas d'avantage domicile (sport neutre). Cold-start : aucune prédiction sous un minimum
@@ -41,21 +52,42 @@ from .tennis_data_loader import load_tennis_data
 class TennisEloParams:
     init_rating: float
     k_factor: float
-    surface_blend: float          # poids de la note de surface dans le mélange (0..1)
+    surface_blend: float          # 0.0 en production : gain NON démontré (cf. comparaison)
     min_prior_matches: int        # cold-start : aucune prédiction en-dessous
     notes: str = ""
 
 
-# Paramètres PROPRES au tennis (fixes, documentés — jamais fités sur l'éval). K=24 (Elo
-# tennis usuel, entre le K bas MLB et le K haut NBA) ; blend 0.5 (global/surface équilibré).
-ATP_PARAMS = TennisEloParams(1500.0, 24.0, 0.5, 20,
-    "ATP : K=24 ; blend global/surface 0.5 ; cold-start 20 matchs ; Bo3+Bo5")
-WTA_PARAMS = TennisEloParams(1500.0, 24.0, 0.5, 20,
-    "WTA : K=24 ; blend global/surface 0.5 ; cold-start 20 matchs ; Bo3")
+# Paramètres PROPRES au tennis (FIXES, documentés — jamais fités sur l'évaluation).
+# K=24 : valeur Elo usuelle en tennis, fixée A PRIORI (le K dynamique 538 a été mesuré et
+# n'améliore pas : Brier holdout supérieur et ECE nettement pire). surface_blend=0.0 :
+# la variante surface-aware n'est PAS significativement meilleure (IC apparié contenant 0).
+ATP_PARAMS = TennisEloParams(1500.0, 24.0, 0.0, 20,
+    "ATP : Elo K=24 ; sans blend de surface (gain non significatif) ; cold-start 20 ; Bo3+Bo5")
+WTA_PARAMS = TennisEloParams(1500.0, 24.0, 0.0, 20,
+    "WTA : Elo K=24 ; sans blend de surface (gain non significatif) ; cold-start 20 ; Bo3")
 
 
 def _p(r_a: float, r_b: float) -> float:
     return 1.0 / (1.0 + 10 ** (-(r_a - r_b) / 400.0))
+
+
+def tennis_ratings_as_of(matches, cutoff, params: TennisEloParams):
+    """Notes Elo + nombre de matchs joués, à partir des SEULS matchs STRICTEMENT
+    antérieurs à `cutoff` (sans fuite). Même implémentation Elo que le walk-forward —
+    réutilisée par l'évaluation live point-in-time (aucune duplication de formule)."""
+    ratings: dict[str, float] = {}
+    played: Counter = Counter()
+    for m in matches:
+        if m.tourney_date >= cutoff:
+            break                                    # `matches` est trié chronologiquement
+        w, l = m.p1_name, m.p2_name
+        rw, rl = ratings.get(w, params.init_rating), ratings.get(l, params.init_rating)
+        e = _p(rw, rl)
+        ratings[w] = rw + params.k_factor * (1.0 - e)
+        ratings[l] = rl - params.k_factor * (1.0 - e)
+        played[w] += 1
+        played[l] += 1
+    return ratings, played
 
 
 def _brier(p: float, y: float) -> float:

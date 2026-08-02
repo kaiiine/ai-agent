@@ -90,6 +90,13 @@ class BookmakerEventMapping:
 CompetitionResolver = Callable[[str | None], "tuple[str | None, str, str]"]
 
 
+# Types d'entités pouvant être PARTICIPANT d'un événement. Générique : un sport
+# d'équipes peuple `team:{sport}:…`, un sport individuel (tennis, MMA) `player:{sport}:…`.
+# Aucun `if sport == …` : la résolution cherche dans les deux espaces, qui ne se croisent
+# jamais (le préfixe entity_type est structurellement obligatoire, GW-FR-008).
+PARTICIPANT_ENTITY_TYPES = ("team", "player")
+
+
 class BookmakerEventResolver:
     """Résout un `RawBookmakerEvent` en `BookmakerEventMapping`.
 
@@ -161,7 +168,10 @@ class BookmakerEventResolver:
         id_cid: str | None = None
         id_status: IdentityStatus = "UNRESOLVED"
         if raw_id is not None:
-            id_cid, id_status = self._identity.canonicalize("winamax", str(raw_id), "team")
+            for entity_type in PARTICIPANT_ENTITY_TYPES:
+                id_cid, id_status = self._identity.canonicalize("winamax", str(raw_id), entity_type)
+                if id_status == "RESOLVED":
+                    break
 
         # 2. Correspondance nom/alias EXACTE (bootstrap), côté betting_engine.
         matches, alias_hit = self._name_matches(sport, raw_name)
@@ -203,7 +213,9 @@ class BookmakerEventResolver:
         alias_hit: dict[str, bool] = {}
         if not needle:
             return matches, alias_hit
-        for entity in self._identity.all_entities(f"team:{sport}:"):
+        entities = [e for t in PARTICIPANT_ENTITY_TYPES
+                    for e in self._identity.all_entities(f"{t}:{sport}:")]
+        for entity in entities:
             if entity.canonical_name.strip().casefold() == needle:
                 matches.append(entity)
                 alias_hit[entity.canonical_id] = False

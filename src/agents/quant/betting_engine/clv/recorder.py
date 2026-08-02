@@ -37,7 +37,16 @@ class RecordSummary:
 
 
 def _schema_for_sport(sport: str) -> MarketSchema | None:
-    """Schéma du marché vainqueur pour un sport collecté (None si sport non modélisé)."""
+    """Schéma du marché vainqueur pour un sport collecté (None si sport non modélisé).
+
+    SOURCE UNIQUE : le schéma DÉCLARÉ par le modèle live enregistré (il porte les vraies
+    issues canoniques — `home/away`, `home/draw/away`, ou `player_a/player_b` en tennis).
+    On ne re-dérive un schéma générique que pour un sport validé sans module live."""
+    from ..sports.registry import SPORT_MODULES
+    module = SPORT_MODULES.get(sport)
+    schema = getattr(getattr(module, "model", None), "schema", None)
+    if schema is not None:
+        return schema
     model = VALIDATED_MODELS.get(sport)
     if model is None:
         return None
