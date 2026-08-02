@@ -210,7 +210,7 @@ def assess_tennis(tour: str) -> TennisAssessment:
         live_freshness_status=FRESHNESS_NOT_MEASURABLE)
     decision = evaluate_maturity(
         model_name=f"tennis_{tour.lower()}_moneyline",
-        model_version=f"tennis.{tour.lower()}.elo_surface.v0",
+        model_version=f"tennis.{tour.lower()}.elo.v0",
         observations=observations, policy=load_maturity_policy())
     metrics = {"model_brier": model_brier, "rank_baseline_brier": base_brier,
                "uniform_brier": uniform_brier, "market_brier": market_brier,
