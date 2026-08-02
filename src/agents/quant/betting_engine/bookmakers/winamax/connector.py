@@ -35,16 +35,27 @@ HEADERS = {
 TIMEOUT = 20
 STATE_MARKER = "var PRELOADED_STATE = "
 
-# sportId Winamax d'après la cartographie réelle (§1). Autorité : le snapshot,
-# pas l'odds_fetcher gelé (qui contient des IDs faux).
+# sportId Winamax — AUTORITÉ : le snapshot/scan live réel (probe 2026-08-01, tous HTTP 200
+# + PRELOADED_STATE valide), JAMAIS l'odds_fetcher gelé (IDs faux : tennis=2). C'est la
+# SEULE table nom->sportId ; tous les composants (coverage/recommend/record-odds/tool)
+# passent par ce connecteur. golf/F1 sont OUTRIGHT (parse_catalog les exclut -> 0 event
+# pairwise, honnête) ; les sports hors-saison rendent 0 event sans erreur.
 SPORT_IDS: dict[str, int] = {
     "football": 1,
     "basketball": 2,
     "baseball": 3,
     "hockey": 4,
     "tennis": 5,
+    "handball": 6,
+    "golf": 9,                 # outright (vainqueur d'épreuve) -> aucun match 2-comp
+    "rugby": 12,
+    "afl": 13,
     "american_football": 16,   # NFL — payload « Vainqueur » 2-way vérifié
+    "table_tennis": 20,
     "volleyball": 23,          # payload « Vainqueur » 2-way vérifié
+    "badminton": 31,
+    "mma": 117,
+    "formula1": 40,            # outright -> aucun match 2-comp
 }
 
 

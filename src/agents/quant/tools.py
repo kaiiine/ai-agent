@@ -53,30 +53,31 @@ def _match_meta(md: MatchDecision) -> dict:
 def winamax_odds_fetch(sport: str = "football", team: str = "") -> str:
     """Récupère les cotes Winamax en temps réel (PRIMITIVE DATA — aucune décision).
 
-    Retourne les cotes brutes + la probabilité IMPLICITE (1/cote, marge INCLUSE —
-    ce n'est PAS une probabilité no-vig ni un edge : aucun jugement de valeur ici).
-    L'évaluation d'un pari passe ensuite par `ev_analyze` (pipeline structuré).
+    Passe par l'UNIQUE source canonique (WinamaxConnector -> PRELOADED_STATE -> parser),
+    la MÊME que coverage/recommend/record-odds. Cotes SCHEMA-AWARE : 2-way (tennis,
+    basket…) ou 3-way (foot, hockey) — jamais un `draw` fabriqué. Retourne les cotes
+    brutes + la probabilité IMPLICITE (1/cote, marge INCLUSE — ni no-vig ni edge).
 
     Args:
-        sport: football, tennis, basketball ou rugby (défaut football)
-        team: filtre optionnel sur un nom d'équipe (ex: "PSG")
+        sport: football, tennis, basketball, hockey, rugby, baseball, volleyball… (défaut football)
+        team: filtre optionnel sur un nom de participant (ex: "PSG", "Sinner")
     Returns:
-        JSON des matchs avec cotes 1N2 horodatées + implied_probability (brute)
+        JSON des matchs avec cotes vainqueur horodatées + implied_probability (brute)
     """
-    from src.agents.quant.gateway.providers.odds_provider import WinamaxOddsProvider
+    from src.agents.quant.betting_engine.bookmakers.winamax.odds_quotes import fetch_odds_quotes
     from src.agents.quant.betting_engine.value_engine import margin_removal
     try:
-        quotes = WinamaxOddsProvider().fetch_matches(sport, team)
+        quotes = fetch_odds_quotes(sport, team)
         if not quotes:
             return json.dumps({"status": "empty", "message": f"Aucun match trouvé ({sport}, filtre: {team or 'aucun'})"})
         matches = [
             {
                 "match_id": q.match_id, "competition": q.competition,
-                "home": q.home_team, "away": q.away_team,
+                "slot_1": q.slot_1_name, "slot_2": q.slot_2_name,
                 "start_time": q.start_time, "status": q.status,
                 "odds": q.odds,
-                # Implicite = 1/cote (marge incluse) via la primitive CANONIQUE — pas
-                # une seconde formule ni une proba no-vig. Donnée, pas recommandation.
+                # Implicite = 1/cote (marge incluse) via la primitive CANONIQUE, sur les
+                # seules sélections PRÉSENTES (aucun None -> plus de TypeError 2-way).
                 "implied_probability": {k: round(margin_removal.implied_raw(v), 4) for k, v in q.odds.items()},
                 "bookmaker": q.bookmaker, "fetched_at": q.fetched_at,
             }
