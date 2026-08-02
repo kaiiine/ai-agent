@@ -572,6 +572,16 @@ def _chat_node_factory():
         if isinstance(last, HumanMessage):
             _compressed_this_turn = False
 
+        # Une bascule automatique (rate-limit) est TEMPORAIRE : si le provider préféré
+        # a de nouveau une clé saine, on y revient avant de choisir le backend du tour.
+        try:
+            from src.llm.key_pool import restore_preferred_backend as _restore
+            _restored = _restore(settings)
+            if _restored:
+                console.print(f"[dim]  ↩  retour au provider préféré : {_restored}[/dim]")
+        except Exception:
+            pass
+
         backend = settings.llm_backend
         factory = _factories.get(backend, make_llm_ollama_cloud)
 
@@ -720,8 +730,12 @@ def _chat_node_factory():
                             _orch_provider, _orch_key, _gfo()
                         )
                         if _nxt:
+                            _prev_provider = _orch_provider
                             _orch_provider, _orch_key = _nxt
                             settings.llm_backend = _orch_provider
+                            # Bascule AUTOMATIQUE -> réversible au prochain tour.
+                            from src.llm.key_pool import note_auto_fallback as _note
+                            _note(_prev_provider, _orch_provider)
                             _new_llm = make_orchestrator_llm_with_key(
                                 _orch_provider, _orch_key
                             )

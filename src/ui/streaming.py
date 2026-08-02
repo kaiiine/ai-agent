@@ -1925,8 +1925,33 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                                 id=_real_id,
                             )
                             graph.update_state(config, {"messages": [updated]})
-                        except Exception:
-                            pass
+                            # VÉRIFICATION : `add_messages` ne REMPLACE que si l'id
+                            # correspond à un message existant ; sinon il AJOUTE, et
+                            # l'état garde le placeholder `awaiting_input` — le modèle
+                            # ne voit alors jamais les réponses et repose ses questions.
+                            # Cet échec était avalé silencieusement : on le rend visible.
+                            try:
+                                _after = graph.get_state(config)
+                                _stored = next(
+                                    (
+                                        m for m in reversed(_after.values.get("messages", []))
+                                        if isinstance(m, _TM)
+                                        and m.tool_call_id == msg.tool_call_id
+                                    ),
+                                    None,
+                                )
+                                _content = getattr(_stored, "content", "") or ""
+                                if "answers" not in _content:
+                                    console.print(Text(
+                                        "  ⚠ réponses non injectées dans l'état "
+                                        "(le modèle ne les verra pas) — signale ce cas",
+                                        style="yellow"))
+                            except Exception:
+                                pass
+                        except Exception as _ue:
+                            # Ne JAMAIS perdre les réponses en silence.
+                            console.print(Text(
+                                f"  ⚠ échec d'injection des réponses : {_ue}", style="yellow"))
                         stop_thinking.clear()
                         try:
                             live.start(refresh=False)

@@ -107,13 +107,14 @@ class KeyPool:
         if key:
             return (current_provider, key)
 
-        # Bascule vers les providers suivants dans l'ordre de fallback
-        try:
-            start = fallback_order.index(current_provider) + 1
-        except ValueError:
-            start = 0
-
-        for provider in fallback_order[start:]:
+        # Puis les autres providers PAR ORDRE DE PRIORITÉ (pas seulement « après »
+        # le provider courant) : si on est tombé sur un provider de secours et que le
+        # provider préféré a de nouveau une clé saine, on doit pouvoir y revenir.
+        # Le cooldown des clés empêche tout ping-pong (une clé qui vient d'échouer
+        # n'est pas saine).
+        for provider in fallback_order:
+            if provider == current_provider:
+                continue
             key = self.next_healthy(provider)
             if key:
                 return (provider, key)
@@ -199,6 +200,49 @@ _pool = KeyPool()
 
 def get_pool() -> KeyPool:
     return _pool
+
+
+# ── Bascule AUTOMATIQUE de provider : temporaire, jamais définitive ──────────────
+# Une bascule déclenchée par un rate-limit écrivait `settings.llm_backend` de façon
+# PERMANENTE : une fois passé sur un provider de secours, toute la session y restait,
+# même après l'expiration du cooldown et alors que le provider préféré avait de nouveau
+# des clés saines (symptôme : « mes clés ollama sont dispo mais tout part sur gemini »).
+# On mémorise donc l'origine de la bascule pour pouvoir revenir au provider préféré.
+# Un changement VOLONTAIRE de backend (commande /backend) ne passe pas par ici et n'est
+# donc jamais écrasé.
+_auto_fallback: dict[str, str | None] = {"origin": None, "current": None}
+
+
+def note_auto_fallback(origin: str, fallback: str) -> None:
+    """Enregistre une bascule AUTOMATIQUE `origin` -> `fallback` (donc réversible)."""
+    if origin and fallback and origin != fallback:
+        if _auto_fallback["origin"] is None:
+            _auto_fallback["origin"] = origin
+        _auto_fallback["current"] = fallback
+
+
+def clear_auto_fallback() -> None:
+    _auto_fallback["origin"] = None
+    _auto_fallback["current"] = None
+
+
+def restore_preferred_backend(settings) -> str | None:
+    """Revient au provider préféré si la bascule était automatique ET qu'il a de nouveau
+    une clé saine. Retourne le provider restauré, sinon None.
+
+    À appeler au DÉBUT de chaque tour : la bascule ne dure ainsi que le temps du cooldown.
+    """
+    origin = _auto_fallback["origin"]
+    if not origin:
+        return None
+    if getattr(settings, "llm_backend", None) != _auto_fallback["current"]:
+        clear_auto_fallback()      # l'utilisateur a changé de backend entre-temps
+        return None
+    if _pool.next_healthy(origin):
+        settings.llm_backend = origin
+        clear_auto_fallback()
+        return origin
+    return None
 
 
 def get_fallback_order() -> list[str]:

@@ -1,4 +1,4 @@
-"""Coding specialist — runs qwen3-coder-next:cloud for coding tasks delegated by the orchestrator."""
+"""Coding specialist — runs qwen3-coder:480b-cloud for coding tasks delegated by the orchestrator."""
 from __future__ import annotations
 
 import json
@@ -388,6 +388,11 @@ def _run(task: str) -> str:
                         _prev_provider = _current_provider
                         _current_provider, _current_key = _next
                         _settings.llm_backend = _current_provider
+                        try:    # bascule AUTOMATIQUE -> réversible (cf. key_pool)
+                            from src.llm.key_pool import note_auto_fallback as _note_fb
+                            _note_fb(_prev_provider, _current_provider)
+                        except Exception:
+                            pass
                         _budget = _CONTEXT_CHAR_BUDGET.get(_current_provider, _CONTEXT_CHAR_BUDGET_DEFAULT)
                         llm = _make_llm_key(_current_provider, _current_key)
                         _bound_llm = llm.bind_tools(_active_tools)

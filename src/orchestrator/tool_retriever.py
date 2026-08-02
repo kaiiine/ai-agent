@@ -435,6 +435,35 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "vérifie périodiquement",
         "alerte si",
         "tâche planifiée cron",
+        # ── Récurrence quotidienne explicite ──────────────────────────────
+        # Sans ces formulations, une demande pourtant limpide (« fais-moi un
+        # récap tous les jours à 14h ») ne matchait AUCUNE ancre cron : le groupe
+        # n'était pas sélectionné et le modèle improvisait un script shell.
+        "fais-le tous les jours",
+        "tous les jours à la même heure",
+        "chaque jour à 14h",
+        "tous les jours à 9h du matin",
+        "quotidiennement",
+        "un récapitulatif quotidien",
+        "un rapport tous les jours",
+        "envoie-moi ça chaque jour",
+        "en commençant par aujourd'hui puis chaque jour",
+        "toutes les semaines",
+        "chaque lundi",
+        "de façon récurrente",
+        "automatiquement à heure fixe",
+        "programme une tâche récurrente",
+        "planifie cette tâche",
+        "mets ça en place tous les jours",
+        "suivi quotidien automatique",
+        "surveille en continu et préviens-moi",
+        # ── English ───────────────────────────────────────────────────────
+        "every day at 2pm",
+        "daily report",
+        "schedule this task",
+        "run this every day",
+        "recurring task",
+        "remind me every morning",
     ],
 }
 
