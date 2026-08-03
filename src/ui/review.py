@@ -656,7 +656,10 @@ def _prompt_input(label: str) -> str:
 def _ask_with_choices(question: str, choices: list[str], q_num: int, total: int) -> str:
     """Arrow-key picker for one question. Appends 'Autre (préciser)' automatically."""
     AUTRE = "Autre (préciser)"
-    all_choices = list(choices) + [AUTRE]
+    # Le modèle ajoute parfois lui-même « Autre (préciser) » malgré la consigne du tool ;
+    # sans dédoublonnage l'option apparaissait DEUX fois dans le sélecteur.
+    _norm = lambda c: str(c).strip().casefold().rstrip(".")
+    all_choices = [c for c in choices if _norm(c) != _norm(AUTRE)] + [AUTRE]
     raw: List[Tuple[str, str]] = [(c, c) for c in all_choices]
 
     t = Text()

@@ -879,13 +879,50 @@ def _chat_node_factory():
         # ces flows volontairement conçus ainsi, ce qui serait pire que le bug d'origine.
         confirmation_flow_tools = {"slack_send_message", "git_commit"}
         has_confirmation_flow = any(t.name in confirmation_flow_tools for t in selected_tools)
-        if not force_text and not plan_mode and not has_confirmation_flow:
+
+        # L'utilisateur a-t-il DÉJÀ répondu à un questionnaire dans cette conversation ?
+        # Si oui, reposer des questions en texte libre est TOUJOURS une erreur — même
+        # dans un flow de confirmation (Slack/git). Sans cela, une simple demande
+        # « poste sur le canal … » suffisait à désactiver le garde-fou, et le modèle
+        # redemandait des informations déjà fournies (cas rapporté).
+        _has_prior_answers = any(
+            isinstance(m, ToolMessage) and getattr(m, "name", None) == "ask_clarification"
+            and "answers" in (m.content if isinstance(m.content, str) else json.dumps(m.content))
+            for m in working
+        )
+        if not force_text and not plan_mode and (not has_confirmation_flow or _has_prior_answers):
             no_tool_call = not getattr(response, "tool_calls", None)
             resp_text = _content_to_str(response.content).strip()
-            if no_tool_call and resp_text.endswith("?"):
+            # Une question en texte libre ne finit pas forcément par « ? » : le modèle
+            # énumère souvent « 1 … 2 … 3 … » et termine par un point. On détecte donc
+            # un « ? » N'IMPORTE OÙ, ou une demande explicite de précision.
+            _looks_like_question = (
+                resp_text.endswith("?")
+                or "?" in resp_text
+                or re.search(r"(?i)\b(veuillez préciser|merci de préciser|peux-tu préciser|"
+                             r"il me (?:manque|faut)|precise[rz]|please specify)\b", resp_text)
+            )
+            if no_tool_call and _looks_like_question:
                 console.print(
                     "[dim]  ↩  question en texte libre détectée — correction…[/dim]"
                 )
+                _answers_recap = ""
+                if _has_prior_answers:
+                    _pairs = []
+                    for m in working:
+                        if isinstance(m, ToolMessage) and getattr(m, "name", None) == "ask_clarification":
+                            try:
+                                _c = m.content if isinstance(m.content, str) else json.dumps(m.content)
+                                for _q, _a in (json.loads(_c).get("answers") or {}).items():
+                                    if _q != "_extra" and _a:
+                                        _pairs.append(f"- {_q} -> {_a}")
+                            except Exception:
+                                pass
+                    if _pairs:
+                        _answers_recap = (
+                            "\nRéponses DÉJÀ données par l'utilisateur (utilise-les, ne les "
+                            "redemande pas) :\n" + "\n".join(_pairs)
+                        )
                 reminder = HumanMessage(
                     content=(
                         "[SYSTEME] Tu viens de répondre par une question en texte libre — "
@@ -893,6 +930,7 @@ def _chat_node_factory():
                         "conversation (y compris une réponse précédente à ask_clarification), "
                         "utilise-la directement sans la redemander. Sinon, repose la question "
                         "immédiatement via ask_clarification(questions=[...])."
+                        + _answers_recap
                     )
                 )
                 try:
