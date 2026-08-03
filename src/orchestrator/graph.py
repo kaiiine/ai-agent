@@ -504,6 +504,11 @@ class CachedToolNode:
                         content=content,
                         tool_call_id=msg.tool_call_id,
                         name=getattr(msg, "name", None),
+                        # L'artefact porte le résultat non textuel (images,
+                        # ressources) : le reconstruire sans lui le perdrait
+                        # silencieusement, ce que la redaction ne demande pas.
+                        artifact=getattr(msg, "artifact", None),
+                        status=getattr(msg, "status", "success"),
                     )
                 cleaned.append(msg)
             result = {"messages": cleaned}
@@ -562,6 +567,15 @@ def _chat_node_factory():
     tools = build_all_tools()
     retriever = ToolRetriever(tools)
 
+    # Tools MCP : découverts dynamiquement, indexés et routés SÉPARÉMENT des
+    # natifs (routing à deux étages avec filtrage par serveur). Ils rejoignent
+    # ensuite la même liste : le ToolNode ne fait aucune différence entre les deux.
+    # Sans serveur déclaré, `mcp_runtime()` est inerte et ne coûte rien.
+    from src.mcp_client.runtime import mcp_runtime
+
+    _mcp = mcp_runtime()
+    tools = tools + _mcp.tools
+
     def chatbot(state: GlobalState):
         from src.infra.settings import settings
         from src.ui.plan_mode import BLOCKED_TOOLS
@@ -616,7 +630,7 @@ def _chat_node_factory():
                 if hasattr(last_message, "content")
                 else str(last_message)
             )
-        selected_tools = retriever.get(query)
+        selected_tools = retriever.get(query) + _mcp.select(query)
 
         global _last_selected_tools
         _last_selected_tools = [t.name for t in selected_tools]

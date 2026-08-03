@@ -34,6 +34,7 @@ _COMMANDS = [
     ("/spec [prompt]",     "wizard interactif de spécification — l'IA pose des questions guidées"),
     ("/build [projet]",   "exécute spec.md par phases — 60-70% moins de tokens qu'une session unique"),
     ("/graph [projet]",   "génère GRAPH_REPORT.md + graph.json + notes Obsidian via graphify (subprocess direct)"),
+    ("/mcp <sous-cmd>",   "serveurs MCP — list · add · remove · enable · disable · test [--deep] · tools · refresh · restart"),
     ("/clear",             "efface l'écran et réaffiche l'en-tête"),
     ("/new",               "démarre un nouveau thread de conversation"),
     ("/history",           "liste les threads passés et permet d'en reprendre un (flèches ↑↓)"),
@@ -313,6 +314,15 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
 
     if cmd == "/history":
         return _handle_history(cfg, state, console)
+
+    if cmd == "/mcp" or cmd.startswith("/mcp "):
+        from src.mcp_client.commands import handle_mcp
+        from src.mcp_client.runtime import mcp_runtime
+
+        try:
+            return command_panel(handle_mcp(cmd.split()[1:], mcp_runtime()))
+        except Exception as e:
+            return command_panel(f"erreur mcp : {e}", error=True)
 
     if cmd.startswith("/keys"):
         from src.llm.key_pool import get_pool
