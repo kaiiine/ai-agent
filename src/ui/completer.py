@@ -34,6 +34,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/branch",            "fork le thread actuel pour explorer une autre piste"),
     ("/debug",             "active/désactive le mode debug"),
     ("/dump",              "affiche tous les messages du thread"),
+    ("/mcp",               "serveurs MCP — list · add · test · tools · refresh · restart…"),
     ("q / exit",           "quitte Axon"),
     ("Ctrl+T",             "bascule le mode plan — l'IA planifie sans écrire"),
     ("Ctrl+O",             "attacher un fichier  (= /attach)"),
@@ -47,6 +48,21 @@ _SUBCOMMANDS: dict[str, list[str]] = {
     "/lang":    ["fr", "en", "auto"],
     "/mode":    ["ask", "auto"],
 }
+
+# ── /mcp : sous-commandes, puis noms de serveurs ──────────────────────────────
+_MCP_SUBCOMMANDS: dict[str, str] = {
+    "list":    "état de tous les serveurs déclarés",
+    "add":     "ajoute un serveur puis le teste",
+    "remove":  "retire le serveur et désindexe ses tools",
+    "enable":  "active, connecte et indexe",
+    "disable": "désactive et désindexe",
+    "test":    "diagnostic par étapes (--deep sonde un tool read-only)",
+    "tools":   "schémas et table des trois noms",
+    "refresh": "re-tools/list sans redémarrer le processus",
+    "restart": "redémarre le sous-processus puis resynchronise",
+}
+# Sous-commandes attendant un nom de serveur en second argument.
+_MCP_WANTS_SERVER = frozenset(_MCP_SUBCOMMANDS) - {"list", "add"}
 
 # ── File cache for @ completion (invalidated on cwd change or TTL) ────────────
 _file_cache: list[str] = []
@@ -79,6 +95,9 @@ class SlashCompleter(Completer):
 
         if len(parts) == 2:
             sub = parts[1]
+            if cmd == "/mcp":
+                yield from self._mcp_completions(sub)
+                return
             options = _SUBCOMMANDS.get(cmd) or (self._model_options() if cmd == "/model" else [])
             for opt in options:
                 if opt.startswith(sub):
@@ -88,6 +107,42 @@ class SlashCompleter(Completer):
         for full_cmd, desc in _COMMANDS:
             if full_cmd.startswith(cmd):
                 yield Completion(full_cmd, start_position=-len(cmd), display_meta=desc)
+
+    def _mcp_completions(self, sub: str):
+        """Trois niveaux : sous-commande, puis nom de serveur, puis `--deep`."""
+        tokens = sub.split(" ")
+        current = tokens[-1]
+
+        if len(tokens) == 1:
+            for opt, desc in _MCP_SUBCOMMANDS.items():
+                if opt.startswith(current):
+                    yield Completion(opt, start_position=-len(current), display_meta=desc)
+            return
+
+        action = tokens[0]
+        if len(tokens) == 2 and action in _MCP_WANTS_SERVER:
+            for name, state in self._mcp_servers():
+                if name.startswith(current):
+                    yield Completion(name, start_position=-len(current), display_meta=state)
+        elif len(tokens) == 3 and action == "test" and "--deep".startswith(current):
+            yield Completion("--deep", start_position=-len(current),
+                             display_meta="sonde un tool read-only (effets de bord possibles)")
+
+    def _mcp_servers(self) -> list[tuple[str, str]]:
+        """Serveurs déjà connus du runtime, avec leur état.
+
+        On lit le singleton SANS jamais le démarrer : la complétion s'exécute à
+        chaque frappe, elle ne doit pouvoir ni lancer de sous-processus ni lire
+        une configuration. Runtime absent -> aucune proposition."""
+        try:
+            from src.mcp_client import runtime as _runtime_module
+
+            current = _runtime_module._runtime
+            if current is None:
+                return []
+            return sorted((name, rt.state.value) for name, rt in current.status().items())
+        except Exception:
+            return []
 
     def _at_completions(self, query: str):
         ql = query.lower()

@@ -153,6 +153,20 @@ WEB INTEGRATION:
   export_to="<project>/public/diagrams/<name>.html" → standalone HTML ready to embed.\
 """
 
+_MCP = """\
+━━ EXTERNAL SERVERS (MCP) ━━
+Tools named `server__tool` act on an external application through its own backend.
+IDENTIFIERS — never invent one. Any id, uid, key, path or object name passed to a \
+tool must come from a previous search_*/list_*/get_* call on the SAME server, or \
+verbatim from the user. If you need one and don't have it, search for it — do not \
+offer the user a list of identifiers you produced yourself. A guessed identifier \
+yields a plausible-looking failure, never a result.
+READ BEFORE WRITE — before modifying an existing external state, read it first and \
+use the real names it returns, never names remembered from the conversation.
+A result with "status": "error" is a tool FAILURE, not data. Report the failure; \
+never describe its message as the state of the system.\
+"""
+
 _MEMORY = """\
 ━━ PROJECT MEMORY ━━
 When you discover a non-obvious fact about the project or make an important change: \
@@ -314,6 +328,11 @@ def build_system_prompt(
         parts.append(_SHELL)
     if coding_mode:
         parts.append(_CODING)
+
+    # Tools MCP : nom d'exécution `serveur__tool` (cf. registry.runtime_tool_name).
+    # Aucun tool natif ne contient de double underscore — vérifié par test.
+    if any("__" in x for x in t):
+        parts.append(_MCP)
 
     if "axon_note" in t:
         parts.append(_MEMORY)

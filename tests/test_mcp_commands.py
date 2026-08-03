@@ -501,3 +501,28 @@ def test_le_dispatcher_axon_route_bien_slash_mcp(monkeypatch, tmp_path):
         assert "Aucun serveur MCP déclaré" in listing.renderable.plain
     finally:
         reset_runtime()
+
+
+# ── règle système : pas d'identifiant inventé ──────────────────────────────────
+def test_le_prompt_mcp_est_injecte_des_quun_tool_mcp_est_selectionne():
+    """La section MCP se déclenche sur la convention de nommage `serveur__tool`.
+    Elle reste générique : aucun serveur, aucun tool particulier n'y figure."""
+    from src.llm.prompts import build_system_prompt
+
+    avec = build_system_prompt(["alpha__download_asset"], "2026-08-03", "kaine")
+    sans = build_system_prompt(["get_current_time", "slack_send_message"], "2026-08-03", "kaine")
+
+    assert "EXTERNAL SERVERS (MCP)" in avec
+    assert "EXTERNAL SERVERS (MCP)" not in sans
+    assert "never invent one" in avec and "READ BEFORE WRITE" in avec
+    # générique : aucune connaissance d'un serveur donné dans le prompt
+    for interdit in ("blender", "sketchfab", "uvx", "bpy"):
+        assert interdit not in avec.lower()
+
+
+def test_aucun_tool_natif_ne_declenche_la_section_mcp():
+    """Le déclencheur repose sur le double underscore : si un tool natif en
+    prenait un, la section s'injecterait à tort."""
+    from src.orchestrator.registry import build_all_tools
+
+    assert [t.name for t in build_all_tools() if "__" in t.name] == []

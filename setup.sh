@@ -318,6 +318,146 @@ config_projects_dir() {
     fi
 }
 
+config_mcp() {
+    step "MCP — serveurs d'outils externes"
+    echo -e "  ${DIM}Axon peut consommer des serveurs MCP tiers (Blender, filesystem, GitHub…).${NC}"
+    echo -e "  ${DIM}Ajouter une capacité = une ligne de configuration, aucun code à écrire.${NC}"
+    echo -e "  ${DIM}Gestion dans Axon : /mcp list · add · test · tools · refresh · restart${NC}"
+
+    # ── 1. uv / uvx ───────────────────────────────────────────
+    echo ""
+    if command -v uvx &>/dev/null; then
+        ok "uvx présent  ${DIM}→ $(command -v uvx)${NC}"
+    else
+        warn "uvx introuvable — nécessaire pour lancer les serveurs MCP distribués par uv"
+        echo -e "  ${DIM}Installeur officiel (ne PAS utiliser pip install uv : la commande uvx${NC}"
+        echo -e "  ${DIM}peut ne pas être créée).${NC}"
+        read -rp "  $(echo -e "${ORANGE}?${NC}") Installer uv maintenant ? [O/n] " rep
+        if [[ ! "$rep" =~ ^[Nn] ]]; then
+            curl -LsSf https://astral.sh/uv/install.sh | sh || warn "Installation d'uv échouée"
+            export PATH="$HOME/.local/bin:$PATH"
+            command -v uvx &>/dev/null && ok "uvx installé → $(command -v uvx)" \
+                || warn "uvx toujours introuvable — ouvre un nouveau shell puis relance"
+        fi
+    fi
+
+    # ── 2. Déclaration du serveur Blender ─────────────────────
+    local cfg="$HOME/.axon/mcp_servers.json"
+    echo ""
+    echo -e "  ${ORANGE}Serveur Blender${NC}"
+    echo -e "  ${DIM}Modélisation 3D, matériaux, animation, rendu, export GLB.${NC}"
+    read -rp "  $(echo -e "${ORANGE}?${NC}") Déclarer le serveur blender dans $cfg ? [O/n] " rep
+    if [[ ! "$rep" =~ ^[Nn] ]]; then
+        # Fusion, jamais d'écrasement : les autres serveurs déjà déclarés sont conservés.
+        local result
+        result=$(python3 - "$cfg" <<'PY'
+import json, pathlib, sys
+
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+servers = data.setdefault("servers", {})
+
+if "blender" in servers:
+    print("KEPT")
+else:
+    servers["blender"] = {
+        "transport": "stdio",
+        "command": "uvx",
+        "args": ["--python", "3.11", "blender-mcp"],
+        "env": {
+            "BLENDER_HOST": "localhost",
+            "BLENDER_PORT": "9876",
+            "DISABLE_TELEMETRY": "true",
+            "UV_PYTHON_PREFERENCE": "only-managed",
+        },
+        "enabled": True,
+        "timeouts": {"connect_s": 15, "list_tools_s": 15, "call_s": 90},
+        "tool_timeouts": {"execute_blender_code": 180},
+        "reconnect": {"max_retries": 5, "backoff_s": 2, "backoff_factor": 2},
+        "health": {
+            "probe_tool": "get_scene_info",
+            "failure_patterns": [
+                "Could not connect to Blender",
+                "Make sure the Blender addon is running",
+            ],
+            "consecutive_failures_to_degrade": 3,
+        },
+        "capabilities_hint": (
+            "Blender, 3D modeling, mesh manipulation, materials, geometry, animation, "
+            "camera, lighting, rendering, scene editing, GLB export, Python bpy"
+        ),
+        "risk_overrides": {"execute_blender_code": "execute"},
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print("ADDED")
+PY
+        ) || result="FAILED"
+        case "$result" in
+            ADDED)  ok "blender déclaré dans $cfg" ;;
+            KEPT)   ok "blender déjà déclaré — configuration existante conservée" ;;
+            *)      warn "Écriture de $cfg impossible" ;;
+        esac
+    fi
+
+    # ── 3. Addon côté Blender ─────────────────────────────────
+    echo ""
+    echo -e "  ${ORANGE}Addon Blender${NC}  ${DIM}(côté Blender, une seule fois)${NC}"
+    if command -v blender &>/dev/null; then
+        ok "Blender présent  ${DIM}→ $(blender --version 2>/dev/null | head -1)${NC}"
+    else
+        warn "Blender introuvable dans le PATH — installe-le avant d'utiliser ce serveur"
+    fi
+    local addon="$HOME/Téléchargements/addon.py"
+    [[ -d "$HOME/Téléchargements" ]] || addon="$HOME/Downloads/addon.py"
+    read -rp "  $(echo -e "${ORANGE}?${NC}") Télécharger l'addon vers $addon ? [O/n] " rep
+    if [[ ! "$rep" =~ ^[Nn] ]]; then
+        mkdir -p "$(dirname "$addon")"
+        if curl -fsSL -o "$addon" \
+            https://raw.githubusercontent.com/ahujasid/blender-mcp/main/addon.py; then
+            ok "addon.py téléchargé → $addon"
+        else
+            warn "Téléchargement échoué — récupère addon.py sur github.com/ahujasid/blender-mcp"
+        fi
+    fi
+    echo -e "  ${DIM}Dans Blender :${NC}"
+    echo -e "  ${DIM}  1. Edit > Preferences > Add-ons > Install… > choisir addon.py${NC}"
+    echo -e "  ${DIM}  2. Cocher « Interface: Blender MCP »${NC}"
+    echo -e "  ${DIM}  3. Vue 3D > touche N > onglet BlenderMCP > bouton de connexion${NC}"
+    echo -e "  ${DIM}  Blender doit tourner en mode GRAPHIQUE (jamais -b/--background) :${NC}"
+    echo -e "  ${DIM}  l'addon exécute les commandes via la boucle principale.${NC}"
+
+    # ── 4. Sketchfab (optionnel) ──────────────────────────────
+    echo ""
+    echo -e "  ${ORANGE}Sketchfab${NC}  ${DIM}(optionnel — import de modèles 3D existants)${NC}"
+    echo -e "  ${DIM}La clé est lue par BLENDER, pas par Axon : elle ne va pas dans .env.${NC}"
+    echo -e "  ${DIM}L'addon la cherche dans ses préférences, puis la scène, puis la variable${NC}"
+    echo -e "  ${DIM}d'environnement BLENDERMCP_SKETCHFAB_API_KEY — la dernière est la plus sûre :${NC}"
+    echo -e "  ${DIM}elle ne transite jamais par le contexte du modèle.${NC}"
+    local rc="$HOME/.bashrc"
+    [[ -n "${ZSH_VERSION:-}" || "${SHELL:-}" == *zsh ]] && rc="$HOME/.zshrc"
+    if grep -q "BLENDERMCP_SKETCHFAB_API_KEY" "$rc" 2>/dev/null; then
+        ok "BLENDERMCP_SKETCHFAB_API_KEY déjà exportée dans $(basename "$rc")"
+    else
+        read -rp "  $(echo -e "${ORANGE}?${NC}") Clé API Sketchfab (Entrée pour ignorer) : " sk_key
+        if [[ -n "$sk_key" ]]; then
+            printf '\n# blender-mcp — lue par Blender, pas par Axon\nexport BLENDERMCP_SKETCHFAB_API_KEY=%q\n' \
+                "$sk_key" >> "$rc"
+            ok "export ajouté à $rc — relance Blender depuis un nouveau shell"
+        else
+            info "Ignoré — l'import Sketchfab restera indisponible"
+        fi
+    fi
+    echo -e "  ${DIM}Puis dans Blender : onglet BlenderMCP > cocher « Use Sketchfab ».${NC}"
+    echo -e "  ${DIM}Sans cette case, l'addon n'enregistre pas les commandes Sketchfab et${NC}"
+    echo -e "  ${DIM}répond « Unknown command type » — le serveur MCP les annonce pourtant.${NC}"
+
+    echo ""
+    info "Vérification : lance Axon puis ${ORANGE}/mcp test blender${NC}"
+    echo -e "  ${DIM}Si « command resolved » est vide, le PATH d'Axon diffère de ce shell :${NC}"
+    echo -e "  ${DIM}remplace \"command\": \"uvx\" par le chemin absolu dans $cfg.${NC}"
+}
+
 # ──────────────────────────────────────────────────────────────
 #  MENU DE CONFIGURATION
 # ──────────────────────────────────────────────────────────────
@@ -346,6 +486,19 @@ show_status() {
     else
         warn "Google    ${DIM}(gcp-oauth.keys.json manquant)${NC}"
     fi
+    local mcp_cfg="$HOME/.axon/mcp_servers.json"
+    if [[ -f "$mcp_cfg" ]]; then
+        local n
+        n=$(python3 -c "import json,sys;print(len(json.load(open(sys.argv[1])).get('servers',{})))" \
+            "$mcp_cfg" 2>/dev/null || echo 0)
+        if [[ "$n" -gt 0 ]]; then
+            ok "MCP       ${DIM}→ ${n} serveur(s) déclaré(s) · /mcp list dans Axon${NC}"
+        else
+            warn "MCP       ${DIM}(aucun serveur déclaré)${NC}"
+        fi
+    else
+        warn "MCP       ${DIM}(aucun serveur déclaré)${NC}"
+    fi
     local pdir
     pdir=$(env_get "PROJECTS_DIR")
     if [[ -n "$pdir" ]]; then
@@ -373,6 +526,7 @@ config_menu() {
         echo -e "  ${ORANGE}8${NC}  Dossier de projets  ${DIM}(pour que l'IA trouve tes repos plus vite)${NC}"
         echo -e "  ${ORANGE}9${NC}  API-Football ${DIM}(value betting Winamax)${NC}"
         echo -e "  ${ORANGE}10${NC} football-data.org ${DIM}(saison en cours, value betting)${NC}"
+        echo -e "  ${ORANGE}11${NC} MCP          ${DIM}(serveurs d'outils externes — Blender, etc.)${NC}"
         echo -e "  ${ORANGE}a${NC}  Tout configurer"
         echo -e "  ${ORANGE}q${NC}  Quitter le menu"
         echo ""
@@ -390,6 +544,7 @@ config_menu() {
             8) config_projects_dir ;;
             9) config_quant ;;
             10) config_football_data ;;
+            11) config_mcp ;;
             a|A)
                 config_tavily
                 config_gemini
@@ -401,6 +556,7 @@ config_menu() {
                 config_projects_dir
                 config_quant
                 config_football_data
+                config_mcp
                 ;;
             q|Q)
                 info "Configuration terminée."
