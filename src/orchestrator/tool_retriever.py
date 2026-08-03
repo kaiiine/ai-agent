@@ -323,26 +323,11 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "importer des tâches en masse dans jira",
         "créer un backlog complet dans jira",
     ],
-    "create_presentation": [
-        "fais-moi une présentation sur un sujet",
-        "créer des slides professionnels",
-        "je veux un PowerPoint sur ce thème",
-        "génère un diaporama sur ce sujet",
-        "fais une présentation type Gamma",
-        "crée un pitch deck",
-        "présente ce sujet en slides",
-        "synthétise en slides",
-        "génère une présentation complète",
-        "slides sur l'intelligence artificielle",
-        "présentation pour mon cours ou meeting",
-        "fais des slides sur ce concept",
-        "je veux une présentation professionnelle",
-        "crée un exposé en slides",
-        "PowerPoint sur ce sujet",
-        "presentation slides about this topic",
-        "make me a presentation",
-        "create a slide deck",
-    ],
+    # NOTE : les ancres de `create_presentation` ont été RETIRÉES — l'outil existe
+    # (src/agents/google_slide/tools.py) et le prompt l'impose pour "slides/PowerPoint",
+    # mais il n'est enregistré NI dans build_all_tools() NI dans TOOL_GROUPS : il ne peut
+    # donc jamais être sélectionné. Ses ancres consommaient des slots de retrieval (k)
+    # au profit d'un outil injoignable. À restaurer le jour où l'outil sera enregistré.
     "mermaid_diagram": [
         "schématise moi quelque chose",
         "fais moi un schéma de ce concept",
@@ -426,6 +411,26 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "discours d'un dirigeant",
         "crise ou conflit en cours",
         "décision gouvernementale récente",
+    ],
+    "slack_send_message": [
+        # Aucune ancre n'existait : les outils Slack ne reposaient que sur leur
+        # description, qui contient le mot « Slack ». Une demande naturelle comme
+        # « envoie-moi ça sur le canal test-cron » ne matchait donc RIEN — l'agent
+        # se retrouvait sans outil pour poster et devait demander « est-ce un canal
+        # Slack ? » au lieu d'agir.
+        "envoie un message sur le canal",
+        "poste ça sur le canal",
+        "écris sur le canal",
+        "envoie-moi ça sur le channel",
+        "publie le rapport sur le canal",
+        "fais un retour sur le canal",
+        "préviens l'équipe sur le canal",
+        "envoie le récap dans le salon",
+        "poste le résultat dans la conversation",
+        "envoie un message à cette personne",
+        "send a message to the channel",
+        "post this in the channel",
+        "notify the team on slack",
     ],
     "schedule_task": [
         "surveille toutes les X minutes",

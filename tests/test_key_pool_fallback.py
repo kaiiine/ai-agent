@@ -108,3 +108,28 @@ def test_schedule_task_anchors_cover_daily_recurrence():
         assert phrasing in anchors, f"ancre cron manquante : {phrasing}"
     # le groupe complet suit dès que schedule_task est retrouvé
     assert {"schedule_task", "list_cron_tasks", "stop_cron_task"} == set(TOOL_GROUPS["cron"])
+
+
+def test_slack_anchors_cover_channel_phrasings():
+    """Sans ancre, « envoie un retour sur le canal test-cron » ne matchait aucun outil
+    Slack (leur description contient « Slack », pas « canal ») : l'agent n'avait pas de
+    quoi poster et demandait « est-ce un canal Slack ? » au lieu d'agir."""
+    from src.orchestrator.tool_retriever import _TOOL_ANCHORS
+
+    anchors = " | ".join(_TOOL_ANCHORS["slack_send_message"]).lower()
+    for phrasing in ("canal", "channel", "poste", "envoie"):
+        assert phrasing in anchors, f"ancre slack manquante : {phrasing}"
+
+
+def test_tool_names_in_groups_all_exist():
+    """Un nom d'outil mal orthographié dans TOOL_GROUPS rend l'outil INTROUVABLE en
+    silence (la sélection filtre par `t.name`)."""
+    from src.orchestrator.registry import build_all_tools
+    from src.orchestrator.tool_retriever import TOOL_GROUPS, _TOOL_ANCHORS
+
+    real = {t.name for t in build_all_tools()}
+    declared = {n for names in TOOL_GROUPS.values() for n in names}
+    missing = declared - real
+    assert not missing, f"outils déclarés mais inexistants : {sorted(missing)}"
+    anchored_missing = set(_TOOL_ANCHORS) - real
+    assert not anchored_missing, f"ancres sur des outils inexistants : {sorted(anchored_missing)}"
