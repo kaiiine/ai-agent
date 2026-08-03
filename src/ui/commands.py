@@ -72,10 +72,12 @@ _GROQ_MODELS     = [
     "openai/gpt-oss-20b",
 ]
 _CLOUD_MODELS    = [
-    "minimax-m2.5:cloud",
+    "gpt-oss:120b-cloud",
+    "gpt-oss:20b-cloud",
+    "glm-5.2:cloud",
     "glm-4.7:cloud",
     "gemma4:31b-cloud",
-    "qwen3-coder-next:cloud",
+    "qwen3-coder:480b-cloud",
     "qwen3.5:cloud",
     "qwen3-next:80b-cloud",
     "kimi-k2:1t-cloud"

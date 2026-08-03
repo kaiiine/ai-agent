@@ -374,7 +374,7 @@ ollama:
   model: "qwen2.5:7b"
   temperature: 0.0
 
-coding_model: "qwen3-coder-next:cloud"  # coding specialist
+coding_model: "qwen3-coder:480b-cloud"  # coding specialist
 
 gemini:
   model: "gemini-2.5-flash"
