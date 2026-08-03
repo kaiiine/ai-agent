@@ -12,6 +12,7 @@ Ces tests reproduisent le comportement du réducteur sur un vrai graph.
 from __future__ import annotations
 
 import json
+import pathlib
 
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -96,3 +97,27 @@ def test_stale_placeholder_is_repaired_by_removal():
     msgs = _tool_msgs(graph, config)
     assert len(msgs) == 1
     assert "answers" in msgs[0].content          # le modèle ne voit QUE les réponses
+
+
+# ── Cron : UN SEUL chemin d'envoi (le daemon), jamais l'agent ───────────────────
+def test_cron_agent_has_no_sending_tool():
+    """L'agent d'une tâche planifiée CALCULE et renvoie {notify, message} ; c'est le
+    DAEMON qui publie via _send_notification. Donner un outil d'envoi à l'agent créerait
+    un second chemin parallèle (risque de double publication)."""
+    import re as _re
+    src = pathlib.Path("src/cron_daemon.py").read_text()
+    tools_block = _re.search(r"tools = \[(.*?)\]", src, _re.DOTALL).group(1)
+    for forbidden in ("slack_send_message", "gmail_send_email", "notify,"):
+        assert forbidden not in tools_block, f"{forbidden} ne doit pas être un outil de l'agent cron"
+    # le daemon, lui, garde bien sa diffusion
+    assert "_send_notification(task[" in src and "_notify_slack" in src
+
+
+def test_schedule_task_documents_automatic_delivery():
+    """Le modèle réclamait une URL de webhook : la docstring doit dire que l'envoi est
+    automatique via notify_channels."""
+    from src.agents.cron.tools import schedule_task
+
+    doc = (schedule_task.description or "").lower()
+    assert "automatique" in doc
+    assert "webhook" in doc          # interdiction explicite de la demander

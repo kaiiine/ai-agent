@@ -23,6 +23,12 @@ def schedule_task(
     notify_channels: ["desktop"] ou ["desktop","slack"] ou ["slack"]
     run_at: datetime ISO pour one-shot (ex: "2026-07-21T18:00:00"). Vide = répétitif.
     stop_condition: condition d'arrêt auto ("si le match est terminé"). Optionnel.
+
+    L'ENVOI EST AUTOMATIQUE : le daemon publie lui-même le résultat sur les
+    `notify_channels` demandés. Pour Slack il poste dans le canal configuré côté serveur
+    (variable SLACK_CRON_CHANNEL, défaut "test-cron") avec les identifiants déjà en place.
+    Ne demande donc JAMAIS d'URL de webhook, de clé API d'envoi ni d'adresse e-mail :
+    il suffit de mettre "slack" dans notify_channels.
     """
     taskId = add_task(
         description=description,
