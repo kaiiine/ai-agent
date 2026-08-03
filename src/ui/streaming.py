@@ -1925,29 +1925,54 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                                 id=_real_id,
                             )
                             graph.update_state(config, {"messages": [updated]})
-                            # VÉRIFICATION : `add_messages` ne REMPLACE que si l'id
-                            # correspond à un message existant ; sinon il AJOUTE, et
-                            # l'état garde le placeholder `awaiting_input` — le modèle
-                            # ne voit alors jamais les réponses et repose ses questions.
-                            # Cet échec était avalé silencieusement : on le rend visible.
+                            # `add_messages` ne REMPLACE que si l'id correspond à un
+                            # message DÉJÀ dans l'état ; sinon il AJOUTE. Le placeholder
+                            # `{"awaiting_input": true}` restait alors présent À CÔTÉ des
+                            # réponses : le modèle voyait « en attente de réponse » et
+                            # reposait les mêmes questions. On répare explicitement en
+                            # supprimant tout placeholder résiduel (RemoveMessage).
                             try:
+                                from langchain_core.messages import RemoveMessage as _RM
+
                                 _after = graph.get_state(config)
-                                _stored = next(
-                                    (
-                                        m for m in reversed(_after.values.get("messages", []))
+                                _same = [
+                                    m for m in _after.values.get("messages", [])
+                                    if isinstance(m, _TM) and m.tool_call_id == msg.tool_call_id
+                                ]
+                                _stale = [
+                                    m for m in _same
+                                    if "answers" not in (
+                                        m.content if isinstance(m.content, str)
+                                        else _json.dumps(m.content)
+                                    )
+                                ]
+                                if _stale:
+                                    graph.update_state(
+                                        config,
+                                        {"messages": [_RM(id=m.id) for m in _stale if m.id]},
+                                    )
+                                    _after = graph.get_state(config)
+                                    _same = [
+                                        m for m in _after.values.get("messages", [])
                                         if isinstance(m, _TM)
                                         and m.tool_call_id == msg.tool_call_id
-                                    ),
-                                    None,
+                                    ]
+                                _ok = any(
+                                    "answers" in (
+                                        m.content if isinstance(m.content, str)
+                                        else _json.dumps(m.content)
+                                    )
+                                    for m in _same
                                 )
-                                _content = getattr(_stored, "content", "") or ""
-                                if "answers" not in _content:
+                                if not _ok or len(_same) != 1:
                                     console.print(Text(
-                                        "  ⚠ réponses non injectées dans l'état "
-                                        "(le modèle ne les verra pas) — signale ce cas",
-                                        style="yellow"))
-                            except Exception:
-                                pass
+                                        f"  ⚠ réponses mal injectées ({len(_same)} message(s), "
+                                        f"answers={_ok}) — le modèle risque de reposer "
+                                        f"les questions", style="yellow"))
+                            except Exception as _ve:
+                                console.print(Text(
+                                    f"  ⚠ vérification d'injection impossible : {_ve}",
+                                    style="yellow"))
                         except Exception as _ue:
                             # Ne JAMAIS perdre les réponses en silence.
                             console.print(Text(

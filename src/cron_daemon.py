@@ -26,6 +26,8 @@ PID_FILE = Path.home() / ".axon" / "cron.pid"
 RELOAD_INTERVAL = 10 # sec
 _SYSTEM = """\
 Tu es un agent de monitoring autonome. Exécute la tâche demandée.
+Pour publier sur un canal Slack : utilise slack_send_message(channel, text) — tu as déjà
+l'accès configuré, ne demande JAMAIS d'URL de webhook et n'utilise pas curl pour ça.
 Pour un pari/pronostic sportif : utilise winamax_odds_fetch (cotes), sports_stats_fetch (forme),
 probability_compute (probabilité statistique réelle), ev_analyze/parlay_analyze/same_match_combo_analyze
 (edge) — jamais une probabilité devinée ou hallucinée.
@@ -83,6 +85,11 @@ def _run_task(task_id: str) -> None:
         winamax_odds_fetch, sports_stats_fetch, probability_compute,
         ev_analyze, same_match_combo_analyze, parlay_analyze,
     )
+    # Slack : une tâche planifiée doit pouvoir POSTER son rapport. Sans ces outils,
+    # l'agent déduisait (à raison) qu'il n'avait aucun moyen d'écrire dans un canal et
+    # réclamait une URL de webhook à l'utilisateur, alors que l'app sait déjà envoyer.
+    from src.agents.slack.tools import slack_send_message, slack_list_channels
+    from src.agents.shell.tools import notify
 
     tasks = get_tasks()
     task = next((t for t in tasks if t["id"] == task_id), None)
@@ -108,6 +115,7 @@ def _run_task(task_id: str) -> None:
         llm = _make_llm()
         tools = [
             web_search_news, web_research_report, shell_run,
+            slack_send_message, slack_list_channels, notify,
             winamax_odds_fetch, sports_stats_fetch, probability_compute,
             ev_analyze, same_match_combo_analyze, parlay_analyze,
         ]
