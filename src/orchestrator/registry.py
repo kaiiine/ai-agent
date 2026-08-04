@@ -97,12 +97,17 @@ from src.agents.jira.tools import (
 )
 
 from src.agents.cron.tools import schedule_task, list_cron_task, stop_cron_task
+from src.skills.tools import make_load_skill
 from src.agents.quant.tools import (
     winamax_odds_fetch, sports_stats_fetch, probability_compute,
     ev_analyze, parlay_analyze, same_match_combo_analyze,
 )
 
 from langchain_core.tools import tool as lc_tool
+
+# Ne voit que les skills qui déclarent cette portée — les guides de stack restent
+# réservés à l'agent coding.
+load_skill = make_load_skill("orchestrator")
 
 @lc_tool("run_coding_agent")
 def run_coding_agent(task: str) -> str:
@@ -242,6 +247,8 @@ def build_all_tools() -> List[BaseTool]:
         jira_link_to_epic,
         # === CODING / PROJETS ===
         run_coding_agent,
+        # === SKILLS PROJET ===
+        load_skill,
         # === MÉMOIRE PROJET ===
         axon_note,
         # === DIAGRAMMES ===

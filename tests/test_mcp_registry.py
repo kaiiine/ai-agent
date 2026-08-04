@@ -110,8 +110,8 @@ def test_le_document_indexe_est_le_retrieval_text_pas_la_description():
     document, metadata = index.docs["alpha.execute_snippet"]
     assert document == refs[0].retrieval_text
     assert document != refs[0].description
-    assert "Capabilities: diagnostic, exécution" in document
     assert "code: string" in document
+    assert "Capabilities" not in document   # cf. test_retrieval_text_enrichi
     assert metadata == {"source": MCP_SOURCE, "server": "alpha", "tool": "execute_snippet",
                         "public_name": "alpha.execute_snippet", "risk_level": "execute"}
 
@@ -481,3 +481,41 @@ def test_routing_joint_les_serveurs_sans_etage_1(tmp_path):
 
     _, _, _, where = index.queries[1]
     assert where == {"server": {"$in": ["alpha"]}}
+
+
+# ── diversification de l'étage 2 ────────────────────────────────────────────────
+def test_letage_2_diversifie_au_lieu_de_prendre_les_k_plus_proches():
+    """Une requête qui matche fortement une famille de tools remplissait le top-k
+    de quasi-doublons et évinçait le tool générique nécessaire à la suite."""
+    from langchain_core.embeddings import DeterministicFakeEmbedding
+
+    index = ChromaToolIndex(DeterministicFakeEmbedding(size=32),
+                            collection_name=f"test_{uuid.uuid4().hex}")
+    appels = {}
+    index._store.max_marginal_relevance_search = (
+        lambda q, k, fetch_k, lambda_mult, filter: appels.update(
+            k=k, fetch_k=fetch_k, lambda_mult=lambda_mult, filter=filter) or [])
+
+    index.query_tools("q", k=7, where={"server": {"$in": ["alpha"]}})
+
+    assert appels["k"] == 7
+    assert appels["fetch_k"] >= 20            # pool assez large pour diversifier
+    assert 0 < appels["lambda_mult"] < 1      # ni similarité pure, ni diversité pure
+    assert appels["filter"] == {"$and": [{"source": MCP_SOURCE},
+                                         {"server": {"$in": ["alpha"]}}]}
+
+
+def test_letage_2_retombe_sur_la_similarite_si_mmr_indisponible():
+    """Un store sans MMR ne doit pas rendre le routing muet."""
+    from langchain_core.embeddings import DeterministicFakeEmbedding
+
+    index = ChromaToolIndex(DeterministicFakeEmbedding(size=32),
+                            collection_name=f"test_{uuid.uuid4().hex}")
+    refs = [_ref(server="alpha", name="get_status")]
+    run(register_server_tools(_FakeManager(refs), "alpha", index))
+
+    def _pas_de_mmr(*a, **kw):
+        raise NotImplementedError
+
+    index._store.max_marginal_relevance_search = _pas_de_mmr
+    assert index.query_tools("statut", k=5) == ["alpha.get_status"]

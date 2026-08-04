@@ -640,11 +640,11 @@ def _chat_node_factory():
         if plan_mode:
             from src.orchestrator.tool_retriever import TOOL_GROUPS
 
-            _read_groups = ("filesystem", "search", "git", "drive", "arxiv", "time")
+            _read_groups = ("filesystem", "search", "news", "git", "drive", "time")
             _tools_by_name = {t.name: t for t in tools}
             _selected_names = {t.name for t in selected_tools}
             for _g in _read_groups:
-                for _tname in TOOL_GROUPS.get(_g, []):
+                for _tname in TOOL_GROUPS[_g].tools:
                     if _tname not in _selected_names and _tname in _tools_by_name:
                         selected_tools.append(_tools_by_name[_tname])
             selected_tools = [t for t in selected_tools if t.name not in BLOCKED_TOOLS]

@@ -201,6 +201,41 @@ class MCPRuntime:
             return self.tools[:_MAX_UNROUTED_TOOLS]
         return [self._tools[n] for n in names if n in self._tools]
 
+    def _ensure_index(self) -> ToolIndex | None:
+        if self._index is not None or self._index_provided:
+            return self._index
+        try:
+            self._index = ChromaToolIndex()
+        except Exception as exc:
+            # Sans index : pas de routing, mais les tools restent exécutables.
+            logger.warning("mcp_index_unavailable", extra={"error": str(exc)})
+            self._index = None
+            self._index_provided = True
+        return self._index
+
+    # ---------- surface consommée par le graphe ----------
+
+    @property
+    def tools(self) -> list[BaseTool]:
+        """Tools MCP exécutables, à passer au `ToolNode` aux côtés des natifs."""
+        return list(self._tools.values())
+
+    def select(self, query: str) -> list[BaseTool]:
+        """Routing à deux étages. Un serveur dont l'étage 1 n'a pas pu être indexé
+        reste joignable par l'étage 2 seul ; sans index du tout, on expose un
+        sous-ensemble borné. Une capacité dégradée vaut mieux qu'une capacité
+        muette — mais jamais au prix d'un mensonge sur son état (cf. `/mcp list`)."""
+        if not self._tools:
+            return []
+        if self._index is None:
+            return self.tools[:_MAX_UNROUTED_TOOLS]
+        try:
+            names = route(query, self._index, unrouted_servers=tuple(self._index_state))
+        except Exception as exc:
+            logger.warning("mcp_routing_failed", extra={"error": str(exc)})
+            return self.tools[:_MAX_UNROUTED_TOOLS]
+        return [self._tools[n] for n in names if n in self._tools]
+
     # ---------- surface consommée par la CLI ----------
 
     def status(self) -> dict[str, MCPServerRuntime]:

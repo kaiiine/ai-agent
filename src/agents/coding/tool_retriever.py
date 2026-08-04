@@ -32,7 +32,11 @@ _TOOL_GROUPS: dict[str, list[str]] = {
     ],
     "shell": [
         "shell_run", "shell_cd", "shell_pwd", "shell_ls", "shell_kill_bg",
-        "browser_screenshot",   # vérif visuelle toujours couplée aux commandes shell
+        # La vérification visuelle est couplée aux commandes shell, pas aux autres
+        # producteurs d'images : on lance le dev server puis on regarde la page.
+        # Cet outil était AUSSI déclaré dans un groupe « visual », et l'index inverse
+        # en écrasait un — il tirait donc mermaid et download_asset au lieu du shell.
+        "browser_screenshot",
     ],
     "git": [
         "git_status", "git_log", "git_diff", "git_suggest_commit",
@@ -44,8 +48,13 @@ _TOOL_GROUPS: dict[str, list[str]] = {
     "memory": [
         "axon_note",
     ],
-    "visual": [
-        "browser_screenshot", "mermaid_diagram", "download_asset",
+    # « visual » regroupait trois outils qui ne partageaient que de produire une
+    # image. Rien ne justifie de tirer un diagramme parce qu'on télécharge un asset.
+    "diagrams": [
+        "mermaid_diagram",
+    ],
+    "assets": [
+        "download_asset",
     ],
     "notebook": [
         "notebook_read", "notebook_edit_cell",

@@ -89,7 +89,16 @@ Result received = task complete. Summarise in 2-3 lines.
 
 _CODING = """\
 ━━ DEVELOPMENT ━━
-Any task involving code, project files, or modifying/fixing/analysing a project → run_coding_agent(task="...") IMMEDIATELY and EXCLUSIVELY.
+run_coding_agent is for tasks whose DELIVERABLE is source files: writing, fixing, \
+refactoring, analysing code in a project on disk.
+❌ NEVER delegate a task you can perform yourself with the tools already available. \
+If a tool acts directly on the target (an application, a service, a document), use it \
+— delegating would hand the task to an agent that does NOT have that tool and can only \
+write a script about it.
+❌ The user asking for something "for a website" or "for later export" does not make it \
+a code task. Judge by what you must produce NOW, not by what it will be used for.
+❌ "Do not write code" / "only the scene" / "no code" → never run_coding_agent.
+Task whose deliverable IS source files → run_coding_agent(task="...") IMMEDIATELY and EXCLUSIVELY.
 ❌ Do NOT use shell_cd / shell_ls / shell_pwd for code work — the specialist handles project tools.
 ✓ Pass a concise task brief, not the full conversation.
 ✓ Include only: objective, repo/path if known, files mentioned, constraints, expected deliverable.
@@ -165,6 +174,20 @@ READ BEFORE WRITE — before modifying an existing external state, read it first
 use the real names it returns, never names remembered from the conversation.
 A result with "status": "error" is a tool FAILURE, not data. Report the failure; \
 never describe its message as the state of the system.\
+"""
+
+_SKILLS = """\
+━━ PROJECT SKILLS ━━
+MANDATORY FIRST STEP — before any other tool call, compare the request against the \
+skill list in load_skill's description. This check is UNCONDITIONAL: run it even \
+when the task looks obvious, even when you already know how to do it, even when \
+the right tool is already in front of you.
+Do NOT first decide whether the task "needs" a skill. Check, then act.
+If a listed skill covers the domain → load_skill(stack="<name>") BEFORE anything \
+else. Its rules replace your default approach for that domain; they exist because \
+your default approach already failed here.
+Never guess a name — only use one from the list. No listed skill matches → proceed \
+normally, no second thought.\
 """
 
 _MEMORY = """\
@@ -316,6 +339,11 @@ def build_system_prompt(
 
     if plan_mode:
         parts.append(_PLAN_MODE)
+
+    # Avant les sections métier : c'est une consigne de PREMIÈRE étape, elle perd
+    # son sens reléguée après les règles d'usage des outils.
+    if "load_skill" in t:
+        parts.append(_SKILLS)
 
     coding_mode = "run_coding_agent" in t
 

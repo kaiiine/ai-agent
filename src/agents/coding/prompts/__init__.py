@@ -49,7 +49,7 @@ def build_system_prompt(stacks: list[str]) -> str:
 
     for stack in stacks:
         try:
-            from src.agents.coding.skill_retriever import get_skill
+            from src.skills import get_skill
             section = get_skill(stack)
             if section and not section.startswith("Skill '"):
                 sections.append(section)

@@ -100,36 +100,53 @@ def test_exhausted_key_is_really_cooled_down(monkeypatch):
 
 
 # ── Le cron doit être retrouvable pour une demande récurrente (bug « n'importe quoi ») ──
-def test_schedule_task_anchors_cover_daily_recurrence():
-    from src.orchestrator.tool_retriever import _TOOL_ANCHORS, TOOL_GROUPS
+def test_cron_group_covers_daily_recurrence():
+    """La description du groupe EST le document de l'étage 1 : ce qu'elle ne dit pas,
+    le routing ne peut pas le retrouver. « fais-moi un récap tous les jours à 14h » ne
+    matchait rien côté cron, et le modèle improvisait un script shell."""
+    from src.orchestrator.tool_retriever import TOOL_GROUPS
 
-    anchors = " | ".join(_TOOL_ANCHORS["schedule_task"]).lower()
-    for phrasing in ("tous les jours", "chaque jour", "quotidien", "every day", "planifie"):
-        assert phrasing in anchors, f"ancre cron manquante : {phrasing}"
-    # le groupe complet suit dès que schedule_task est retrouvé
-    assert {"schedule_task", "list_cron_tasks", "stop_cron_task"} == set(TOOL_GROUPS["cron"])
+    covers = TOOL_GROUPS["cron"].covers.lower()
+    for phrasing in ("tous les jours", "chaque", "quotidien", "récurrent", "heure fixe"):
+        assert phrasing in covers, f"vocabulaire cron manquant : {phrasing}"
+    # le groupe complet suit dès que le groupe est élu
+    assert {"schedule_task", "list_cron_tasks", "stop_cron_task"} == set(TOOL_GROUPS["cron"].tools)
 
 
-def test_slack_anchors_cover_channel_phrasings():
-    """Sans ancre, « envoie un retour sur le canal test-cron » ne matchait aucun outil
-    Slack (leur description contient « Slack », pas « canal ») : l'agent n'avait pas de
-    quoi poster et demandait « est-ce un canal Slack ? » au lieu d'agir."""
-    from src.orchestrator.tool_retriever import _TOOL_ANCHORS
+def test_slack_group_covers_channel_phrasings():
+    """Les descriptions des outils Slack contiennent « Slack », pas « canal » : sans ce
+    vocabulaire dans la description du groupe, « envoie un retour sur le canal test-cron »
+    ne matchait rien et l'agent demandait « est-ce un canal Slack ? » au lieu d'agir."""
+    from src.orchestrator.tool_retriever import TOOL_GROUPS
 
-    anchors = " | ".join(_TOOL_ANCHORS["slack_send_message"]).lower()
-    for phrasing in ("canal", "channel", "poste", "envoie"):
-        assert phrasing in anchors, f"ancre slack manquante : {phrasing}"
+    covers = TOOL_GROUPS["slack"].covers.lower()
+    for phrasing in ("canal", "salon", "poster", "message"):
+        assert phrasing in covers, f"vocabulaire slack manquant : {phrasing}"
 
 
 def test_tool_names_in_groups_all_exist():
     """Un nom d'outil mal orthographié dans TOOL_GROUPS rend l'outil INTROUVABLE en
-    silence (la sélection filtre par `t.name`)."""
+    silence (la sélection filtre par `t.name`), et un outil enregistré qu'aucun groupe
+    ne réclame l'est tout autant : le routing ne passe que par les groupes."""
     from src.orchestrator.registry import build_all_tools
-    from src.orchestrator.tool_retriever import TOOL_GROUPS, _TOOL_ANCHORS
+    from src.orchestrator.tool_retriever import TOOL_GROUPS, _PINNED_TOOLS
 
     real = {t.name for t in build_all_tools()}
-    declared = {n for names in TOOL_GROUPS.values() for n in names}
-    missing = declared - real
-    assert not missing, f"outils déclarés mais inexistants : {sorted(missing)}"
-    anchored_missing = set(_TOOL_ANCHORS) - real
-    assert not anchored_missing, f"ancres sur des outils inexistants : {sorted(anchored_missing)}"
+    declared = [n for spec in TOOL_GROUPS.values() for n in spec.tools]
+
+    assert not set(declared) - real, f"outils déclarés mais inexistants : {sorted(set(declared) - real)}"
+    assert not real - set(declared) - _PINNED_TOOLS, (
+        f"outils enregistrés dans aucun groupe, donc jamais sélectionnables : "
+        f"{sorted(real - set(declared) - _PINNED_TOOLS)}")
+    assert len(declared) == len(set(declared)), (
+        "un outil dans deux groupes : l'index inverse en écrase un silencieusement")
+
+
+def test_every_group_has_a_description():
+    """Un groupe sans description est un groupe injoignable à l'étage 1 — il ne peut
+    plus être élu, et ses outils disparaissent sans erreur."""
+    from src.orchestrator.tool_retriever import TOOL_GROUPS
+
+    for name, spec in TOOL_GROUPS.items():
+        assert len(spec.covers.strip()) >= 40, f"description trop maigre : {name}"
+        assert spec.tools, f"groupe vide : {name}"

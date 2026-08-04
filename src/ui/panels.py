@@ -63,10 +63,10 @@ def banner():
 
 # ── Panels ────────────────────────────────────────────────────────────────────
 
-def live_panel_initial(dots: int = 0):
+def live_panel_initial(dots: int = 0, label: str = "thinking"):
     dot_str = ("." * dots).ljust(3)
     t = Text()
-    t.append("  thinking", style=_BORDER)
+    t.append(f"  {label}", style=_BORDER)
     t.append(dot_str, style=f"bold {ACCENT}")
     return Panel(t, box=_BOX, border_style=_BORDER, padding=(0, 1))
 

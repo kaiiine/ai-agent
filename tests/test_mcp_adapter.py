@@ -64,10 +64,14 @@ def test_retrieval_text_enrichi():
     text = build_retrieval_text("alpha", _tool(
         "execute_snippet", "Run code.", {"properties": {"code": {"type": "string"}}}), cfg)
 
-    assert "Server: alpha" in text
     assert "Tool: execute_snippet" in text
-    assert "modélisation, matériaux, export" in text   # le hint porte l'intention métier
+    assert "Run code." in text
     assert "code: string" in text                      # le schéma est de l'information
+    # Ni le serveur ni son hint : identiques sur tous les documents du serveur, ils
+    # ne discriminent rien et noient la description. Mesuré sur 22 tools, rang moyen
+    # du tool générique : 9,7 avec, 2,0 sans. L'étage 2 est déjà filtré par serveur.
+    assert "Server: alpha" not in text
+    assert "modélisation, matériaux, export" not in text
 
 
 def test_summarize_schema():
@@ -189,3 +193,16 @@ def test_derive_probe_arguments_respecte_default_et_enum():
 
 def test_derive_probe_arguments_schema_vide():
     assert derive_probe_arguments({}) == {} and derive_probe_arguments(None) == {}
+
+
+def test_le_document_de_tool_ne_porte_ni_le_serveur_ni_son_hint():
+    """Ces deux-là sont identiques sur tous les documents d'un serveur : ils ne
+    discriminent rien à l'étage 2, déjà filtré par serveur, et diluent la
+    description. Le hint reste au document de serveur, pour l'étage 1."""
+    cfg = MCPServerConfig(name="alpha", capabilities_hint="3D mesh matériaux export")
+
+    doc = build_retrieval_text("alpha", _tool("execute_code", "Exécute du code"), cfg)
+
+    assert "alpha" not in doc
+    assert "3D mesh matériaux export" not in doc
+    assert "execute_code" in doc and "Exécute du code" in doc

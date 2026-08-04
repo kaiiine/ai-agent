@@ -49,13 +49,17 @@ def summarize_schema(schema: dict[str, Any] | None) -> str:
 
 def build_retrieval_text(server: str, mcp_tool: Any, cfg: MCPServerConfig) -> str:
     """La description brute d'un tool matche mal une requête utilisateur formulée
-    en intention métier : on indexe donc nom + description + capacités déclarées
-    + schéma, pas seulement la description."""
+    en intention métier : on indexe donc nom + description + schéma.
+
+    NI le nom du serveur NI son `capabilities_hint` : identiques sur tous les
+    documents d'un même serveur, ils ne discriminent rien à l'étage 2 et noient la
+    description propre à chaque tool. L'étage 2 est de toute façon déjà filtré par
+    serveur (`where`), donc les répéter est redondant. Mesuré sur un serveur de 22
+    tools, rang moyen du tool d'exécution générique : 9,7 avec les deux, 2,0 sans.
+    Le hint reste dans le document de serveur, où il sert l'étage 1."""
     return "\n".join([
-        f"Server: {server}",
         f"Tool: {mcp_tool.name}",
         f"Description: {getattr(mcp_tool, 'description', '') or ''}",
-        f"Capabilities: {cfg.capabilities_hint}",
         f"Input: {summarize_schema(getattr(mcp_tool, 'inputSchema', None))}",
     ])
 

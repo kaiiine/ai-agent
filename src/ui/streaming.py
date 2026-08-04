@@ -52,9 +52,11 @@ def _safe_stop(live, stop_event: threading.Event | None = None,
 
 
 def _make_thinking_loop(stop_event: threading.Event, live: "Live",
-                        compile_mode: threading.Event | None = None):
+                        compile_mode: threading.Event | None = None,
+                        activity: dict | None = None):
     """Retourne une fonction de loop d'animation pour un thread daemon.
-    Si compile_mode est set, affiche le panel de compilation plutôt que thinking."""
+    Si compile_mode est set, affiche le panel de compilation plutôt que thinking.
+    `activity` est relu à chaque frame — le label change sans relancer le thread."""
     def _loop():
         i = 0
         while not stop_event.is_set():
@@ -62,7 +64,8 @@ def _make_thinking_loop(stop_event: threading.Event, live: "Live",
                 if compile_mode and compile_mode.is_set():
                     live.update(compile_panel(i % 4))
                 else:
-                    live.update(live_panel_initial(i % 4))
+                    label = (activity or {}).get("label") or "thinking"
+                    live.update(live_panel_initial(i % 4, label))
             except Exception:
                 pass
             i += 1
@@ -1040,6 +1043,9 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
 
     stop_thinking = threading.Event()
     pending_refinements_inner: list[str] = []
+    # Un skill chargé reste en contexte jusqu'à la fin du tour : le label le
+    # reflète jusque-là, et se réinitialise au tour suivant.
+    activity: dict = {"label": "thinking"}
 
     try:
         with Live(live_panel_initial(), console=console, refresh_per_second=_REFRESH_RATE, vertical_overflow="crop") as live:
@@ -1049,7 +1055,8 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
             deb = {"DEBOUNCE": _DEBOUNCE, "last_update": 0.0}
             t0 = perf_counter()
 
-            t = threading.Thread(target=_make_thinking_loop(stop_thinking, live), daemon=True)
+            t = threading.Thread(
+                target=_make_thinking_loop(stop_thinking, live, activity=activity), daemon=True)
             t.start()
 
             for msg, meta in graph.stream(current_state, config=config, stream_mode="messages"):
@@ -1076,13 +1083,16 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
                         stop_thinking.clear()
                         live.start(refresh=False)
                         new_t = threading.Thread(
-                            target=_make_thinking_loop(stop_thinking, live), daemon=True
+                            target=_make_thinking_loop(stop_thinking, live, activity=activity),
+                            daemon=True
                         )
                         new_t.start()
                         t = new_t
                         last_node = "tools"
                     else:
                         live.update(tool_call_panel(tool_name))
+                    if tool_name == "load_skill" and activity.get("skill"):
+                        activity["label"] = f"thinking · {activity['skill']}"
                     last_node = "tools"
                     continue
                 if isinstance(msg, AIMessageChunk):
@@ -1098,8 +1108,15 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
                     if not chunk_text:
                         tool_calls = getattr(msg, "tool_calls", None) or []
                         for tc in tool_calls:
-                            if (tc.get("name") or "") == "run_coding_agent":
+                            name = tc.get("name") or ""
+                            if name == "run_coding_agent":
                                 live.update(tool_call_panel("run_coding_agent"))
+                            elif name == "load_skill":
+                                # Args streamés par morceaux : on retient la dernière
+                                # valeur vue, promue en label au retour du ToolMessage.
+                                skill = (tc.get("args") or {}).get("stack")
+                                if skill:
+                                    activity["skill"] = str(skill)
                         continue
                     if last_node == "tools":
                         response_content = ""

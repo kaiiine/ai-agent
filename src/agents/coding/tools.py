@@ -386,27 +386,17 @@ def project_graph_query(project_path: str, symbol: str) -> dict:
     return {"status": "ok", "symbol": symbol, "matches": matches, "callers": callers}
 
 
-@tool("load_skill")
-def load_skill(stack: str) -> str:
-    """
-    Loads best-practice guidelines for a detected tech stack.
-    Call this as soon as you identify the framework/language used in the project.
-    Returns a detailed prompt with rules, conventions, and tooling for that stack.
+# load_skill vit dans src/skills/, partagé avec l'orchestrateur. Le repli sur
+# _STACK_PROMPTS est propre au coding : il est injecté, pas importé là-bas.
+from src.skills.tools import make_load_skill
 
-    Available stacks: nextjs, angular, vue, svelte, threedee, python,
-                      rust, go, node_backend, java, systems, frontend
 
-    Args:
-        stack: detected stack name (e.g. "nextjs", "python", "vue")
-    Returns:
-        Full guidelines prompt for that stack
-    """
-    from src.agents.coding.skill_retriever import get_skill, list_skills
-    result = get_skill(stack)
-    if not result or result.startswith("Skill '"):
-        from src.agents.coding.prompts import _STACK_PROMPTS
-        result = _STACK_PROMPTS.get(stack.lower(), f"Stack '{stack}' non reconnu. Disponibles : {', '.join(list_skills())}")
-    return result
+def _stack_prompt_fallback(stack: str) -> str|None:
+    from src.agents.coding.prompts import _STACK_PROMPTS
+    return _STACK_PROMPTS.get(stack.lower())
+
+
+load_skill = make_load_skill("coding", fallback=_stack_prompt_fallback)
 
 
 @tool("propose_file_change")

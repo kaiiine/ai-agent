@@ -342,7 +342,7 @@ def _run(task: str) -> str:
             pass
 
     try:
-        from src.agents.coding.skill_retriever import warmup as _skill_warmup
+        from src.skills import warmup as _skill_warmup
         _skill_warmup()
     except Exception:
         pass

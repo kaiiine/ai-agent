@@ -34,6 +34,7 @@ from typing import Any, Callable, Iterable, Protocol
 
 from langchain_core.tools import BaseTool, StructuredTool
 
+from src.infra.retrieval import build_catalog_document, unique as _unique
 from src.mcp_client.models import MCPServerConfig, MCPToolRef, ToolDiff, ToolResult
 
 logger = logging.getLogger("axon.mcp")
@@ -48,7 +49,9 @@ _MAX_RUNTIME_NAME = 64
 # contexte des embedders courants (`nomic-embed-text` : 2048 tokens), pour que le
 # document reste indexable quel que soit le nombre de tools du serveur.
 SERVER_DOC_MAX_CHARS = 4000
-_OMISSION_RESERVE = 32  # place gardée pour le suffixe « … (+N autres) »
+# Compromis pertinence / diversité de l'étage 2. 0.5 = équilibré ; plus haut
+# revient à la similarité pure et ramène le problème des quasi-doublons.
+_MMR_LAMBDA = 0.5
 
 
 # ── index ───────────────────────────────────────────────────────────────────────
@@ -112,19 +115,20 @@ class ChromaToolIndex:
         return _unique(d.metadata.get("server") for d in docs)
 
     def query_tools(self, query: str, k: int = 7, where: dict | None = None) -> list[str]:
+        """Sélection DIVERSIFIÉE (MMR), pas les k plus proches.
+
+        Les tools d'un serveur se ressemblent beaucoup entre eux : une requête qui
+        matche une famille (« importe ce modèle ») remplit le top-k de quasi-doublons
+        et évince le tool générique dont on a besoin pour la suite de la tâche.
+        Mesuré : sur une requête à identifiant, le tool d'exécution passait 18e et
+        disparaissait du top-7 ; avec MMR il y revient, sans déloger les autres."""
         flt = _and({"source": MCP_SOURCE}, where or {})
-        docs = self._store.similarity_search(query, k=k, filter=flt)
+        try:
+            docs = self._store.max_marginal_relevance_search(
+                query, k=k, fetch_k=max(k * 4, 20), lambda_mult=_MMR_LAMBDA, filter=flt)
+        except Exception:
+            docs = self._store.similarity_search(query, k=k, filter=flt)
         return _unique(d.metadata.get("public_name") for d in docs)
-
-
-def _unique(values: Iterable[Any]) -> list[str]:
-    """Dédoublonne en conservant l'ordre de pertinence renvoyé par l'index."""
-    seen, out = set(), []
-    for value in values:
-        if value and value not in seen:
-            seen.add(value)
-            out.append(value)
-    return out
 
 
 # ── documents indexés ───────────────────────────────────────────────────────────
@@ -134,31 +138,16 @@ def build_server_document(server: str, tools: list[MCPToolRef],
     """Document de l'étage 1 : ce que le SERVEUR sait faire, pour que la requête
     sélectionne le bon serveur avant même de regarder ses tools.
 
-    **Borné par construction.** Les descriptions des tools n'y figurent PAS —
-    elles vivent déjà dans les documents de l'étage 2, les répéter ici n'ajoute
-    aucune information et fait croître le document avec le nombre de tools. Un
-    serveur de 100 tools produirait alors un agrégat qui dépasse le contexte de
-    l'embedder, et l'indexation entière échouerait. La taille doit être une
-    propriété du document, pas un coup de chance sur le nombre de tools.
+    Borné par construction (cf. `build_catalog_document`) : le document ne
+    grandit pas avec le nombre de tools, donc un serveur de 100 tools n'échoue
+    pas à l'indexation là où un serveur de 20 passait.
     """
-    hint = (cfg.capabilities_hint if cfg else "")[: max_chars // 2]
-    head = f"Server: {server}\nCapabilities: {hint}\nTools: "
-    budget = max(0, max_chars - len(head) - _OMISSION_RESERVE)
-
-    names: list[str] = []
-    used = 0
-    for tool in tools:
-        piece = tool.remote_name if not names else f", {tool.remote_name}"
-        if used + len(piece) > budget:
-            break
-        names.append(tool.remote_name)
-        used += len(piece)
-
-    document = head + ", ".join(names)
-    omitted = len(tools) - len(names)
-    if omitted:
-        document += f" … (+{omitted} autres)"
-    return document[:max_chars]        # filet : le plafond est dur, jamais indicatif
+    return build_catalog_document(
+        {"Server": server, "Capabilities": cfg.capabilities_hint if cfg else ""},
+        "Tools",
+        [t.remote_name for t in tools],
+        max_chars=max_chars,
+    )
 
 
 def tool_metadata(ref: MCPToolRef) -> dict:
