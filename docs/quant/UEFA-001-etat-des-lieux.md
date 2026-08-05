@@ -109,7 +109,50 @@ n'a pas :
 
 Fenêtre temporelle : 2022-06-21 → 2025-05-31.
 
-### 3.3 Verdict par usage
+### 3.3 Matrice complète — vérifiée par appel HTTP le 2026-08-05
+
+Une ligne par compétition, une cellule par provider. `prof.` = nombre de saisons
+listées par le provider. Aucune cellule n'est déduite d'une autre.
+
+| Compétition | `canonical_id` | fd.org : saison courante | prof. | api-sports : saison cour. | prof. | servi en free |
+|---|---|---|---|---|---|---|
+| Ligue 1 | `…fra:ligue1` | 2026-08-22 → 2027-05-29 | 83 | 2026 | 17 | 2022-24 |
+| Premier League | `…eng:premier_league` | 2026-08-21 → 2027-05-30 | 128 | 2026 | 17 | 2022-24 |
+| Serie A | `…ita:serie_a` | 2026-08-23 → 2027-05-30 | 95 | 2026 | 17 | 2022-24 |
+| LaLiga | `…esp:laliga` | 2026-08-16 → 2027-05-30 | 95 | 2026 | 17 | 2022-24 |
+| Bundesliga | `…deu:bundesliga` | 2026-08-28 → 2027-05-22 | 64 | 2026 | 17 | 2022-24 |
+| Championship | `…eng:championship` | 2026-08-14 → 2027-05-01 | 10 | 2026 | 16 | 2022-24 |
+| Eredivisie | `…nld:eredivisie` | 2026-08-07 → 2027-05-23 | 71 | 2026 | 17 | 2022-24 |
+| Primeira Liga | `…prt:primeira_liga` | 2026-08-08 → 2027-05-16 | 78 | 2026 | 17 | 2022-24 |
+| **Champions League** | `…eur:champions_league` | **2025-09-16 → 2026-05-30** | 46 | 2026 | 16 | 2022-24 |
+| **Europa League** | `…eur:europa_league` | **hors plan** | — | 2026 | 13 | 2022-24 |
+| **Conference League** | `…eur:conference_league` | **hors plan** | — | 2026 | 6 | 2022-24 |
+| Chance Liga (CZ) | `…cze:chance_liga` | **hors plan** | — | 2026 | 9 | 2022-24 |
+
+**Point-in-time** : les deux providers exposent date + statut par match, donc le
+filtrage strict `kickoff < T` est possible partout. En revanche les **classements
+publiés ne sont jamais point-in-time** : ils reflètent l'instant de l'appel. Toute
+force dérivée d'un classement doit être reconstruite depuis les résultats
+antérieurs à T (`PointInTimeGateway._reconstruct_table`), jamais lue telle quelle.
+
+### 3.4 Deux conséquences non anticipées
+
+**Les 8 ligues domestiques sont servies pour 2026-27, sans credential
+supplémentaire.** football-data.org a basculé : 306 à 552 matchs programmés par
+compétition, effectifs corrects. Le `PROVIDER_COVERAGE_MISSING` constaté en §1
+n'est donc pas un mur — c'est une baseline de couverture qui n'a jamais été
+étendue au-delà de la Ligue 1. Il se ferme par vérification, pas par abonnement.
+
+**Mais `RESULTS` est servi et VIDE** : 0 match joué au 5 août, les saisons
+démarrent entre le 7 et le 28. `recent_form(season=2026)` renvoie donc une liste
+vide pour toute rencontre d'août, et `_season_of(kickoff)` pointe sur 2026 dès le
+1er juillet. L'engine est structurellement aveugle en début de saison tant que la
+forme n'est pas reportée depuis la saison précédente. Ce n'est pas un bug — c'est
+un vrai manque de données — mais c'est un choix de modélisation à trancher
+(report avec décroissance, prior de championnat, ou abstention assumée), pas un
+détail de plomberie.
+
+### 3.5 Verdict par usage
 
 | Usage | Faisable aujourd'hui | Blocker |
 |---|---|---|
@@ -194,3 +237,61 @@ Aucune de ces cases n'est un `CUP_UNSUPPORTED` générique.
 | CL/EL/UECL api-sports 2026 | HTTP | refus tier Free, message cité |
 | CL/EL/UECL api-sports 2022-24 | HTTP, 9 appels | 2 567 matchs persistés |
 | Couverture provider par saison | `usable_providers()` | Ligue 1 seule, rien en 2026 |
+
+---
+
+## 8. Benchmark inter-championnats — UEFA_CLUB_MATCH / MATCH_WINNER
+
+Walk-forward strict sur les 2 415 matchs joués (warmup 35 %, puis chaque match est
+prédit AVANT d'être observé). Aucun paramètre n'est estimé sur un match postérieur.
+
+| Modèle | Brier | log-loss | ECE | coverage |
+|---|---|---|---|---|
+| baseline : uniforme | 0,6667 | 1,0986 | 0,1667 | 0,500 |
+| baseline : fréquence historique | 0,6210 | 1,0308 | 0,0373 | 0,500 |
+| A — Elo européen, nul ajusté à l'écart | 0,6059 | 1,0132 | 0,0547 | 0,522 |
+| B — Elo + prior pays (cold start) | 0,6059 | 1,0131 | 0,0531 | 0,520 |
+| C — Poisson européen (att/déf, shrinkage) | 0,6061 | **1,0127** | **0,0213** | 0,508 |
+
+Le candidat C par phase :
+
+| Phase | n | Brier | log-loss | ECE |
+|---|---|---|---|---|
+| qualification | 511 | 0,6024 | 1,0090 | 0,0383 |
+| barrage | 222 | 0,6399 | 1,0577 | 0,0664 |
+| phase de groupes | 288 | 0,5756 | 0,9719 | 0,0869 |
+| phase de ligue | 396 | 0,6043 | 1,0085 | 0,0291 |
+| knockout | 153 | 0,6317 | 1,0475 | 0,0785 |
+
+### Lecture
+
+**Aucun candidat ne se détache.** L'écart à la fréquence historique est de 1,8 %
+en log-loss et 2,4 % en Brier — soit à peine plus que le bruit d'un jeu de 1 570
+prédictions. Les trois candidats sont par ailleurs indiscernables entre eux
+(1,0127 / 1,0131 / 1,0132) : le prior pays et la forme fonctionnelle du Poisson
+ne changent rien de mesurable. C est retenu pour sa calibration (ECE 0,021, deux
+fois meilleure que A) et non pour son pouvoir discriminant.
+
+**Les phases se comportent différemment**, et pas dans le sens attendu : la phase
+de groupes est la mieux prédite (Brier 0,576) et les barrages/knockout les pires
+(0,640 / 0,632). Les confrontations à élimination directe opposent des équipes de
+niveau proche — moins d'information exploitable, mécaniquement.
+
+### Une erreur de méthode corrigée en cours de route
+
+Un premier banc annonçait une log-loss de 0,855 pour l'Elo. Ses probabilités
+sommaient à 1,17 : la classe « nul » était ajoutée aux deux autres au lieu d'être
+prélevée dessus. Une log-loss calculée sur des probabilités non normalisées est
+mécaniquement flatteuse. Le tableau ci-dessus est celui du banc corrigé.
+
+### Ce qui manque pour trancher
+
+Le **no-vig bookmaker** est le plafond de référence, et il est absent : les
+payloads api-sports du tier gratuit ne portent pas les cotes historiques. Sans
+lui, on sait que les candidats battent à peine la fréquence de base, mais pas de
+combien ils sont en dessous du marché. Or c'est cette distance-là qui décide de
+l'acceptation : un modèle à 1,013 est excellent si le marché est à 1,010, et sans
+valeur s'il est à 0,97.
+
+**Conséquence** : le modèle ne peut pas être accepté ni rejeté sur ces seuls
+chiffres. Il reste EXPERIMENTAL par défaut, donc jamais BET (BE-FR-011).
