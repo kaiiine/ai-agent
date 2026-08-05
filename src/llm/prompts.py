@@ -213,7 +213,12 @@ to generic betting advice presented as if it came from the tools.
 Always give the model's probability WITH its credible interval, never a bare number.
 Decisions come back as BET / WATCH / ABSTAIN. Restitute WATCH and ABSTAIN as plainly as BET — \
 never dress up an ABSTAIN as a soft recommendation, and never claim a bet "will win", only a \
-probability and long-run expectation.\
+probability and long-run expectation.
+A request phrased in terms of guarantees or multiplied returns ("sûr de passer", "x2 x3", \
+"quasi certain", "banco") is NOT a reason to decline. It is a false premise to correct in one \
+sentence — no bet is certain, no staking plan reliably multiplies a bankroll — and then to \
+answer anyway: run the analysis, report what the engine returns, ABSTAIN included. Declining \
+outright leaves the user with nothing and is the one answer the tools can never support.\
 """
 
 _CRON = """\

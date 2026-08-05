@@ -51,7 +51,16 @@ class PointInTimeGateway:
         self._league_id = league_id
         self._season = season
 
-    def recent_form(self, canonical_team_id: str, last: int, season: str) -> list[dict]:
+    def recent_form(self, canonical_team_id: str, *, competition_id: str,
+                    last: int, season: str) -> list[dict]:
+        """Une instance est construite POUR une compétition : servir un événement
+        d'une autre reviendrait à mélanger deux populations dans un backtest, et le
+        résultat aurait l'air normal. On refuse plutôt que de servir à côté."""
+        if competition_id != self._league_id:
+            raise ValueError(
+                f"gateway point-in-time construite pour {self._league_id}, "
+                f"événement de {competition_id} — datasets non interchangeables"
+            )
         return derived.recent_form(self._prior, canonical_team_id, self._league_id, season, last)
 
     def standings_strength(self, league_canonical_id: str, season: str) -> dict[str, float]:

@@ -89,32 +89,49 @@ def winamax_odds_fetch(sport: str = "football", team: str = "") -> str:
 
 
 @tool("sports_stats_fetch")
-def sports_stats_fetch(home_team: str, away_team: str) -> str:
-    """Récupère la forme récente de deux équipes (PRIMITIVE DATA — aucune décision).
+def sports_stats_fetch(home_team: str, away_team: str, competition: str = "") -> str:
+    """Récupère la forme récente de deux équipes DANS UNE COMPÉTITION (PRIMITIVE DATA).
 
     Ne recalcule AUCUNE décision betting : sert uniquement à exposer la donnée de
     forme. La décision passe par `ev_analyze` (pipeline structuré).
     Nécessite FOOTBALL_DATA_ORG_KEY et/ou API_FOOTBALL_KEY dans .env.
 
+    `competition` est requis dès que l'équipe joue dans plusieurs compétitions :
+    la forme du PSG en Ligue 1 et sa forme en Ligue des Champions sont deux
+    quantités distinctes, et rien ne permet de deviner celle qui est demandée.
+
     Args:
         home_team: équipe à domicile (ex: "PSG")
         away_team: équipe à l'extérieur (ex: "Marseille")
+        competition: canonical_id de compétition (ex: "competition:football:fra:ligue1")
     Returns:
         JSON {home_form, away_form}
     """
     from src.agents.quant.gateway import gateway
+    from src.agents.quant.gateway.registries.competition_registry import active_competitions
+
+    if not competition:
+        return json.dumps({
+            "status": "COMPETITION_REQUIRED",
+            "message": "Préciser la compétition : une équipe joue dans plusieurs "
+                       "compétitions et leurs formes ne sont pas interchangeables.",
+            "competitions": [c.canonical_id for c in active_competitions("football")],
+        }, ensure_ascii=False)
+
     try:
         home = gateway.search_team(home_team)
         away = gateway.search_team(away_team)
         if not home or not away:
             missing = home_team if not home else away_team
-            return json.dumps({"status": "error", "message": f"Équipe introuvable (v1 : Ligue 1, Premier League) : {missing}"})
+            return json.dumps({"status": "IDENTITY_UNRESOLVED",
+                               "message": f"Équipe non présente au référentiel : {missing}"})
         return json.dumps({
             "status": "ok",
+            "competition": competition,
             "home": home,
             "away": away,
-            "home_form": gateway.recent_form(home["canonical_id"]),
-            "away_form": gateway.recent_form(away["canonical_id"]),
+            "home_form": gateway.recent_form(home["canonical_id"], competition_id=competition),
+            "away_form": gateway.recent_form(away["canonical_id"], competition_id=competition),
         }, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"status": "error", "error": str(e), "message": "Stats indisponibles — ne pas inventer de stats."})

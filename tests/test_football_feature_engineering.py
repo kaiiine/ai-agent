@@ -28,7 +28,7 @@ class _FakeGateway:
         self._forms = forms
         self._standings = standings
 
-    def recent_form(self, canonical_team_id, last, season):
+    def recent_form(self, canonical_team_id, *, competition_id, last, season):
         if canonical_team_id not in self._forms:
             raise NoDataAvailableError(canonical_team_id)
         return self._forms[canonical_team_id][:last]
@@ -143,9 +143,10 @@ def test_season_derived_from_kickoff():
     captured = {}
     orig = gw.recent_form
 
-    def spy(cid, last, season):
+    def spy(cid, *, competition_id, last, season):
         captured["season"] = season
-        return orig(cid, last, season)
+        captured["competition_id"] = competition_id
+        return orig(cid, competition_id=competition_id, last=last, season=season)
 
     gw.recent_form = spy
     build_event_feature_set(

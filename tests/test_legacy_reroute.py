@@ -16,6 +16,8 @@ import inspect
 import json
 from datetime import datetime, timezone
 
+import pytest
+
 import src.agents.quant.tools as tools_mod
 from src.agents.quant import structured_decision as sd
 from src.agents.quant.betting_engine.live_evaluation import LiveEvaluationStatus
@@ -88,12 +90,30 @@ def test_event_not_found_when_no_catalogue_match():
 
 
 # ── Pont : modèle indisponible (structuré non EVALUATED) -> aucun fallback ────
-def test_model_unavailable_maps_from_live_status():
+@pytest.mark.parametrize("live_status,expected", [
+    # Quatre causes de refus, quatre codes. Elles se réparent à quatre endroits
+    # différents : le référentiel d'équipes, la table de compétitions, le registre
+    # de couverture, le modèle. Les confondre envoie corriger le mauvais fichier.
+    (LiveEvaluationStatus.EVENT_NOT_RESOLVED, sd.IDENTITY_UNRESOLVED),
+    (LiveEvaluationStatus.COMPETITION_NOT_RESOLVED, sd.COMPETITION_UNRESOLVED),
+    (LiveEvaluationStatus.COMPETITION_NOT_COVERED, sd.PROVIDER_COVERAGE_MISSING),
+    (LiveEvaluationStatus.SPORT_NOT_SUPPORTED, sd.MODEL_UNAVAILABLE),
+    (LiveEvaluationStatus.INSUFFICIENT_FEATURES, sd.INSUFFICIENT_FEATURES),
+])
+def test_chaque_cause_de_refus_a_son_code(live_status, expected):
     ev = _Ev("PSG", "Lyon")
-    evaluate = lambda raw, **k: _Res(LiveEvaluationStatus.COMPETITION_NOT_COVERED, "pas de provider")
+    evaluate = lambda raw, **k: _Res(live_status, "raison")
     md = sd.decide_match("PSG", "Lyon",
                          **_deps([ev], evaluate, {"PSG": "team:psg", "Lyon": "team:lyon"}))
-    assert md.status == sd.MODEL_UNAVAILABLE and not md.evaluated
+    assert md.status == expected and not md.evaluated
+
+
+def test_aucun_code_de_refus_n_est_partage():
+    """Deux causes qui partagent un code redeviennent indistinguables en aval."""
+    codes = list(sd._LIVE_STATUS_MAP.values())
+    partages = {c for c in codes if codes.count(c) > 1}
+    assert partages <= {sd.MARKET_UNAVAILABLE, sd.DATA_UNAVAILABLE}, (
+        f"causes distinctes fondues dans un même code : {partages}")
 
 
 # ── Pont : ABSTAIN structuré traverse ────────────────────────────────────────

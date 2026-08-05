@@ -59,7 +59,7 @@ class _FakeGateway:
     def __init__(self, home_form, away_form):
         self._forms = {_H: home_form, _A: away_form}
 
-    def recent_form(self, canonical_team_id, last, season):
+    def recent_form(self, canonical_team_id, *, competition_id, last, season):
         return self._forms[canonical_team_id][:last]
 
     def standings_strength(self, league_canonical_id, season):

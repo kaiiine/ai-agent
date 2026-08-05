@@ -41,7 +41,7 @@ class _FakeLiveGateway:
     def __init__(self, forms, standings, raise_exc=None):
         self._forms, self._standings, self._raise = forms, standings, raise_exc
 
-    def recent_form(self, canonical_team_id, last, season):
+    def recent_form(self, canonical_team_id, *, competition_id, last, season):
         if self._raise:
             raise self._raise
         if canonical_team_id not in self._forms:

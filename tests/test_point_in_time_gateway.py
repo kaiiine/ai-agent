@@ -43,7 +43,8 @@ _PRIOR = [
 
 def _reconstruct(matches):
     gw = PointInTimeGateway(matches, cutoff=_T, league_id=_LEAGUE, season="2025")
-    return gw.recent_form(_A, 10, "2025"), gw.standings_strength(_LEAGUE, "2025")
+    return (gw.recent_form(_A, competition_id=_LEAGUE, last=10, season="2025"),
+            gw.standings_strength(_LEAGUE, "2025"))
 
 
 _BASE = _reconstruct(_PRIOR)

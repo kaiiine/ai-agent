@@ -73,6 +73,11 @@ def _find_market(raw_event: RawBookmakerEvent, schema: MarketSchema):
 class LiveEvaluationStatus(str, Enum):
     EVALUATED = "EVALUATED"
     EVENT_NOT_RESOLVED = "EVENT_NOT_RESOLVED"
+    # Identité de COMPÉTITION non résolue — cause distincte d'un participant inconnu.
+    # Les deux donnaient « EVENT_NOT_RESOLVED », si bien qu'un tid bookmaker non
+    # mappé se présentait comme une équipe introuvable : le diagnostic envoyait
+    # corriger l'orthographe d'un nom d'équipe parfaitement correct.
+    COMPETITION_NOT_RESOLVED = "COMPETITION_NOT_RESOLVED"
     MARKET_CANONICALIZATION_FAILED = "MARKET_CANONICALIZATION_FAILED"
     SPORT_NOT_SUPPORTED = "SPORT_NOT_SUPPORTED"
     COMPETITION_NOT_COVERED = "COMPETITION_NOT_COVERED"
@@ -145,11 +150,21 @@ def evaluate_live_event(
         return result(LiveEvaluationStatus.SPORT_NOT_SUPPORTED,
                       f"sport non enregistré : {raw_event.sport}")
 
-    # 2) Résolution identité.
+    # 2) Résolution identité — participants et compétition sont deux causes SÉPARÉES.
+    #    L'evidence porte déjà le sujet en échec ("competition" vs "slot_N") ; la
+    #    fondre dans un statut unique perdait l'information au moment précis où elle
+    #    sert au diagnostic.
     mapping = event_resolver.resolve_event(raw_event)
     if not mapping.is_usable:
+        failed = [e for e in mapping.evidence if e.status != "RESOLVED"]
+        if failed and all(e.subject == "competition" for e in failed):
+            return result(
+                LiveEvaluationStatus.COMPETITION_NOT_RESOLVED,
+                f"compétition bookmaker non mappée (tid={raw_event.raw_tournament_id!r}) — "
+                f"les participants, eux, sont résolus")
         return result(LiveEvaluationStatus.EVENT_NOT_RESOLVED,
-                      f"identity={mapping.identity_status} eligibility={mapping.eligibility_status}")
+                      f"identity={mapping.identity_status} eligibility={mapping.eligibility_status}"
+                      + (f" ; sujets en échec : {', '.join(e.subject for e in failed)}" if failed else ""))
 
     # 3) Canonicalisation ATOMIQUE du marché — piloté par le SCHÉMA du sport (2/3-way).
     schema = _model_schema(module)

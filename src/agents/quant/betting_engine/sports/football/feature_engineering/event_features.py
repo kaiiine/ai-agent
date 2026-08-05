@@ -29,7 +29,12 @@ MIN_FORM_MATCHES = 5      # en-dessous, forme calculée mais signalée peu fiabl
 
 
 class _GatewayLike(Protocol):
-    def recent_form(self, canonical_team_id: str, last: int, season: str) -> list[dict]: ...
+    # `competition_id` est passé explicitement : la compétition est une propriété de
+    # l'ÉVÉNEMENT, jamais de l'équipe. Une équipe joue dans plusieurs compétitions
+    # la même semaine — dériver le dataset depuis l'équipe servait la forme
+    # domestique à un événement européen, sans erreur ni trace.
+    def recent_form(self, canonical_team_id: str, *, competition_id: str,
+                    last: int, season: str) -> list[dict]: ...
     def standings_strength(self, league_canonical_id: str, season: str) -> dict[str, float]: ...
 
 
@@ -93,7 +98,8 @@ def build_event_feature_set(
         features: dict[str, FeatureValue] = {}
 
         try:
-            form = gateway.recent_form(cid, last=window, season=season)
+            form = gateway.recent_form(
+                cid, competition_id=event.competition_id, last=window, season=season)
         except NoDataAvailableError:
             form = []
 

@@ -55,7 +55,7 @@ EXPECTED_PL_STRENGTH = {
 
 def test_recent_form_psg_golden(offline_gateway):
     from src.agents.quant.gateway import gateway
-    form = gateway.recent_form("team:football:fra:psg", last=10, season="2025")
+    form = gateway.recent_form("team:football:fra:psg", competition_id=L1, last=10, season="2025")
     assert form == EXPECTED_PSG_FORM
 
 
@@ -74,6 +74,6 @@ def test_standings_strength_premier_league_golden(offline_gateway):
 def test_opponent_ratings_uses_league_standings(offline_gateway):
     """opponent_ratings_for_form dérive du classement de la ligue de la forme."""
     from src.agents.quant.gateway import gateway
-    form = gateway.recent_form("team:football:fra:psg", last=10, season="2025")
+    form = gateway.recent_form("team:football:fra:psg", competition_id=L1, last=10, season="2025")
     ratings = gateway.opponent_ratings_for_form(form)
     assert ratings == EXPECTED_LIGUE1_STRENGTH

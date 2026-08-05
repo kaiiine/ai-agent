@@ -56,7 +56,7 @@ class _FakeGateway:
     def __init__(self, forms, standings):
         self._forms, self._standings = forms, standings
 
-    def recent_form(self, cid, last, season):
+    def recent_form(self, cid, *, competition_id, last, season):
         from src.agents.quant.gateway.core.errors import NoDataAvailableError
         if cid not in self._forms:
             raise NoDataAvailableError(cid)

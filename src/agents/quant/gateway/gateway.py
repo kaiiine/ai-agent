@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
-from src.agents.quant.gateway.core.identity_data import TEAMS, LEAGUE_TEAMS
+from src.agents.quant.gateway.core.identity_data import TEAMS
 from src.agents.quant.gateway.core.fallback_chain import fetch_league_data
 from src.agents.quant.gateway.core.errors import NoDataAvailableError
 from src.agents.quant.gateway.sports.football import derived
@@ -28,13 +28,6 @@ def current_season() -> str:
     return str(year)
 
 
-def _team_league(team_canonical_id: str) -> str | None:
-    for league_id, team_ids in LEAGUE_TEAMS.items():
-        if team_canonical_id in team_ids:
-            return league_id
-    return None
-
-
 def search_team(name: str) -> dict | None:
     """Cherche une équipe par nom parmi les ligues couvertes en v1 (Ligue 1, Premier League)."""
     entity = _resolver.find_by_name(name)
@@ -43,30 +36,36 @@ def search_team(name: str) -> dict | None:
     return {"canonical_id": entity.canonical_id, "name": entity.canonical_name}
 
 
-def recent_form(canonical_team_id: str, last: int = 10, season: str | None = None) -> list[dict]:
-    """Forme récente, dérivée localement d'un fetch batch par ligue (jamais par équipe — F13).
+def recent_form(canonical_team_id: str, *, competition_id: str,
+                last: int = 10, season: str | None = None) -> list[dict]:
+    """Forme récente d'une équipe DANS UNE COMPÉTITION DONNÉE.
 
-    En période de trêve estivale, peu ou pas de matchs "FINISHED" existent
-    encore pour la saison à venir — pas un bug, un vrai manque de données.
+    `competition_id` est REQUIS et vient de l'événement évalué, jamais de l'équipe.
+    Une équipe appartient à plusieurs compétitions simultanément — le PSG joue en
+    Ligue 1 et en Ligue des Champions la même semaine — et l'ancienne version
+    choisissait le dataset en cherchant la première ligue contenant l'équipe. Deux
+    conséquences, toutes deux silencieuses : un événement UEFA était servi avec la
+    forme domestique, et une équipe hors des ligues onboardées était déclarée
+    introuvable alors que son historique européen existait.
+
+    La chaîne est désormais : événement -> compétition canonique -> couverture
+    provider -> historique du participant. Aucun maillon ne part de l'équipe.
+
+    En trêve estivale, peu ou pas de matchs "FINISHED" existent encore pour la
+    saison à venir — pas un bug, un vrai manque de données.
     """
-    league_id = _team_league(canonical_team_id)
-    if league_id is None:
-        raise NoDataAvailableError(
-            f"Équipe {canonical_team_id} hors des ligues couvertes en v1 (Ligue 1, Premier League)"
-        )
-
     season = season or current_season()
     # recent_form consomme les matchs JOUÉS → data_type RESULTS.
     envelope = fetch_league_data(
         sport="football",
         data_type="RESULTS",
-        league_canonical_id=league_id,
+        league_canonical_id=competition_id,
         season=season,
         resolver=_resolver,
     )
     # Calcul dérivé (pur) délégué à sports/football/derived.py — orchestration ici,
     # agrégation là-bas (frontière GW-FR-012).
-    return derived.recent_form(envelope.payload.matches, canonical_team_id, league_id, season, last)
+    return derived.recent_form(envelope.payload.matches, canonical_team_id, competition_id, season, last)
 
 
 def standings_strength(league_canonical_id: str, season: str | None = None) -> dict[str, float]:

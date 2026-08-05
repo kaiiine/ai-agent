@@ -39,22 +39,32 @@ _MARKET_TO_SELECTION: dict[str, str] = {
 }
 
 # Statuts de sortie (machine-readable, stables).
+#
+# Chaque cause de refus a SON code. Un « unsupported » générique force le lecteur —
+# modèle ou humain — à deviner ce qu'il faut corriger, et il devine mal : une
+# compétition non mappée présentée comme une équipe introuvable envoie vérifier
+# l'orthographe d'un nom parfaitement correct. Les quatre causes ci-dessous sont
+# indépendantes et se réparent à des endroits différents du système.
 EVALUATED = "EVALUATED"                  # une BettingDecision structurée existe (BET ou ABSTAIN)
 MARKET_UNAVAILABLE = "MARKET_UNAVAILABLE"    # marché hors modèle structuré (over/under/BTTS…)
-IDENTITY_UNRESOLVED = "IDENTITY_UNRESOLVED"  # une équipe demandée ne résout pas
+IDENTITY_UNRESOLVED = "IDENTITY_UNRESOLVED"  # un PARTICIPANT ne résout pas -> identity_data.py
+COMPETITION_UNRESOLVED = "COMPETITION_UNRESOLVED"    # tid bookmaker non mappé -> competition_mapping.py
+PROVIDER_COVERAGE_MISSING = "PROVIDER_COVERAGE_MISSING"  # identités OK, aucun provider vérifié
 EVENT_NOT_FOUND = "EVENT_NOT_FOUND"          # aucun événement du catalogue ne matche
-MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"      # pas de modèle/couverture utilisable pour cet événement
-DATA_UNAVAILABLE = "DATA_UNAVAILABLE"        # gateway/données indisponibles (jamais supposé frais)
+MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"      # aucune capability de modèle pour ce sport/marché
+INSUFFICIENT_FEATURES = "INSUFFICIENT_FEATURES"      # données présentes mais trop minces
+DATA_UNAVAILABLE = "DATA_UNAVAILABLE"        # gateway indisponible (jamais supposé frais)
 
 # Mapping LiveEvaluationStatus (non EVALUATED) -> statut de pont. TOUJOURS ABSTAIN.
 _LIVE_STATUS_MAP: dict[LiveEvaluationStatus, str] = {
     LiveEvaluationStatus.SPORT_NOT_SUPPORTED: MODEL_UNAVAILABLE,
-    LiveEvaluationStatus.COMPETITION_NOT_COVERED: MODEL_UNAVAILABLE,
+    LiveEvaluationStatus.COMPETITION_NOT_COVERED: PROVIDER_COVERAGE_MISSING,
+    LiveEvaluationStatus.COMPETITION_NOT_RESOLVED: COMPETITION_UNRESOLVED,
     LiveEvaluationStatus.EVENT_NOT_RESOLVED: IDENTITY_UNRESOLVED,
     LiveEvaluationStatus.MARKET_CANONICALIZATION_FAILED: MARKET_UNAVAILABLE,
     LiveEvaluationStatus.GATEWAY_UNAVAILABLE: DATA_UNAVAILABLE,
     LiveEvaluationStatus.DATA_TOO_STALE: DATA_UNAVAILABLE,
-    LiveEvaluationStatus.INSUFFICIENT_FEATURES: DATA_UNAVAILABLE,
+    LiveEvaluationStatus.INSUFFICIENT_FEATURES: INSUFFICIENT_FEATURES,
 }
 
 
