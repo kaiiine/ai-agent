@@ -700,6 +700,7 @@ def _chat_node_factory():
 
         capped = False
         compressed = False
+        transient_retries = 0
 
         # Key pool tracking pour rotation sur 429
         _orch_provider = backend
@@ -719,6 +720,26 @@ def _chat_node_factory():
             "session usage limit",
         )
 
+        # Coupures de FLUX : la connexion tombe en cours de lecture, sans que la
+        # requête soit invalide. Ni un rate-limit, ni un dépassement de contexte —
+        # les deux seules classes traitées jusqu'ici — donc l'erreur remontait
+        # telle quelle et le tour entier était perdu, réponse comprise. Réémettre
+        # est sûr : rien n'a été livré, aucun outil n'a pu s'exécuter.
+        _TRANSIENT_MARKERS = (
+            "incompleteread",
+            "chunkedencoding",
+            "protocolerror",
+            "connection reset",
+            "connection aborted",
+            "remotedisconnected",
+            "server disconnected",
+            "read timed out",
+            "readtimeout",
+            "timed out",
+            "econnreset",
+        )
+        _MAX_TRANSIENT_RETRIES = 3
+
         while True:
             try:
                 response = llm_with_tools.invoke(working)
@@ -732,7 +753,22 @@ def _chat_node_factory():
                 break
 
             except Exception as e:
-                err = str(e).lower()
+                err = f"{type(e).__name__}: {e}".lower()
+
+                # Flux coupé : on réessaie, avec une pause croissante. Borné —
+                # au-delà, la panne n'est plus transitoire et la masquer par des
+                # reprises indéfinies serait pire que de la signaler.
+                if any(k in err for k in _TRANSIENT_MARKERS):
+                    transient_retries += 1
+                    if transient_retries <= _MAX_TRANSIENT_RETRIES:
+                        import time as _time
+                        console.print(
+                            f"[dim]  ↩  flux interrompu — reprise "
+                            f"{transient_retries}/{_MAX_TRANSIENT_RETRIES}…[/dim]"
+                        )
+                        _time.sleep(2 ** (transient_retries - 1))
+                        continue
+                    raise
 
                 # rotation vers la prochaine clef
                 if any(k in err for k in _RATE_LIMIT_MARKERS):
