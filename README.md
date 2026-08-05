@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/kaiiine/ai-agent/main/install.sh | 
 
 ```bash
 # Or manually:
-git clone https://github.com/kaiiine/ai-agent.git && cd ai-agent && bash setup.sh
+git clone https://github.com/kaiiine/axon.git && cd ai-agent && bash setup.sh
 
 # Reconfigure integrations without reinstalling:
 bash setup.sh --config-only

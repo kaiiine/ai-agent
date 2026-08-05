@@ -18,7 +18,7 @@ fail() { echo -e "${RED}  ✗  ${NC}$*" >&2; exit 1; }
 step() { echo -e "\n${ORANGE}━━  ${WHITE}$*${NC}"; }
 
 # ── À modifier selon ton hébergement ──────────────────────────
-REPO_URL="https://github.com/kaiiine/ai-agent.git"
+REPO_URL="https://github.com/kaiiine/axon.git"
 INSTALL_DIR="${AXON_INSTALL_DIR:-$HOME/.axon}"
 # ──────────────────────────────────────────────────────────────
 
