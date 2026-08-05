@@ -98,8 +98,20 @@ def _resolve_channel(client: WebClient, name_or_id: str) -> str:
     if name_or_id in _CHANNEL_CACHE:
         return _CHANNEL_CACHE[name_or_id]
 
-    # ID direct
-    if name_or_id.startswith(("C", "D", "G", "W")):
+    # Un ID d'UTILISATEUR n'est pas un canal. Slack préfixe `U` (et `W` sur
+    # Enterprise Grid) les personnes, `C`/`D`/`G` les conversations. Poster
+    # directement sur un `U…` échoue : il faut d'abord ouvrir la conversation
+    # directe, qui rend un vrai identifiant de canal (`D…`). C'est exactement ce
+    # que fait la branche `@nom` plus bas — `slack_find_user` rend un `U…`, donc
+    # le chemin le plus naturel pour le modèle était le seul à ne pas marcher.
+    if name_or_id.startswith(("U", "W")):
+        resp = client.conversations_open(users=name_or_id)
+        ch_id = resp["channel"]["id"]
+        _CHANNEL_CACHE[name_or_id] = ch_id
+        return ch_id
+
+    # ID de conversation, utilisable tel quel
+    if name_or_id.startswith(("C", "D", "G")):
         return name_or_id
 
     # @nom → DM (cherche directement parmi les membres, pas de listing channels)
