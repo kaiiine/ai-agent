@@ -500,3 +500,57 @@ def test_le_specialist_voit_le_shell_quand_il_verifie_un_rendu():
 
     assert _TOOL_TO_GROUP["browser_screenshot"] == "shell"
     assert "browser_screenshot" in _TOOL_GROUPS["shell"]
+
+
+# ── étage 1 hybride : un groupe NOMMÉ ne dépend pas d'un rang vectoriel ─────────
+@pytest.mark.parametrize("query,groupe", [
+    ("envoie ça à Nicolas sur Slack",                    "slack"),
+    ("peux tu envoyer tout ça à Nicolas sur Slack stp",  "slack"),
+    ("ajoute ce ticket dans jira",                       "jira"),
+    ("quelle est la météo demain",                       "weather"),
+    ("fais moi un diagramme mermaid",                    "diagrams"),
+    ("quelles sont les cotes winamax",                   "quant"),
+])
+def test_un_groupe_nomme_litteralement_est_toujours_elu(retriever, query, groupe):
+    """Régression vécue : « envoie ça à Nicolas sur Slack » classait `slack` 17e sur
+    22 — derrière `news` et `quant` — alors que la description du groupe commence
+    par le mot « Slack ». L'agent répondait « je ne dispose pas d'une intégration
+    Slack », ce qui est faux, et proposait un copier-coller.
+
+    L'embedder dilue un terme rare dans une phrase courte et banale. La
+    correspondance exacte ne le rate jamais : c'est le cas le plus certain qui
+    soit, et c'était le seul à échouer."""
+    assert groupe in retriever._rank_groups(query)
+
+
+def test_le_lexical_n_ecrase_pas_le_semantique(retriever):
+    """Le lexical AJOUTE, il ne remplace pas : une demande sans terme propre doit
+    continuer de passer par la similarité."""
+    from src.orchestrator.tool_retriever import _keyword_groups
+
+    query = "quels sont mes rendez vous de demain"
+    assert not _keyword_groups(query), "aucun terme propre attendu ici"
+    assert "calendar" in retriever._rank_groups(query)
+
+
+def test_les_mots_cles_matchent_des_mots_entiers(retriever):
+    """« paris » ne doit pas être trouvé dans « comparaison », ni « ip » dans
+    « équipe » : une sous-chaîne élirait un groupe sans rapport, et le lexical
+    deviendrait une source de bruit au lieu d'une garantie."""
+    from src.orchestrator.tool_retriever import _keyword_groups
+
+    assert "quant" not in _keyword_groups("fais une comparaison des options")
+    assert "network" not in _keyword_groups("la composition de l'équipe")
+    assert "quant" in _keyword_groups("des paris intéressants ce soir")
+
+
+def test_aucun_mot_cle_n_est_revendique_par_deux_groupes():
+    """Un terme ambigu élirait deux groupes à chaque fois qu'il apparaît, et la
+    garantie deviendrait du bruit."""
+    from collections import Counter
+
+    from src.orchestrator.tool_retriever import TOOL_GROUPS
+
+    compte = Counter(k for spec in TOOL_GROUPS.values() for k in spec.keywords)
+    doublons = {k: n for k, n in compte.items() if n > 1}
+    assert not doublons, f"mots-clés revendiqués par plusieurs groupes : {doublons}"

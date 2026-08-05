@@ -15,6 +15,7 @@ Même forme que le routing MCP (`src/mcp_client/registry.py`) : document de
 contenant, puis contenu filtré. Les primitives communes sont dans
 `src/infra/retrieval.py`.
 """
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -39,6 +40,15 @@ class ToolGroup:
     covers: str
     tools: tuple[str, ...]
     extend: Callable[[], list[str]] | None = field(default=None, compare=False)
+    # Termes qui DÉSIGNENT ce groupe sans ambiguïté — noms de produits, pas de
+    # vocabulaire courant. Leur présence littérale dans la requête élit le groupe
+    # quel que soit son rang vectoriel. Mesuré : « envoie ça à Nicolas sur Slack »
+    # classait `slack` 17e sur 22, derrière `news` et `quant`, alors que la
+    # description commence par le mot « Slack ». L'embedder dilue un terme rare
+    # dans une phrase courte et banale ; la correspondance exacte, elle, ne le
+    # rate jamais. Un terme ambigu ici ferait élire un groupe à tort : n'y mettre
+    # que ce qui ne désigne rien d'autre.
+    keywords: frozenset[str] = frozenset()
 
     def document(self, name: str, *, max_chars: int = 2000) -> str:
         covers = self.covers
@@ -49,6 +59,18 @@ class ToolGroup:
         return build_catalog_document(
             {"Groupe": name, "Couvre": covers}, "Outils", self.tools, max_chars=max_chars
         )
+
+
+_WORD = re.compile(r"[\w-]+", re.UNICODE)
+
+
+def _keyword_groups(query: str) -> list[str]:
+    """Groupes NOMMÉS littéralement dans la requête, dans l'ordre de déclaration.
+
+    Comparaison sur des mots entiers, jamais sur des sous-chaînes : « paris » ne
+    doit pas être trouvé dans « comparaison », et « ip » pas dans « équipe »."""
+    mots = {m.group(0).lower() for m in _WORD.finditer(query)}
+    return [g for g, spec in TOOL_GROUPS.items() if spec.keywords & mots]
 
 
 def _skill_topics() -> list[str]:
@@ -79,6 +101,7 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "fichiers à l'index, committer, changer de branche, remiser.",
         tools=("git_status", "git_log", "git_diff", "git_suggest_commit",
                "git_add", "git_commit", "git_checkout", "git_stash"),
+        keywords=frozenset({"git", "commit", "commits", "branche", "branch"}),
     ),
     "filesystem": ToolGroup(
         covers="Fichiers locaux du disque : retrouver un fichier par son nom ou un motif, "
@@ -93,27 +116,32 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "entre les dossiers, savoir où l'on se trouve, lister rapidement un "
                "répertoire.",
         tools=("shell_run", "shell_cd", "shell_pwd", "shell_ls"),
+        keywords=frozenset({"terminal", "shell", "bash", "commande"}),
     ),
     "desktop": ToolGroup(
         covers="Bureau graphique : capturer l'écran pour voir ou analyser ce qui y est "
                "affiché, lire le presse-papiers, y écrire du texte à coller ailleurs.",
         tools=("screenshot_take", "clipboard_read", "clipboard_write"),
+        keywords=frozenset({"presse-papier", "presse-papiers", "clipboard", "capture"}),
     ),
     "process": ToolGroup(
         covers="Processus de la machine : lister ce qui tourne et ce qui consomme du CPU "
                "ou de la mémoire, arrêter un programme par son identifiant.",
         tools=("process_list", "process_kill"),
+        keywords=frozenset({"processus", "process"}),
     ),
     "network": ToolGroup(
         covers="Réseau local de la machine : nom du Wi-Fi, adresse IP, force du signal, "
                "latence de la connexion.",
         tools=("wifi_info",),
+        keywords=frozenset({"wifi", "reseau", "réseau", "ip"}),
     ),
     "gmail": ToolGroup(
         covers="Boîte mail Gmail : chercher des messages, résumer les mails reçus, "
                "rédiger et envoyer un email, modifier un brouillon avant envoi.",
         tools=("gmail_search", "gmail_summarize", "gmail_send_email",
                "gmail_edit_draft", "gmail_confirm_send"),
+        keywords=frozenset({"gmail", "mail", "mails", "email", "emails", "e-mail"}),
     ),
     "calendar": ToolGroup(
         covers="Agenda Google Calendar : consulter les rendez-vous et événements à venir "
@@ -121,6 +149,7 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "chercher un événement, lister les agendas.",
         tools=("calendar_list_events", "calendar_create_event", "calendar_update_event",
                "calendar_delete_event", "calendar_list_calendars", "calendar_search_events"),
+        keywords=frozenset({"calendar", "agenda"}),
     ),
     "drive": ToolGroup(
         covers="Documents Google en ligne. Drive : parcourir et lister les fichiers, "
@@ -130,6 +159,7 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
         tools=("drive_list_files", "drive_find_file_id", "drive_read_file",
                "drive_delete_file", "drive_get_file_metadata",
                "google_docs_create", "google_docs_update", "google_docs_read"),
+        keywords=frozenset({"drive", "gdoc", "gdocs"}),
     ),
     "slack": ToolGroup(
         covers="Slack : poster un message dans un canal, un salon ou une conversation "
@@ -139,6 +169,7 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
         tools=("slack_find_user", "slack_list_channels", "slack_read_channel",
                "slack_get_mentions", "slack_list_dms", "slack_send_message",
                "slack_search_messages"),
+        keywords=frozenset({"slack"}),
     ),
     "jira": ToolGroup(
         covers="Jira : tickets, issues, sprints, epics et projets. Voir les tickets qui "
@@ -153,6 +184,7 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "jira_assign_issue", "jira_update_issue", "jira_get_issue_comments",
                "jira_search_users", "jira_move_issue", "jira_delete_issue",
                "jira_link_to_epic"),
+        keywords=frozenset({"jira", "sprint", "backlog"}),
     ),
     # `news` est séparé de `search` alors que les deux interrogent le web. Mesuré :
     # dans un document unique couvrant les deux, les formulations d'actualité ne
@@ -168,6 +200,7 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "d'une URL. Aussi les articles et papers de recherche scientifique "
                "sur arXiv.",
         tools=("web_research_report", "url_fetch", "arxiv_search", "arxiv_get_paper"),
+        keywords=frozenset({"arxiv", "internet", "web"}),
     ),
     "news": ToolGroup(
         covers="Actualités et événements récents : ce qui s'est passé aujourd'hui ou "
@@ -175,6 +208,7 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "de matchs et classements, annonces d'entreprises et sorties de produits, "
                "politique, élections et crises en cours.",
         tools=("web_search_news",),
+        keywords=frozenset({"actualite", "actualité", "actualites", "actualités", "news"}),
     ),
     "time": ToolGroup(
         covers="Date et heure courantes : quelle heure il est, quel jour on est, la date "
@@ -185,6 +219,7 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
         covers="Météo d'une ville : le temps qu'il fait, la température, les conditions "
                "actuelles et à venir.",
         tools=("get_weather_by_city",),
+        keywords=frozenset({"meteo", "météo"}),
     ),
     "diagrams": ToolGroup(
         covers="Produire un schéma ou un diagramme visuel : architecture d'un système, "
@@ -192,17 +227,20 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "map, pipeline, flux de données. Représenter, illustrer ou dessiner "
                "visuellement un fonctionnement.",
         tools=("mermaid_diagram",),
+        keywords=frozenset({"mermaid", "diagramme", "schema", "schéma", "organigramme", "flowchart"}),
     ),
     "memory": ToolGroup(
         covers="Mémoire persistante du projet : retenir un fait pour les prochaines "
                "sessions, noter une information non évidente, mettre à jour AXON.md.",
         tools=("axon_note",),
+        keywords=frozenset({"axon.md"}),
     ),
     "study": ToolGroup(
         covers="Fiches de révision et exercices : produire depuis un cours ou un PDF une "
                "fiche de synthèse ou un quiz interactif en HTML, puis l'ouvrir dans le "
                "navigateur.",
         tools=("save_study_file",),
+        keywords=frozenset({"fiche", "revision", "révision", "exercices", "quiz"}),
     ),
     "skills": ToolGroup(
         covers="Charger la procédure écrite d'avance pour un savoir-faire particulier, "
@@ -217,6 +255,7 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "récapitulatif quotidien automatique, lister ou arrêter les tâches "
                "programmées.",
         tools=("schedule_task", "list_cron_tasks", "stop_cron_task"),
+        keywords=frozenset({"cron", "planifie", "planifier", "recurrent", "récurrent"}),
     ),
     "quant": ToolGroup(
         covers="Paris sportifs et analyse quantitative : cotes d'un match chez le "
@@ -225,6 +264,7 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "rentabilité d'un pari, mise à engager, combinés.",
         tools=("winamax_odds_fetch", "sports_stats_fetch", "probability_compute",
                "ev_analyze", "parlay_analyze", "same_match_combo_analyze"),
+        keywords=frozenset({"winamax", "pari", "paris", "parier", "cote", "cotes", "combine", "combiné"}),
     ),
 }
 
@@ -332,11 +372,22 @@ class ToolRetriever:
         self._k = k
 
     def _rank_groups(self, query: str) -> list[str]:
-        """Étage 1. Renvoie les groupes par pertinence décroissante — l'ordre
-        compte : le rang 1 décide de l'étape 4."""
+        """Étage 1, HYBRIDE : correspondance exacte d'abord, puis similarité.
+
+        La recherche dense seule rate les termes rares dans les phrases courtes —
+        « envoie ça à Nicolas sur Slack » classait `slack` 17e sur 22. Un terme
+        qui NOMME un groupe ne doit jamais dépendre d'un rang vectoriel : c'est le
+        cas le plus certain qui soit, et c'était le seul à échouer.
+
+        Le lexical COMPLÈTE le vectoriel, il ne le remplace pas : il n'ajoute que
+        des groupes explicitement nommés, et la similarité continue de fournir
+        tout ce qui est demandé sans être nommé. L'ordre compte — le rang 1 décide
+        de l'étape 4 — donc un groupe nommé littéralement passe devant.
+        """
+        nommes = _keyword_groups(query)
         docs = self._store.similarity_search(
             query, k=_TOP_GROUPS, filter={"source": _GROUP_SOURCE})
-        return unique(d.metadata.get("group") for d in docs)
+        return unique(nommes + [d.metadata.get("group") for d in docs])
 
     def _tools_of(self, group: str, query: str) -> list[str]:
         """Étage 2. Un groupe cohésif est pris entier ; un gros groupe est
