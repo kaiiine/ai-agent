@@ -4,8 +4,14 @@
    "Altmaier D.": [
     "Daniel Altmaier"
    ],
+   "Arnaldi M.": [
+    "Matteo Arnaldi"
+   ],
    "Atmane T.": [
     "Terence Atmane"
+   ],
+   "Auger-Aliassime F.": [
+    "Felix Auger-Aliassime"
    ],
    "Baez S.": [
     "Sebastian Baez"
@@ -13,8 +19,14 @@
    "Bellucci M.": [
     "Mattia Bellucci"
    ],
+   "Bergs Z.": [
+    "Zizou Bergs"
+   ],
    "Berrettini M.": [
     "Matteo Berrettini"
+   ],
+   "Blockx A.": [
+    "Alexander Blockx"
    ],
    "Bonzi B.": [
     "Benjamin Bonzi"
@@ -25,11 +37,23 @@
    "Brooksby J.": [
     "Jenson Brooksby"
    ],
+   "Buse I.": [
+    "Ignacio Buse"
+   ],
    "Carreno-Busta P.": [
     "Pablo Carreno-Busta"
    ],
+   "Cerundolo F.": [
+    "Francisco Cerundolo"
+   ],
    "Cilic M.": [
     "Marin Cilic"
+   ],
+   "Collignon R.": [
+    "Raphael Collignon"
+   ],
+   "Darderi L.": [
+    "Luciano Darderi"
    ],
    "Diallo G.": [
     "Gabriel Diallo"
@@ -49,6 +73,12 @@
    "Fearnley J.": [
     "Jacob Fearnley"
    ],
+   "Fils A.": [
+    "Arthur Fils"
+   ],
+   "Fonseca J.": [
+    "Joao Fonseca"
+   ],
    "Fritz T.": [
     "Taylor Fritz"
    ],
@@ -67,6 +97,9 @@
    "Hanfmann Y.": [
     "Yannick Hanfmann"
    ],
+   "Humbert U.": [
+    "Ugo Humbert"
+   ],
    "Hurkacz H.": [
     "Hubert Hurkacz"
    ],
@@ -79,6 +112,9 @@
    "Kecmanovic M.": [
     "Miomir Kecmanovic"
    ],
+   "Khachanov K.": [
+    "Karen Khachanov"
+   ],
    "Kopriva V.": [
     "Vit Kopriva"
    ],
@@ -87,6 +123,9 @@
    ],
    "Landaluce M.": [
     "Martin Landaluce"
+   ],
+   "Lehecka J.": [
+    "Jiri Lehecka"
    ],
    "Majchrzak K.": [
     "Kamil Majchrzak"
@@ -100,8 +139,14 @@
    "Medjedovic H.": [
     "Hamad Medjedovic"
    ],
+   "Medvedev D.": [
+    "Daniil Medvedev"
+   ],
    "Mejia N.": [
     "Nicolas Mejia"
+   ],
+   "Mensik J.": [
+    "Jakub Mensik"
    ],
    "Michelsen A.": [
     "Alex Michelsen"
@@ -115,6 +160,9 @@
    "Moutet C.": [
     "Corentin Moutet"
    ],
+   "Musetti L.": [
+    "Lorenzo Musetti"
+   ],
    "Navone M.": [
     "Mariano Navone"
    ],
@@ -124,11 +172,26 @@
    "O'Connell C.": [
     "Christopher O'Connell"
    ],
+   "Paul T.": [
+    "Tommy Paul"
+   ],
    "Popyrin A.": [
     "Alexei Popyrin"
    ],
+   "Rinderknech A.": [
+    "Arthur Rinderknech"
+   ],
    "Royer V.": [
     "Valentin Royer"
+   ],
+   "Ruud C.": [
+    "Casper Ruud"
+   ],
+   "Shang J.": [
+    "Juncheng Shang"
+   ],
+   "Shelton B.": [
+    "Ben Shelton"
    ],
    "Shimabukuro S.": [
     "Sho Shimabukuro"
@@ -139,11 +202,23 @@
    "Struff J.L.": [
     "Jan-Lennard Struff"
    ],
+   "Svajda Z.": [
+    "Zachary Svajda"
+   ],
+   "Tabilo A.": [
+    "Alejandro Tabilo"
+   ],
+   "Tien L.": [
+    "Learner Tien"
+   ],
    "Tirante T.A.": [
     "Thiago Tirante"
    ],
    "Tsitsipas S.": [
     "Stefanos Tsitsipas"
+   ],
+   "Vacherot V.": [
+    "Valentin Vacherot"
    ],
    "Vukic A.": [
     "Aleksandar Vukic"
@@ -153,17 +228,32 @@
    ],
    "Zheng M.": [
     "Michael Zheng"
+   ],
+   "Zverev A.": [
+    "Alexander Zverev"
    ]
   },
   "wta": {
+   "Alexandrova E.": [
+    "Ekaterina Alexandrova"
+   ],
    "Andreescu B.": [
     "Bianca Andreescu"
+   ],
+   "Andreeva M.": [
+    "Mirra Andreeva"
+   ],
+   "Anisimova A.": [
+    "Amanda Anisimova"
    ],
    "Bartunkova N.": [
     "Nikola Bartunkova"
    ],
    "Bejlek S.": [
     "Sara Bejlek"
+   ],
+   "Bencic B.": [
+    "Belinda Bencic"
    ],
    "Blinkova A.": [
     "Anna Blinkova"
@@ -177,6 +267,9 @@
    "Boulter K.": [
     "Katie Boulter"
    ],
+   "Bouzkova M.": [
+    "Marie Bouzkova"
+   ],
    "Brace C.": [
     "Cadence Brace"
    ],
@@ -185,6 +278,9 @@
    ],
    "Cilic M.": [
     "Marin Cilic"
+   ],
+   "Cirstea S.": [
+    "Sorana Cirstea"
    ],
    "Cocciaretto E.": [
     "Elisabetta Cocciaretto"
@@ -201,8 +297,14 @@
    "Frech M.": [
     "Magdalena Frech"
    ],
+   "Gauff C.": [
+    "Cori Gauff"
+   ],
    "Gibson T.": [
     "Talia Gibson"
+   ],
+   "Golubic V.": [
+    "Viktorija Golubic"
    ],
    "Ito A.": [
     "Aoi Ito"
@@ -216,8 +318,14 @@
    "Jones E.": [
     "Emerson Jones"
    ],
+   "Jovic I.": [
+    "Iva Jovic"
+   ],
    "Kalinina A.": [
     "Anhelina Kalinina"
+   ],
+   "Kalinskaya A.": [
+    "Anna Kalinskaya"
    ],
    "Kasatkina D.": [
     "Daria Kasatkina"
@@ -225,14 +333,26 @@
    "Kessler M.": [
     "McCartney Kessler"
    ],
+   "Keys M.": [
+    "Madison Keys"
+   ],
    "Korneeva A.": [
     "Alina Korneeva"
    ],
    "Korpatsch T.": [
     "Tamara Korpatsch"
    ],
+   "Kostyuk M.": [
+    "Marta Kostyuk"
+   ],
+   "Krejcikova B.": [
+    "Barbora Krejcikova"
+   ],
    "Kudermetova P.": [
     "Polina Kudermetova"
+   ],
+   "Li A.": [
+    "Ann Li"
    ],
    "Linette M.": [
     "Magda Linette"
@@ -246,11 +366,23 @@
    "Marino R.": [
     "Rebecca Marino"
    ],
+   "Mertens E.": [
+    "Elise Mertens"
+   ],
    "Monfils G.": [
     "Gaël Monfils"
    ],
+   "Navarro E.": [
+    "Emma Navarro"
+   ],
+   "Noskova L.": [
+    "Linda Noskova"
+   ],
    "Oliynykova O.": [
     "Oleksandra Oliynykova"
+   ],
+   "Osaka N.": [
+    "Naomi Osaka"
    ],
    "Parks A.": [
     "Alycia Parks"
@@ -261,17 +393,32 @@
    "Pegula J.": [
     "Jessica Pegula"
    ],
+   "Potapova A.": [
+    "Anastasia Potapova"
+   ],
    "Putintseva Y.": [
     "Yulia Putintseva"
    ],
    "Ruzic A.": [
     "Antonia Ruzic"
    ],
+   "Rybakina E.": [
+    "Elena Rybakina"
+   ],
+   "Sabalenka A.": [
+    "Aryna Sabalenka"
+   ],
+   "Sakkari M.": [
+    "Maria Sakkari"
+   ],
    "Samsonova L.": [
     "Ludmilla Samsonova"
    ],
    "Sebov K.": [
     "Katherine Sebov"
+   ],
+   "Shnaider D.": [
+    "Diana Shnaider"
    ],
    "Sierra S.": [
     "Solana Sierra"
@@ -293,6 +440,12 @@
    ],
    "Stephens S.": [
     "Sloane Stephens"
+   ],
+   "Svitolina E.": [
+    "Elina Svitolina"
+   ],
+   "Swiatek I.": [
+    "Iga Swiatek"
    ],
    "Tararudee L.": [
     "Lanlana Tararudee"
@@ -324,7 +477,7 @@
   }
  },
  "method": "clé normalisée (nom_de_famille, initiale) — exacte, jamais fuzzy ; clés ambiguës et paires de double exclues",
- "n_live_names": 118,
- "refreshed_at": "2026-08-02T21:37:10.514110+00:00",
+ "n_live_names": 100,
+ "refreshed_at": "2026-08-05T13:21:17.536130+00:00",
  "source": "winamax PRELOADED_STATE (scan live)"
 }

@@ -134,4 +134,5 @@ class BasketballMoneylineModel:
         return {"home": mk("home", ph), "away": mk("away", 1.0 - ph)}
 
 
-BASKETBALL_MODULE = SportModule("basketball", build_basketball_features, BasketballMoneylineModel())
+BASKETBALL_MODULE = SportModule("basketball", build_basketball_features, BasketballMoneylineModel(),
+                              entities=lambda: list(NBA_TEAMS))

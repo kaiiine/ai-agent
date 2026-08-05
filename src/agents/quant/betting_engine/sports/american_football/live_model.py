@@ -28,4 +28,5 @@ def _games():
 
 NFL_MODULE = make_module(
     sport="american_football", games_fn=_games, api_of=_API_OF, params=NFL_PARAMS,
-    model_name=MODEL_NAME, model_version=MODEL_VERSION, feature_version="nfl-elo-1.0")
+    model_name=MODEL_NAME, model_version=MODEL_VERSION, feature_version="nfl-elo-1.0",
+    entities=lambda: list(NFL_TEAMS))

@@ -132,4 +132,5 @@ class HockeyRegulationModel:
         return {sel: mk(sel, probs[sel]) for sel in self._SELECTIONS}
 
 
-HOCKEY_MODULE = SportModule("hockey", build_hockey_features, HockeyRegulationModel())
+HOCKEY_MODULE = SportModule("hockey", build_hockey_features, HockeyRegulationModel(),
+                          entities=lambda: list(NHL_TEAMS))

@@ -33,4 +33,5 @@ def _games():
 
 VOLLEYBALL_MODULE = make_module(
     sport="volleyball", games_fn=_games, api_of=_API_OF, params=VOLLEY_PARAMS,
-    model_name=MODEL_NAME, model_version=MODEL_VERSION, feature_version="volleyball-elo-1.0")
+    model_name=MODEL_NAME, model_version=MODEL_VERSION, feature_version="volleyball-elo-1.0",
+    entities=lambda: list(VOLLEY_TEAMS))

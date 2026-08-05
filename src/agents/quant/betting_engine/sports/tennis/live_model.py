@@ -142,4 +142,5 @@ class TennisMoneylineModel:
         return {"player_a": mk("player_a", pa), "player_b": mk("player_b", 1.0 - pa)}
 
 
-TENNIS_MODULE = SportModule("tennis", build_tennis_features, TennisMoneylineModel())
+TENNIS_MODULE = SportModule("tennis", build_tennis_features, TennisMoneylineModel(),
+                          entities=lambda: list(all_tennis_players()))

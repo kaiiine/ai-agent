@@ -143,10 +143,11 @@ class PairwiseLiveModel:
 
 
 def make_module(*, sport: str, games_fn: Callable, api_of: dict[str, str], params: EloParams,
-                model_name: str, model_version: str, feature_version: str) -> SportModule:
+                model_name: str, model_version: str, feature_version: str,
+                entities: Callable | None = None) -> SportModule:
     """Assemble le `SportModule` live d'un sport moneyline 2-way."""
     builder = make_feature_builder(sport=sport, games_fn=games_fn, api_of=api_of,
                                    params=params, feature_version=feature_version)
     model = PairwiseLiveModel(sport=sport, model_name=model_name,
                               model_version=model_version, params=params)
-    return SportModule(sport, builder, model)
+    return SportModule(sport, builder, model, entities=entities)

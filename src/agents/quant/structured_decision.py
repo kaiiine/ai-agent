@@ -100,21 +100,37 @@ class MatchDecision:
 
 
 # ── Dépendances par défaut (I/O réelle ; injectables pour tests hermétiques) ───
-def _default_deps():   # pragma: no cover (I/O réelle)
+def _default_deps(sport: str = "football"):   # pragma: no cover (I/O réelle)
+    """Dépendances réelles, RÉSOLUES POUR LE SPORT DEMANDÉ.
+
+    L'identité était auparavant construite sur le référentiel football quel que
+    soit le sport : les six autres sports étaient enregistrés et atteignables,
+    mais échouaient tous en IDENTITY_UNRESOLVED avant d'atteindre leur modèle —
+    un chemin football-spécifique caché sous une façade générique. Chaque sport
+    a son espace de noms propre (`SportModule.known_entities`), et un joueur de
+    tennis ne peut pas résoudre contre un club de football.
+    """
     from .betting_engine.bookmakers.winamax.connector import WinamaxConnector
     from .betting_engine.bookmakers.winamax.catalogue import all_events
     from .betting_engine.bookmakers.bookmaker_registry import BookmakerEventResolver
+    from .betting_engine.sports.registry import SPORT_MODULES
     from .gateway.core.identity_resolver import IdentityResolver
-    from .gateway.core.identity_data import TEAMS
     from .gateway import gateway as sports_gateway
-    connector = WinamaxConnector()
-    resolver = BookmakerEventResolver(IdentityResolver(TEAMS))
+
+    module = SPORT_MODULES.get(sport)
+    entities = list(module.known_entities()) if module else []
+    identity = IdentityResolver(entities)
+
+    def search(name: str) -> dict | None:
+        hit = identity.find_by_name(name)
+        return {"canonical_id": hit.canonical_id, "name": hit.canonical_name} if hit else None
+
     return dict(
-        connector=connector,
+        connector=WinamaxConnector(),
         catalogue=all_events,
-        event_resolver=resolver,
+        event_resolver=BookmakerEventResolver(identity),
         sports_gateway=sports_gateway,
-        team_search=sports_gateway.search_team,
+        team_search=search,
     )
 
 
@@ -158,7 +174,7 @@ def decide_match(
     if decision_time is None:
         decision_time = datetime.now(timezone.utc)
     if connector is None:
-        deps = _default_deps()
+        deps = _default_deps(sport)
         connector = connector or deps["connector"]
         catalogue = catalogue or deps["catalogue"]
         event_resolver = event_resolver or deps["event_resolver"]

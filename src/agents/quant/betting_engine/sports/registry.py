@@ -29,8 +29,14 @@ def _registry() -> dict[str, SportModule]:
     from .volleyball.live_model import VOLLEYBALL_MODULE
     from .hockey.live_model import HOCKEY_MODULE
     from .tennis.live_model import TENNIS_MODULE
+
+    def _football_teams():
+        from src.agents.quant.gateway.core.identity_data import TEAMS
+        return list(TEAMS.values()) if isinstance(TEAMS, dict) else list(TEAMS)
+
     return {
-        "football": SportModule("football", build_event_feature_set, OneXTwoModel()),
+        "football": SportModule("football", build_event_feature_set, OneXTwoModel(),
+                                entities=_football_teams),
         "basketball": BASKETBALL_MODULE,
         "baseball": BASEBALL_MODULE,
         "american_football": NFL_MODULE,

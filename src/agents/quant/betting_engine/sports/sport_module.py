@@ -18,3 +18,15 @@ class SportModule:
     sport: str
     build_feature_set: Callable        # (event, *, gateway, as_of) -> EventFeatureSet
     model: object                      # assess_data_readiness + predict_selections
+    entities: Callable | None = None   # () -> Sequence[CanonicalEntity] du sport
+
+    def known_entities(self):
+        """Entités canoniques de CE sport, pour la résolution d'identité.
+
+        Chaque sport a son propre espace de noms — un joueur de tennis et un club
+        de football ne se croisent jamais. Sans cette couture, la résolution par
+        défaut retombait sur le référentiel FOOTBALL quel que soit le sport
+        demandé : les six autres sports étaient enregistrés, atteignables, et
+        échouaient tous en IDENTITY_UNRESOLVED avant même d'atteindre leur modèle.
+        """
+        return tuple(self.entities()) if self.entities is not None else ()

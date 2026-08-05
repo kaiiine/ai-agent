@@ -28,4 +28,5 @@ def _games():
 
 BASEBALL_MODULE = make_module(
     sport="baseball", games_fn=_games, api_of=_API_OF, params=MLB_PARAMS,
-    model_name=MODEL_NAME, model_version=MODEL_VERSION, feature_version="baseball-elo-1.0")
+    model_name=MODEL_NAME, model_version=MODEL_VERSION, feature_version="baseball-elo-1.0",
+    entities=lambda: list(MLB_TEAMS))
