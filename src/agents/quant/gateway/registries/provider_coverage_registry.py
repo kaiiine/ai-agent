@@ -142,25 +142,43 @@ def usable_providers(competition_id: str, season: str, data_type: str, db_path: 
         conn.close()
 
 
-# ── Couverture connue (baseline vérifiée cette session) ──────────────────────────
+# ── Couverture connue (baseline vérifiée) ────────────────────────────────────────
 
 _L1 = "competition:football:fra:ligue1"
 _PL = "competition:football:eng:premier_league"
 
+# Les 8 compétitions domestiques onboardées, avec leur code football-data.org.
+# Toutes vérifiées par appel réel le 2026-08-05 (cf. notes ci-dessous) : jusque-là
+# seule la Ligue 1 figurait ici, si bien que les sept autres avaient une identité
+# complète et AUCUNE couverture — donc PROVIDER_COVERAGE_MISSING quoi qu'il arrive.
+# Le défaut n'était pas un manque de données, c'était une baseline jamais étendue.
+_FDO_DOMESTIQUES = (
+    (_L1, "FL1"),
+    (_PL, "PL"),
+    ("competition:football:ita:serie_a", "SA"),
+    ("competition:football:esp:laliga", "PD"),
+    ("competition:football:deu:bundesliga", "BL1"),
+    ("competition:football:eng:championship", "ELC"),
+    ("competition:football:nld:eredivisie", "DED"),
+    ("competition:football:prt:primeira_liga", "PPL"),
+)
+
 
 def known_coverage() -> list[ProviderCompetitionCoverage]:
-    """Baseline de couverture — reflète des vérifications live_call réelles menées
-    cette session (voir coverage_verification pour re-vérifier). Honnête sur ce qui
-    N'A PAS été vérifié : ces combos restent UNVERIFIED, donc inutilisables."""
+    """Baseline de couverture — reflète des vérifications live_call réelles (voir
+    coverage_verification pour re-vérifier). Honnête sur ce qui N'A PAS été
+    vérifié : ces combos restent UNVERIFIED, donc inutilisables."""
     verified = datetime(2026, 7, 25, tzinfo=timezone.utc)
+    verified_0805 = datetime(2026, 8, 5, tzinfo=timezone.utc)
     entries: list[ProviderCompetitionCoverage] = []
 
-    def add(provider, comp, prov_id, season, data_types, status, method, notes=None):
+    def add(provider, comp, prov_id, season, data_types, status, method, notes=None,
+            at=verified):
         for data_type in data_types:
             entries.append(ProviderCompetitionCoverage(
                 provider=provider, competition_id=comp, provider_competition_id=prov_id,
                 season=season, data_type=data_type, status=status,
-                verified_at=verified, verification_method=method, notes=notes,
+                verified_at=at, verification_method=method, notes=notes,
             ))
 
     # football-data.org — saison en cours, vérifiée live cette session
@@ -169,6 +187,25 @@ def known_coverage() -> list[ProviderCompetitionCoverage]:
     add("football_data_org", _PL, "PL", "2025", ["STANDINGS"], CoverageStatus.FULL, "live_call")
     # PL matchs 2025 : non vérifiés en direct -> UNVERIFIED (jamais servis tant que non vérifiés)
     add("football_data_org", _PL, "PL", "2025", ["FIXTURES", "RESULTS"], CoverageStatus.UNVERIFIED, "manual")
+
+    # ── Saison 2026-27, les 8 domestiques (vérifiées le 2026-08-05) ──────────────
+    # Deux endpoints appelés par compétition, tous HTTP 200 :
+    #   /competitions/{code}/matches?season=2026   -> 306 à 552 rencontres, effectifs corrects
+    #   /competitions/{code}/standings?season=2026 -> 3 tables (général/domicile/extérieur)
+    # `/matches` porte le statut de chaque rencontre : il sert donc FIXTURES ET RESULTS.
+    #
+    # RESULTS est servi mais VIDE : 0 rencontre jouée au 5 août, les saisons démarrent
+    # entre le 7 et le 28. C'est un vrai manque de données, pas une absence de
+    # couverture — et la distinction est exactement l'objet de ces entrées. Sans
+    # elles, l'engine répondait « aucun provider » là où il fallait lire « provider
+    # présent, saison pas encore commencée ». FULL décrit la disponibilité de la
+    # SOURCE, jamais la richesse de son contenu à un instant donné.
+    for comp, code in _FDO_DOMESTIQUES:
+        add("football_data_org", comp, code, "2026",
+            ["FIXTURES", "RESULTS", "STANDINGS"], CoverageStatus.FULL, "live_call",
+            notes="vérifié 2026-08-05 : /matches et /standings en HTTP 200 ; "
+                  "RESULTS vide tant que la saison n'a pas démarré",
+            at=verified_0805)
 
     # API-Sports — tier gratuit : 2022-2024 servies, 2025+ refusée (bug fondateur)
     add("api_sports", _L1, "61", "2024", ["FIXTURES", "RESULTS", "STANDINGS"], CoverageStatus.FULL, "live_call")
