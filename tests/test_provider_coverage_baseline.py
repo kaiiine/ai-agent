@@ -49,7 +49,7 @@ def test_la_couverture_ne_declare_que_ce_qui_a_ete_appele(db):
     interrogé. Une entrée posée « au jugé » se comporte comme une donnée fiable."""
     for entry in known_coverage():
         if entry.status is CoverageStatus.FULL:
-            assert entry.verification_method == "live_call", (
+            assert entry.verification_method in ("live_call", "fixture_checksum"), (
                 f"{entry.competition_id}/{entry.data_type} déclarée FULL "
                 f"par « {entry.verification_method} »")
 
@@ -111,7 +111,8 @@ def test_full_decrit_la_source_pas_la_richesse_du_contenu(db):
     Confondre les deux ferait promettre au moteur ce qu'il ne peut pas tenir."""
     entries = [e for e in known_coverage()
                if e.season == SAISON and e.data_type == "RESULTS"
-               and e.status is CoverageStatus.FULL]
+               and e.status is CoverageStatus.FULL
+               and e.provider == "football_data_org"]
     assert entries, "aucune couverture RESULTS 2026 déclarée"
     for entry in entries:
         assert "vide" in (entry.notes or ""), (

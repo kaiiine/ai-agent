@@ -33,8 +33,9 @@ CASES = {
 
 
 def _resolver(tournament_id, canonical):
-    comp = lambda tid: ((canonical, "RESOLVED", "competition_table")
-                        if str(tid) == str(tournament_id) else (None, "UNRESOLVED", "none"))
+    comp = lambda ev: ((canonical, "RESOLVED", "competition_table")
+                       if str(ev.raw_tournament_id) == str(tournament_id)
+                       else (None, "UNRESOLVED", "none"))
     # Résolveur MULTISPORT partagé (identité agrégée des 6 sports).
     return BookmakerEventResolver(IdentityResolver(list(all_sport_teams())), competition_resolver=comp)
 

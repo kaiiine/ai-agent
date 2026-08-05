@@ -70,8 +70,8 @@ def _resolver():
         CanonicalEntity(_HOME, "Boston Celtics", ["Celtics"], {}),
         CanonicalEntity(_AWAY, "Los Angeles Lakers", ["LA Lakers"], {}),
     ])
-    comp = lambda tid: (("competition:basketball:usa:nba", "RESOLVED", "competition_table")
-                        if tid == "NBA" else (None, "UNRESOLVED", "none"))
+    comp = lambda ev: (("competition:basketball:usa:nba", "RESOLVED", "competition_table")
+                        if ev.raw_tournament_id == "NBA" else (None, "UNRESOLVED", "none"))
     return BookmakerEventResolver(identity, competition_resolver=comp)
 
 

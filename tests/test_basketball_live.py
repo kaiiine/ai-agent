@@ -45,8 +45,8 @@ def _fresh():        # récent (T-2h) -> mesuré, non stale
 
 
 def _resolver():
-    comp = lambda tid: (("competition:basketball:usa:nba", "RESOLVED", "competition_table")
-                        if tid == "NBA" else (None, "UNRESOLVED", "none"))
+    comp = lambda ev: (("competition:basketball:usa:nba", "RESOLVED", "competition_table")
+                        if ev.raw_tournament_id == "NBA" else (None, "UNRESOLVED", "none"))
     return BookmakerEventResolver(IdentityResolver(NBA_TEAMS), competition_resolver=comp)
 
 

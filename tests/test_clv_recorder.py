@@ -31,8 +31,8 @@ def _resolver():
                         ["PSG", "Paris SG", "Paris Saint-Germain"], {}),
         CanonicalEntity("team:football:fra:marseille", "Marseille",
                         ["OM", "Olympique de Marseille"], {})])
-    comp = lambda tid: (("competition:football:fra:ligue1", "RESOLVED", "competition_table")
-                        if tid == "4" else (None, "UNRESOLVED", "none"))
+    comp = lambda ev: (("competition:football:fra:ligue1", "RESOLVED", "competition_table")
+                        if ev.raw_tournament_id == "4" else (None, "UNRESOLVED", "none"))
     return BookmakerEventResolver(identity, competition_resolver=comp)
 
 
@@ -101,8 +101,8 @@ def _nba_resolver():
     identity = IdentityResolver([
         CanonicalEntity("team:basketball:usa:celtics", "Boston Celtics", ["Celtics"], {}),
         CanonicalEntity("team:basketball:usa:lakers", "Los Angeles Lakers", ["LA Lakers"], {})])
-    comp = lambda tid: (("competition:basketball:usa:nba", "RESOLVED", "competition_table")
-                        if tid == "55" else (None, "UNRESOLVED", "none"))
+    comp = lambda ev: (("competition:basketball:usa:nba", "RESOLVED", "competition_table")
+                        if ev.raw_tournament_id == "55" else (None, "UNRESOLVED", "none"))
     return BookmakerEventResolver(identity, competition_resolver=comp)
 
 
@@ -143,7 +143,7 @@ def test_unresolved_events_are_skipped_never_fabricated(tmp_path):
     t0 = datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc)
     # Résolveur qui ne résout AUCUNE équipe -> événement ignoré, rien fabriqué.
     empty = BookmakerEventResolver(IdentityResolver([]),
-                                   competition_resolver=lambda tid: (None, "UNRESOLVED", "none"))
+                                   competition_resolver=lambda ev: (None, "UNRESOLVED", "none"))
     summary = record_from_capture(_capture(home_odds=2.10), event_resolver=empty,
                                   store=store, phase=ObservationPhase.DECISION, now=t0)
     assert summary.observations_written == 0 and summary.events_skipped == 1

@@ -113,7 +113,12 @@ class BookmakerEventResolver:
     ):
         self._identity = identity_resolver
         self._roles = role_resolver or ParticipantRoleResolver()
-        self._resolve_competition = competition_resolver or _default_resolve_competition
+        # Le résolveur reçoit l'ÉVÉNEMENT, pas seulement son tid : c'est
+        # strictement plus d'information, et certains sports ne peuvent pas
+        # résoudre autrement. Le tennis en est un — son tid identifie une édition
+        # de tournoi, alors que le plateau, lui, désigne le circuit sans ambiguïté.
+        self._resolve_competition = competition_resolver or (
+            lambda ev: _default_resolve_competition(ev.raw_tournament_id))
 
     def resolve_event(self, event: RawBookmakerEvent) -> BookmakerEventMapping:
         confirmed_at = datetime.now(timezone.utc)
@@ -131,7 +136,7 @@ class BookmakerEventResolver:
         ev_1 = self._resolve_participant(event.sport, "slot_1", event.slot_1_name, event.slot_1_id)
         ev_2 = self._resolve_participant(event.sport, "slot_2", event.slot_2_name, event.slot_2_id)
 
-        comp_id, comp_status, comp_method = self._resolve_competition(event.raw_tournament_id)
+        comp_id, comp_status, comp_method = self._resolve_competition(event)
         ev_comp = ResolutionEvidence(
             "competition", event.raw_tournament_id or "", comp_method,
             comp_status, comp_id,

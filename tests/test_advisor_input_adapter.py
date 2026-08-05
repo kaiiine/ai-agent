@@ -71,8 +71,10 @@ def _resolver():
         CanonicalEntity(_PSG, "Paris Saint Germain", ["PSG", "Paris SG", "Paris Saint-Germain"], {}),
         CanonicalEntity(_OM, "Marseille", ["OM"], {}),
     ])
-    comp = lambda tid: (("competition:football:fra:ligue1", "RESOLVED", "competition_table")
-                        if tid == "4" else (None, "UNRESOLVED", "none"))
+    # Le résolveur reçoit l'ÉVÉNEMENT : certains sports ne peuvent pas résoudre
+    # depuis le seul tid (le tennis identifie une édition de tournoi, pas un circuit).
+    comp = lambda ev: (("competition:football:fra:ligue1", "RESOLVED", "competition_table")
+                       if ev.raw_tournament_id == "4" else (None, "UNRESOLVED", "none"))
     return BookmakerEventResolver(identity, competition_resolver=comp)
 
 

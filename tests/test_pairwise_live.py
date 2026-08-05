@@ -64,8 +64,8 @@ class _Gateway:
 
 
 def _resolver(case):
-    comp = lambda tid: ((case["canonical"], "RESOLVED", "competition_table")
-                        if tid == case["comp_tid"] else (None, "UNRESOLVED", "none"))
+    comp = lambda ev: ((case["canonical"], "RESOLVED", "competition_table")
+                        if ev.raw_tournament_id == case["comp_tid"] else (None, "UNRESOLVED", "none"))
     return BookmakerEventResolver(IdentityResolver(case["teams"]), competition_resolver=comp)
 
 

@@ -33,6 +33,7 @@ from src.agents.quant.betting_engine.support_status import resolve_market_status
 
 from .elo_model import ATP_PARAMS, WTA_PARAMS, _p, tennis_ratings_as_of
 from .identity import tennis_players
+from .competition import resolve_tennis_competition
 from .tennis_data_loader import load_tennis_data
 
 # Marché « Vainqueur » 2-way (betType 112 Winamax, vérifié en live). Issues = rôles neutres.
@@ -143,4 +144,5 @@ class TennisMoneylineModel:
 
 
 TENNIS_MODULE = SportModule("tennis", build_tennis_features, TennisMoneylineModel(),
-                          entities=lambda: list(all_tennis_players()))
+                          entities=lambda: list(all_tennis_players()),
+                          resolve_competition=resolve_tennis_competition)

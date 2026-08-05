@@ -89,9 +89,9 @@ def _event(sport, tid, s1, s2, template, *, eid=None):
         markets=[market], fetched_at=_DECISION, raw_tournament_id=tid)
 
 
-def _comp_resolver(tid):
+def _comp_resolver(ev):
     for _sport, (t, _h, _a, _tpl, canon, _sel) in CASES.items():
-        if t == tid:
+        if t == ev.raw_tournament_id:
             return (canon, "RESOLVED", "competition_table")
     return (None, "UNRESOLVED", "none")
 

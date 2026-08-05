@@ -19,6 +19,11 @@ class SportModule:
     build_feature_set: Callable        # (event, *, gateway, as_of) -> EventFeatureSet
     model: object                      # assess_data_readiness + predict_selections
     entities: Callable | None = None   # () -> Sequence[CanonicalEntity] du sport
+    # (RawBookmakerEvent) -> (competition_id, statut, méthode). None = résolution
+    # par `raw_tournament_id`, valable pour les sports de LIGUE dont le tid est
+    # stable d'une saison à l'autre. Le tennis ne peut pas s'en servir : son tid
+    # identifie une ÉDITION de tournoi et change chaque semaine.
+    resolve_competition: Callable | None = None
 
     def known_entities(self):
         """Entités canoniques de CE sport, pour la résolution d'identité.

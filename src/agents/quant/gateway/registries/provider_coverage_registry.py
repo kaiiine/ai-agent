@@ -18,13 +18,16 @@ import sqlite3
 
 COVERAGE_DB = Path.home() / ".axon" / "sports_provider_coverage.db"
 
-_VERIFICATION_METHODS = {"live_call", "provider_docs", "manual"}
+# `fixture_checksum` : dataset EMBARQUÉ dans le dépôt, vérifié par son empreinte au
+# chargement. Ce n'est pas un appel réseau — le décrire comme tel serait faux — mais
+# c'est une vérification plus forte : la donnée servie est exactement celle mesurée.
+_VERIFICATION_METHODS = {"live_call", "provider_docs", "manual", "fixture_checksum"}
 
 # Version de la baseline `known_coverage()`. À INCRÉMENTER dès qu'une entrée y est
 # ajoutée, retirée ou corrigée : c'est ce numéro qui déclenche la ré-application
 # sur une base déjà initialisée. Sans lui, une correction de couverture ne serait
 # jamais reprise sur les installations existantes.
-BASELINE_VERSION = 2
+BASELINE_VERSION = 3
 
 
 class CoverageStatus(str, Enum):
@@ -249,6 +252,17 @@ def known_coverage() -> list[ProviderCompetitionCoverage]:
             notes="vérifié 2026-08-05 : /matches et /standings en HTTP 200 ; "
                   "RESULTS vide tant que la saison n'a pas démarré",
             at=verified_0805)
+
+    # ── Tennis : dataset tennis-data.co.uk EMBARQUÉ (ATP+WTA 2000-2026) ─────────
+    # Le circuit est la compétition : c'est lui qui définit la population de joueurs
+    # et le pool de notes Elo. Le tournoi n'entre dans aucune feature.
+    for tour in ("atp", "wta"):
+        for season in ("2025", "2026"):
+            add("tennis_data", f"competition:tennis:{tour}:tour", tour, season,
+                ["RESULTS"], CoverageStatus.FULL, "fixture_checksum",
+                notes="fixture tests/fixtures/tennis/tennis_data_{tour}_2000_2026.csv.gz, "
+                      "empreinte sha256 vérifiée au chargement",
+                at=verified_0805)
 
     # API-Sports — tier gratuit : 2022-2024 servies, 2025+ refusée (bug fondateur)
     add("api_sports", _L1, "61", "2024", ["FIXTURES", "RESULTS", "STANDINGS"], CoverageStatus.FULL, "live_call")

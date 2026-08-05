@@ -33,9 +33,9 @@ def _resolver() -> BookmakerEventResolver:
         CanonicalEntity("team:football:eng:united_b", "United B", ["United"], {}),
     ]
     identity = IdentityResolver(entities)
-    comp = lambda tid: (
+    comp = lambda ev: (
         ("competition:football:fra:ligue1", "RESOLVED", "competition_table")
-        if tid == "4" else (None, "UNRESOLVED", "none")
+        if ev.raw_tournament_id == "4" else (None, "UNRESOLVED", "none")
     )
     return BookmakerEventResolver(identity, competition_resolver=comp)
 

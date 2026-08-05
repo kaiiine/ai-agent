@@ -128,7 +128,8 @@ def _default_deps(sport: str = "football"):   # pragma: no cover (I/O réelle)
     return dict(
         connector=WinamaxConnector(),
         catalogue=all_events,
-        event_resolver=BookmakerEventResolver(identity),
+        event_resolver=BookmakerEventResolver(
+            identity, competition_resolver=module.resolve_competition if module else None),
         sports_gateway=sports_gateway,
         team_search=search,
     )

@@ -18,8 +18,8 @@ def _registry() -> BookmakerEventResolver:
                         ["PSG", "Paris SG", "Paris Saint-Germain"], {}),
         CanonicalEntity("team:football:fra:marseille", "Marseille", ["OM"], {}),
     ])
-    comp = lambda tid: (("competition:football:fra:ligue1", "RESOLVED", "competition_table")
-                        if tid == "4" else (None, "UNRESOLVED", "none"))
+    comp = lambda ev: (("competition:football:fra:ligue1", "RESOLVED", "competition_table")
+                        if ev.raw_tournament_id == "4" else (None, "UNRESOLVED", "none"))
     return BookmakerEventResolver(identity, competition_resolver=comp)
 
 

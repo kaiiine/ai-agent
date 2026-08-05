@@ -37,8 +37,8 @@ class _Gateway:
 
 
 def _resolver():
-    comp = lambda tid: (("competition:hockey:usa:nhl", "RESOLVED", "competition_table")
-                        if tid == "NHL" else (None, "UNRESOLVED", "none"))
+    comp = lambda ev: (("competition:hockey:usa:nhl", "RESOLVED", "competition_table")
+                        if ev.raw_tournament_id == "NHL" else (None, "UNRESOLVED", "none"))
     return BookmakerEventResolver(IdentityResolver(NHL_TEAMS), competition_resolver=comp)
 
 

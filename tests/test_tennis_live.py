@@ -59,8 +59,8 @@ def _alias_pair(tour: str) -> tuple[str, str]:
 
 
 def _resolver():
-    comp = lambda tid: (("competition:tennis:atp:tour", "RESOLVED", "competition_table")
-                        if tid == "ATP" else (None, "UNRESOLVED", "none"))
+    comp = lambda ev: (("competition:tennis:atp:tour", "RESOLVED", "competition_table")
+                        if ev.raw_tournament_id == "ATP" else (None, "UNRESOLVED", "none"))
     return BookmakerEventResolver(IdentityResolver(list(all_tennis_players())),
                                   competition_resolver=comp)
 
