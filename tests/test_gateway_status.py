@@ -32,10 +32,19 @@ def test_status_unknown_competition_is_reported(capsys):
     assert "inconnue" in out.lower() or "inconnu" in out.lower()
 
 
-def test_status_empty_coverage_hints_seed(tmp_path, monkeypatch, capsys):
+def test_status_sur_base_neuve_montre_la_couverture_sans_commande_manuelle(
+    tmp_path, monkeypatch, capsys
+):
+    """Ce test attendait auparavant la suggestion « lance axon sports-seed » : une
+    installation neuve était vide et il fallait le dire. La baseline s'applique
+    désormais au premier accès, donc il n'y a plus rien à suggérer — et c'est
+    précisément le défaut d'exploitation qui a été corrigé."""
     from src.agents.quant.gateway.registries import provider_coverage_registry as pcr
     from src.agents.quant.gateway import status
-    monkeypatch.setattr(pcr, "COVERAGE_DB", tmp_path / "empty.db")
+    monkeypatch.setattr(pcr, "COVERAGE_DB", tmp_path / "neuve.db")
+
     status.print_status(competition="competition:football:fra:ligue1", season="2025")
+
     out = capsys.readouterr().out
-    assert "sports-seed" in out
+    assert "football_data_org" in out
+    assert "sports-seed" not in out

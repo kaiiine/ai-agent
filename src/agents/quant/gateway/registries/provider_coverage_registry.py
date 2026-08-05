@@ -20,6 +20,12 @@ COVERAGE_DB = Path.home() / ".axon" / "sports_provider_coverage.db"
 
 _VERIFICATION_METHODS = {"live_call", "provider_docs", "manual"}
 
+# Version de la baseline `known_coverage()`. À INCRÉMENTER dès qu'une entrée y est
+# ajoutée, retirée ou corrigée : c'est ce numéro qui déclenche la ré-application
+# sur une base déjà initialisée. Sans lui, une correction de couverture ne serait
+# jamais reprise sur les installations existantes.
+BASELINE_VERSION = 2
+
 
 class CoverageStatus(str, Enum):
     FULL = "FULL"
@@ -51,6 +57,15 @@ class ProviderCompetitionCoverage:
 
 
 def _connection(db_path: Path | None = None) -> sqlite3.Connection:
+    """Ouvre la base et garantit qu'elle porte le schéma ET la baseline versionnée.
+
+    Le bootstrap vit ICI, au premier accès, et non à l'import : un import ne doit
+    rien écrire sur le disque. Il vit ici plutôt que dans l'entrypoint parce que
+    la panne à éviter est silencieuse — une installation neuve renvoyait des
+    couvertures vides, donc `PROVIDER_COVERAGE_MISSING` sur des compétitions
+    pourtant déclarées et vérifiées, sans que rien ne signale l'étape manquante.
+    Un seed manuel qu'on peut oublier n'est pas une garantie.
+    """
     path = db_path or COVERAGE_DB
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
@@ -62,7 +77,35 @@ def _connection(db_path: Path | None = None) -> sqlite3.Connection:
             PRIMARY KEY (provider, competition_id, season, data_type)
         )
     """)
+    conn.execute("CREATE TABLE IF NOT EXISTS registry_meta (key TEXT PRIMARY KEY, value TEXT)")
+    _apply_baseline(conn)
     return conn
+
+
+def _apply_baseline(conn: sqlite3.Connection) -> int:
+    """Applique `known_coverage()` si la base n'est pas déjà à `BASELINE_VERSION`.
+
+    Idempotent : au-delà du premier appel, coûte un SELECT et rien d'autre.
+    ADDITIF : n'écrit que sur les clés de la baseline elle-même. Une couverture
+    enregistrée par ailleurs — vérification manuelle, script d'exploitation — n'est
+    jamais touchée, et rien n'est jamais supprimé.
+    """
+    row = conn.execute(
+        "SELECT value FROM registry_meta WHERE key = 'baseline_version'").fetchone()
+    if row is not None and int(row[0]) >= BASELINE_VERSION:
+        return 0
+
+    entries = known_coverage()
+    conn.executemany(
+        "INSERT OR REPLACE INTO coverage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(e.provider, e.competition_id, e.provider_competition_id, e.season,
+          e.data_type, e.status.value, e.verified_at.isoformat(),
+          e.verification_method, e.historical_depth_years, e.notes) for e in entries],
+    )
+    conn.execute("INSERT OR REPLACE INTO registry_meta VALUES ('baseline_version', ?)",
+                 (str(BASELINE_VERSION),))
+    conn.commit()
+    return len(entries)
 
 
 def _row_to_entry(row: tuple) -> ProviderCompetitionCoverage:
@@ -216,8 +259,15 @@ def known_coverage() -> list[ProviderCompetitionCoverage]:
 
 
 def seed(db_path: Path | None = None) -> int:
-    """Matérialise la baseline known_coverage() dans le stockage SQLite. Idempotent."""
-    entries = known_coverage()
-    for entry in entries:
-        record_coverage(entry, db_path)
-    return len(entries)
+    """Ré-applique la baseline sans condition de version — commande d'exploitation.
+
+    Le bootstrap automatique (`_apply_baseline`) suffit au cas normal. Celle-ci
+    existe pour forcer la reprise après une modification manuelle de la base, et
+    reste additive : elle n'efface rien.
+    """
+    conn = _connection(db_path)
+    try:
+        conn.execute("DELETE FROM registry_meta WHERE key = 'baseline_version'")
+        return _apply_baseline(conn)
+    finally:
+        conn.close()
