@@ -29,9 +29,13 @@ Tu es un agent de monitoring autonome. Exécute la tâche demandée.
 N'ENVOIE RIEN toi-même : le daemon se charge de la diffusion sur les canaux configurés
 de la tâche (desktop/slack). Renvoie simplement `notify` et `message` — n'utilise ni curl,
 ni webhook, et ne demande JAMAIS d'URL de webhook.
-Pour un pari/pronostic sportif : utilise winamax_odds_fetch (cotes), sports_stats_fetch (forme),
-probability_compute (probabilité statistique réelle), ev_analyze/parlay_analyze/same_match_combo_analyze
-(edge) — jamais une probabilité devinée ou hallucinée.
+Pour toute RECOMMANDATION de pari (quoi jouer, meilleurs paris, scan du jour) : utilise
+betting_recommend, et lui seul. Il scanne, évalue et dimensionne ; restitue son champ
+`rendered` sans en modifier un chiffre. Les autres outils quant (winamax_odds_fetch,
+sports_stats_fetch, probability_compute, ev_analyze, parlay_analyze,
+same_match_combo_analyze) exposent des données et des diagnostics — jamais une sélection
+à jouer. N'invente jamais un match, une cote, un horaire, une probabilité ou une mise, et
+ne calcule jamais une EV à partir d'une cote.
 Réponds UNIQUEMENT avec un objet JSON valide (pas de markdown) :
 {
   "notify": true,
@@ -82,6 +86,7 @@ def _run_task(task_id: str) -> None:
     from langgraph.prebuilt import create_react_agent
     from src.agents.search.tools import web_search_news, web_research_report
     from src.agents.shell.tools import shell_run
+    from src.agents.quant.conversation.tools import betting_recommend
     from src.agents.quant.tools import (
         winamax_odds_fetch, sports_stats_fetch, probability_compute,
         ev_analyze, same_match_combo_analyze, parlay_analyze,
@@ -111,6 +116,11 @@ def _run_task(task_id: str) -> None:
         llm = _make_llm()
         tools = [
             web_search_news, web_research_report, shell_run,
+            # L'UNIQUE chemin de recommandation, ici aussi : une tâche planifiée
+            # « les meilleurs paris du jour » disposait des six outils de données
+            # mais d'aucun capable de recommander — et poussait le résultat sur
+            # Slack sans qu'aucun humain ne soit devant l'écran.
+            betting_recommend,
             winamax_odds_fetch, sports_stats_fetch, probability_compute,
             ev_analyze, same_match_combo_analyze, parlay_analyze,
         ]
@@ -125,6 +135,26 @@ def _run_task(task_id: str) -> None:
         message = result.get("message", "")
         summary = result.get("result_summary", "")
         stop    = result.get("stop", False)
+
+        # Garde de provenance, comme dans le graphe conversationnel. Une
+        # notification est une réponse — poussée sur Slack ou le bureau sans
+        # personne devant l'écran pour la relire. C'est la sortie qui mérite le
+        # PLUS d'être vérifiée, pas la moins.
+        if notify and message:
+            from src.agents.quant.conversation.evidence import (
+                extract_evidence,
+                has_structured_output,
+            )
+            from src.agents.quant.conversation.guard import enforce as _enforce_betting
+
+            _msgs = result_state.get("messages") or []
+            _verdict = _enforce_betting(
+                message, extract_evidence(_msgs),
+                has_structured_output=has_structured_output(_msgs))
+            if _verdict.blocked:
+                log_entry["error"] = f"réponse de pari non sourcée ({_verdict.reason})"
+                message = (f"[{_verdict.reason}] Réponse bloquée : aucune sortie "
+                           "structurée ne l'appuie. Aucun pari n'est proposé.")
 
         if notify and message:
             _send_notification(task["notify_channels"], task["description"], message)

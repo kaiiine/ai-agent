@@ -638,6 +638,77 @@ def test_les_cotes_brutes_n_exposent_plus_de_probabilite():
     assert "implied_probability" not in source
 
 
+def test_un_seul_outil_peut_produire_une_recommandation():
+    """La preuve mécanique, pas déclarative : `extract_evidence` ne lit QUE les
+    `ToolMessage` nommés `betting_recommend`. Un autre outil peut donc renvoyer
+    une charge utile parfaitement formée, avec un `RECOMMENDED` et un `audit_id`
+    crédibles — elle ne débloquera jamais une réponse actionnable."""
+    import json
+
+    charge = json.dumps({"status": "COMPLETED", EVIDENCE_KEY: _preuve("RECOMMENDED")})
+
+    for outil in ("ev_analyze", "parlay_analyze", "same_match_combo_analyze",
+                  "probability_compute", "winamax_odds_fetch", "sports_stats_fetch"):
+        messages = [HumanMessage("le meilleur pari ?"),
+                    ToolMessage(content=charge, tool_call_id="c1", name=outil)]
+        assert extract_evidence(messages) is None, f"{outil} débloque une recommandation"
+        assert enforce("Mise 5 € sur cette sélection.", extract_evidence(messages),
+                       has_structured_output=True).blocked
+
+    messages = [HumanMessage("le meilleur pari ?"),
+                ToolMessage(content=charge, tool_call_id="c1", name="betting_recommend")]
+    assert extract_evidence(messages) is not None
+
+
+def test_aucun_outil_hors_betting_recommend_n_atteint_l_advisor():
+    """Les six outils de données restent utiles en diagnostic, mais aucun ne peut
+    dimensionner : le sizing, le ranking et les combos vivent dans l'Advisor, et
+    ils n'y touchent pas."""
+    import ast
+    import inspect
+    import textwrap
+
+    from src.agents.quant import tools
+
+    # Sur le CODE, pas sur le texte : les docstrings de ces outils parlent
+    # abondamment de Kelly et d'EV pour dire qu'ils n'en calculent pas. Un grep
+    # brut confondrait la promesse et sa violation.
+    interdits = {"advisor", "run_pipeline", "kelly", "expected_value",
+                 "probability_engine", "dixon_coles", "ev_engine"}
+
+    for nom in ("winamax_odds_fetch", "sports_stats_fetch", "probability_compute",
+                "ev_analyze", "parlay_analyze", "same_match_combo_analyze"):
+        arbre = ast.parse(textwrap.dedent(inspect.getsource(getattr(tools, nom).func)))
+        identifiants = {
+            n.id.lower() for n in ast.walk(arbre) if isinstance(n, ast.Name)
+        } | {
+            n.attr.lower() for n in ast.walk(arbre) if isinstance(n, ast.Attribute)
+        } | {
+            alias.name.lower().split(".")[-1]
+            for n in ast.walk(arbre) if isinstance(n, (ast.Import, ast.ImportFrom))
+            for alias in n.names
+        } | {
+            (n.module or "").lower().split(".")[-1]
+            for n in ast.walk(arbre) if isinstance(n, ast.ImportFrom)
+        }
+        fautes = identifiants & interdits
+        assert not fautes, f"{nom} appelle {sorted(fautes)}"
+
+
+def test_le_daemon_cron_partage_le_meme_chemin_et_le_meme_garde():
+    """Seconde surface d'agent : une tâche planifiée « les meilleurs paris du
+    jour » disposait des six outils de données et d'aucun capable de recommander,
+    puis poussait le résultat sur Slack sans personne devant l'écran."""
+    import inspect
+
+    from src import cron_daemon
+
+    source = inspect.getsource(cron_daemon)
+
+    assert "betting_recommend," in source
+    assert "conversation.guard import enforce" in source
+
+
 def test_le_garde_est_cable_dans_le_noeud_final():
     """Un garde non appelé est un commentaire."""
     import inspect
