@@ -442,6 +442,30 @@ def _chat_node_factory():
                 except Exception:
                     pass  # échec de la correction → on garde la réponse originale
 
+        # Garde de provenance BETTING — programmatique, jamais un prompt.
+        # Une réponse de pari doit venir de la chaîne structurée du TOUR COURANT.
+        # Sans preuve, le texte est remplacé : le modèle n'est pas convaincu, il
+        # est court-circuité. Ne s'applique qu'à la réponse finale (un tour
+        # intermédiaire n'affirme rien à l'utilisateur).
+        if not getattr(response, "tool_calls", None):
+            from src.agents.quant.conversation.evidence import (
+                extract_evidence,
+                has_structured_output,
+            )
+            from src.agents.quant.conversation.guard import enforce as _enforce_betting
+
+            _verdict = _enforce_betting(
+                _content_to_str(response.content),
+                extract_evidence(working),
+                has_structured_output=has_structured_output(working),
+            )
+            if _verdict.blocked:
+                console.print(
+                    f"[dim]  ⛔ réponse de pari non sourcée — remplacée "
+                    f"({_verdict.reason})[/dim]"
+                )
+                response = AIMessage(content=_verdict.replacement)
+
         # Persist compression to LangGraph state so subsequent chatbot calls
         # start with the compressed history, not the original bloated one.
         from langchain_core.messages import RemoveMessage
