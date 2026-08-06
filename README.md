@@ -7,6 +7,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-orange?style=flat-square&logo=python&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-blue?style=flat-square)
 ![Ollama](https://img.shields.io/badge/Ollama-local%20%2B%20cloud-black?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-1256%20passing-brightgreen?style=flat-square)
 ![Gemini](https://img.shields.io/badge/Gemini-2.5%20Flash-4285F4?style=flat-square&logo=google)
 ![Mistral](https://img.shields.io/badge/Mistral-small%202603-FF7000?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -63,9 +64,11 @@ axon
                              │
 ┌────────────────────────────▼────────────────────────────────────────┐
 │                       Orchestrator (LangGraph)                       │
-│   Semantic ToolRetriever (nomic-embed-text) → k=7 tools             │
+│   Two-stage tool routing: query → group → tools (22 groups)         │
+│     hybrid — exact term match complements vector similarity          │
 │   CachedToolNode (TTL + invalidation) · Cloud redaction             │
-│   Proactive context compression (85% → summarize or prune)          │
+│   Context compression (tiktoken-counted, 40-75% of window by backend)│
+│   Error recovery: retry → provider switch → drop tools → explain     │
 │   Key pool rotation (multi-account, auto-fallback across providers) │
 └─────────────────────────────────────────────────────────────────────┘
                              │
@@ -88,10 +91,14 @@ Switchable on the fly via `/backend` or in `configs/base.yaml`:
 
 | Backend | Default model | Context | Notes |
 |---------|---------------|---------|-------|
-| `ollama_cloud` | `minimax-m2.5:cloud` | 128 000 | **Recommended** — powerful, multi-account pool |
-| `gemini` | `gemini-2.5-flash` | **1 000 000** | Free, massive context window |
-| `mistral` | `mistral-small-2603` | 128 000 | Free tier, 1M context |
+| `ollama_cloud` | `gpt-oss:120b-cloud` | 131 072 | **Recommended** — powerful, multi-account pool |
+| `gemini` | `gemini-2.5-flash` | **1 048 576** | Free, massive context window |
+| `mistral` | `mistral-small-2603` | 128 000 | Free tier |
 | `ollama` | `qwen2.5:7b` | 131 072 | 100% local (GPU) |
+| `groq` | `openai/gpt-oss-20b` | 131 072 | Very low latency |
+
+All clients carry an explicit 180 s timeout and 2 internal retries — the pool
+rotates keys rather than waiting out a provider's backoff.
 
 ### Multi-key rotation
 
@@ -125,7 +132,7 @@ dev_plan_create → analysis → dev_explain → propose_file_change
 - **`/mode ask`** (default): approval required for each file
 - **`/mode auto`**: writes directly without confirmation
 - **`/undo`**: restores all files modified since the last round (automatic snapshot)
-- **Per-stack skills**: Next.js · Angular · Vue · Svelte · Three.js · Python · Rust · Go · Node.js · Java · Systems — loaded automatically by manifest detection or via `load_skill()`
+- **Skills**: Next.js · Angular · Vue · Svelte · Three.js · Blender · Python · Rust · Go · Node.js · Java · Kotlin · Systems — Markdown files in `skills/`, each declaring its `scope` (coding, orchestrator, or both) and the phrasings that should retrieve it. Loaded via `load_skill()`, available to the orchestrator too — not just the coding agent.
 - **Task enrichment**: repos and files mentioned in the task are pre-read before the LLM starts
 - **Semantic tool selection**: only the 6 most relevant tools are exposed per turn (Chroma embeddings)
 
@@ -242,6 +249,25 @@ python src/mcp_server.py
 }
 ```
 
+### MCP client — external tools inside Axon
+
+The reverse direction: Axon connects to third-party MCP servers and their tools
+become indistinguishable from native ones — same routing, same execution path.
+
+```bash
+/mcp add blender            # interactive wizard, then an immediate health check
+/mcp list                   # servers, state, tool counts
+/mcp test blender --deep    # step-by-step diagnostic, probes a read-only tool
+/mcp tools blender          # schemas + the three naming levels
+```
+
+Servers are declared in `~/.axon/mcp_servers.json`. Secrets are referenced as
+`${VAR}` and resolved from the environment — never stored in the file.
+
+A failing MCP tool returns an explicit tool error rather than a result: some
+servers answer with `isError=False` while their backend is down, and the model
+must not reason on a failure message as if it were data.
+
 ### API server — Axon as the AI
 
 Makes Axon itself the talking LLM in your IDE (OpenAI-compatible).
@@ -314,6 +340,9 @@ Slash commands available from Zed (prefix with a space to bypass Zed's own `/` p
 | `/history` | List past threads and resume one |
 | `/branch` | Fork the current thread to explore another approach |
 | `/compact` | Manually compress the current session context |
+| `/mcp <sub>` | Manage MCP servers: `list` · `add` · `test` · `tools` · `refresh` |
+| `/graph` | Show the orchestrator graph |
+| `/clear` · `/purge` | Clear the screen / purge session state |
 | `/undo` | Restore all files modified since the last round |
 | `/save` | Save the session transcript |
 | `/config` | Show current configuration |
@@ -401,8 +430,11 @@ ollama pull qwen2.5:7b          # Local backend (optional)
 ## Tests
 
 ```bash
-venv/bin/python -m pytest test/ -q
+PYTHONPATH=. venv/bin/python -m pytest tests/ -q
 ```
+
+**1256 tests**, 5 skipped. The suite covers tool routing, provider error
+recovery, MCP invariants, and identity resolution.
 
 ---
 
@@ -415,14 +447,27 @@ ai-agent/
 ├── .env.sample
 ├── AXON.md                        # (create this) Auto-injected project context
 │
+├── skills/                        # Skill content (Markdown + frontmatter: scope, anchors)
+├── docs/                          # Design notes, addenda, technical debt
+│
 └── src/
     ├── ui/                        # Terminal (streaming, commands, completer, attachments)
-    ├── orchestrator/              # LangGraph graph, tool registry, tool retriever
+    ├── orchestrator/              # LangGraph graph + the questions it delegates:
+    │   ├── graph.py               #   wiring and the chat node
+    │   ├── tool_retriever.py      #   two-stage routing (group → tools)
+    │   ├── context.py             #   token budget, compression, pruning
+    │   ├── invocation.py          #   call the LLM and survive its failures
+    │   ├── tool_node.py           #   tool execution + session cache
+    │   ├── resilience.py          #   tool errors as results, failure log
+    │   └── provider_quirks.py     #   per-provider workarounds
     ├── llm/                       # LLM factories, key pool, adaptive prompt
+    ├── skills/                    # Skill loader and scoping (content lives in skills/)
+    ├── mcp_client/                # MCP client: connection, adapter, registry, /mcp
     ├── api/                       # OpenAI-compatible API server (models, streaming, commands)
     ├── api_server.py              # FastAPI entry point (port 8765)
     ├── mcp_server.py              # MCP stdio server (Zed, Claude Desktop, Cursor)
-    ├── infra/                     # Settings, cache, redactor, browser, auth
+    ├── cron_daemon.py             # Scheduled task runner
+    ├── infra/                     # Settings, cache, redactor, browser, auth, failure log
     └── agents/
         ├── coding/                # HITL specialist, /build phases, per-stack skills
         │   └── prompts/           # nextjs · angular · vue · svelte · threedee · python · …
@@ -431,9 +476,10 @@ ai-agent/
         ├── mermaid/               # Diagram generation (flowchart, sequence, ER, C4…)
         ├── notebook/              # Jupyter HITL editing (read/edit/insert/run)
         ├── study/                 # HTML study sheets & exercises
-        ├── gmail/ · google_calendar/ · google_drive/ · google_doc/ · google_slide/
-        ├── jira/ · slack/
-        └── shell/ · git/ · filesystem/ · system/ · search/ · arxiv/ · weather/
+        ├── cron/                  # Scheduled tasks
+        ├── gmail/ · google_calendar/ · google_drive/ · google_doc/ · google_slide/ · google_sheet/
+        ├── jira/ · slack/ · email/
+        └── shell/ · git/ · filesystem/ · system/ · search/ · arxiv/ · weather/ · translator/
 ```
 
 ---

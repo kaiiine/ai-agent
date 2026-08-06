@@ -40,13 +40,27 @@ env_get() {
 }
 
 # Écrit ou met à jour une clé dans .env
+
 env_set() {
-    local key="$1" value="$2"
-    if grep -qE "^${key}=" .env 2>/dev/null; then
-        sed -i "s|^${key}=.*|${key}=${value}|" .env
-    else
-        echo "${key}=${value}" >> .env
+    local key="$1" value="$2" tmp ligne trouve=0
+
+    if [[ ! -f .env ]]; then
+        printf '%s=%s\n' "$key" "$value" > .env
+        return
     fi
+
+    tmp=$(mktemp) || return 1
+    while IFS= read -r ligne || [[ -n "$ligne" ]]; do
+        if [[ "$ligne" == "${key}="* ]]; then
+            printf '%s=%s\n' "$key" "$value"
+            trouve=1
+        else
+            printf '%s\n' "$ligne"
+        fi
+    done < .env > "$tmp"
+
+    [[ $trouve -eq 0 ]] && printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    mv "$tmp" .env
 }
 
 # Affiche le statut d'une clé : ✓ configurée / ⚠ manquante
