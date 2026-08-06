@@ -3,7 +3,7 @@ from langchain_core.tools import tool
 
 
 @tool
-def ask_clarification(questions: list) -> str:
+def ask_clarification(questions: list[dict]) -> str:
     """Ask the user clarifying questions via an interactive questionnaire.
     Use this ALWAYS when you need more info — never ask in plain text.
 

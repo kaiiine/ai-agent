@@ -434,6 +434,51 @@ OLD CONTEXT:
 # ── Cached ToolNode ────────────────────────────────────────────────────────────
 
 
+def _log_failure(backend: str, exc: Exception, strategy: str, recovered: bool) -> None:
+    """Consigne l'échec pour que « ce backend est instable » devienne mesurable."""
+    try:
+        from src.infra.failure_log import record
+        record(backend=backend, error_type=type(exc).__name__, message=str(exc),
+               strategy=strategy, recovered=recovered)
+    except Exception:
+        pass
+
+
+def tool_error_to_message(exc: Exception) -> str:
+    """Transforme l'échec d'un outil en RÉSULTAT lisible par le modèle.
+
+    Le handler par défaut de LangGraph ne rattrape que `ToolInvocationError`
+    (arguments invalides) et re-lève tout le reste. Conséquence : une panne
+    réseau, une clé absente ou un `KeyError` dans n'importe quel outil faisait
+    remonter l'exception jusqu'à l'affichage et tuait le tour — l'utilisateur
+    voyait « erreur : … » et perdait tout, sans que le modèle sache seulement
+    qu'un outil avait échoué.
+
+    Ici l'échec redevient une information : le modèle la lit, l'explique, et
+    tente autre chose. C'est le comportement attendu d'un agent — un outil qui
+    échoue est un fait du monde, pas un plantage du programme.
+
+    `GraphBubbleUp` reste levée : ce n'est pas une erreur mais le mécanisme
+    d'interruption de LangGraph (`interrupt()`, `Command`). L'avaler bloquerait
+    les confirmations utilisateur. `KeyboardInterrupt` et `SystemExit` ne sont
+    pas des `Exception` et ne passent donc jamais ici.
+    """
+    from langgraph.errors import GraphBubbleUp
+
+    if isinstance(exc, GraphBubbleUp):
+        raise exc
+
+    return json.dumps({
+        "status": "TOOL_ERROR",
+        "error_type": type(exc).__name__,
+        "message": str(exc) or "échec sans message",
+        "note": "Cet outil a échoué. Ce n'est PAS un résultat : ne présente pas "
+                "ce contenu comme une donnée. Explique brièvement l'échec, puis "
+                "soit tente une autre approche, soit dis clairement que tu n'as "
+                "pas pu aboutir. N'invente jamais le résultat attendu.",
+    }, ensure_ascii=False)
+
+
 class CachedToolNode:
     """Wraps LangGraph's ToolNode with session-level result caching.
     If ALL tool calls in a batch are cached, skips execution entirely.
@@ -443,7 +488,7 @@ class CachedToolNode:
     def __init__(self, tools: list) -> None:
         from src.infra.tools_cache import CACHEABLE_TOOLS, session_cache
 
-        self._inner = ToolNode(tools=tools)
+        self._inner = ToolNode(tools=tools, handle_tool_errors=tool_error_to_message)
         self._cache = session_cache
         self._cacheable = CACHEABLE_TOOLS
 
@@ -701,6 +746,8 @@ def _chat_node_factory():
         capped = False
         compressed = False
         transient_retries = 0
+        degraded = False
+        stripped_tools = False
 
         # Key pool tracking pour rotation sur 429
         _orch_provider = backend
@@ -767,7 +814,9 @@ def _chat_node_factory():
                             f"{transient_retries}/{_MAX_TRANSIENT_RETRIES}…[/dim]"
                         )
                         _time.sleep(2 ** (transient_retries - 1))
+                        _log_failure(_orch_provider, e, "retry", True)
                         continue
+                    _log_failure(_orch_provider, e, "retry", False)
                     raise
 
                 # rotation vers la prochaine clef
@@ -800,6 +849,59 @@ def _chat_node_factory():
                     raise
 
                 if "context" not in err and "length" not in err and "token" not in err:
+                    # DÉGRADATION plutôt qu'arrêt. Une erreur inconnue à ce point
+                    # vient presque toujours du provider — modèle retiré, schéma
+                    # d'outil refusé, réponse malformée — et l'utilisateur perdait
+                    # alors tout son tour sur un message brut qu'il ne pouvait pas
+                    # exploiter. Un basculement de provider a de bonnes chances
+                    # d'aboutir là où le précédent a échoué ; à défaut, le modèle
+                    # doit au moins pouvoir DIRE ce qui s'est passé.
+                    if not degraded:
+                        degraded = True
+                        try:
+                            from src.llm.key_pool import get_fallback_order as _gfo
+                            from src.llm.key_pool import get_pool as _kp
+
+                            _nxt = _kp().next_provider_and_key(
+                                _orch_provider, _orch_key, _gfo())
+                            if _nxt:
+                                _prev = _orch_provider
+                                _orch_provider, _orch_key = _nxt
+                                settings.llm_backend = _orch_provider
+                                from src.llm.key_pool import note_auto_fallback as _note
+                                _note(_prev, _orch_provider)
+                                console.print(
+                                    f"[dim]  ↩  {_prev} a échoué ({type(e).__name__}) — "
+                                    f"bascule sur {_orch_provider}…[/dim]")
+                                _log_failure(_prev, e, "provider_switch", True)
+                                _new_llm = make_orchestrator_llm_with_key(
+                                    _orch_provider, _orch_key)
+                                llm_with_tools = (
+                                    _new_llm if force_text
+                                    else _new_llm.bind_tools(selected_tools))
+                                continue
+                        except Exception:
+                            pass
+
+                    # Dernier recours : sans outils. Un schéma d'outil rejeté par
+                    # le provider est une cause fréquente, et le modèle peut encore
+                    # répondre en texte — mieux qu'une erreur nue.
+                    if not stripped_tools and not force_text:
+                        stripped_tools = True
+                        console.print(
+                            "[dim]  ↩  nouvel échec — dernière tentative sans "
+                            "outils…[/dim]")
+                        llm_with_tools = factory()
+                        _log_failure(_orch_provider, e, "no_tools", True)
+                        working = working + [
+                            SystemMessage(content=(
+                                "Les appels d'outils viennent d'échouer "
+                                f"({type(e).__name__}: {str(e)[:200]}). Réponds en "
+                                "texte : explique brièvement que l'action n'a pas pu "
+                                "être exécutée et pourquoi. N'invente aucun résultat."))
+                        ]
+                        continue
+                    _log_failure(_orch_provider, e, "none", False)
                     raise
 
                 if not capped:

@@ -3,12 +3,19 @@ from langchain_groq import ChatGroq
 from ..infra.settings import settings
 
 
+_REQUEST_TIMEOUT = 180.0
+_OLLAMA_CLIENT_KWARGS = {"timeout": _REQUEST_TIMEOUT}
+_OLLAMA_NUM_CTX = 131_072
+_CLIENT_MAX_RETRIES = 2
+
+
 def make_llm():
     """Ollama local."""
     return ChatOllama(
         model=settings.ollama_model,
         temperature=settings.temperature,
-        num_ctx=131_072,
+        num_ctx=_OLLAMA_NUM_CTX,
+        client_kwargs=_OLLAMA_CLIENT_KWARGS,
     )
 
 
@@ -26,6 +33,8 @@ def make_llm_ollama_cloud():
                 base_url="https://ollama.com",
                 headers={"Authorization": f"Bearer {key}"},
                 temperature=settings.temperature,
+                num_ctx=_OLLAMA_NUM_CTX,
+                client_kwargs=_OLLAMA_CLIENT_KWARGS,
             )
     except Exception:
         pass
@@ -38,8 +47,11 @@ def make_llm_ollama_cloud():
             base_url="https://ollama.com",
             headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
             temperature=settings.temperature,
+            num_ctx=_OLLAMA_NUM_CTX,
+            client_kwargs=_OLLAMA_CLIENT_KWARGS,
         )
-    return ChatOllama(model=settings.ollama_cloud_model, temperature=settings.temperature)
+    return ChatOllama(model=settings.ollama_cloud_model, temperature=settings.temperature,
+                      num_ctx=_OLLAMA_NUM_CTX, client_kwargs=_OLLAMA_CLIENT_KWARGS)
 
 
 def _ollama_unload(model: str, base_url: str = "http://localhost:11434") -> None:
@@ -66,6 +78,7 @@ def make_coding_llm_with_key(provider: str, key: str):
                 model=settings.coding_model_local,
                 temperature=0.0,
                 num_ctx=settings.coding_num_ctx_local,
+                client_kwargs=_OLLAMA_CLIENT_KWARGS,
             )
         coding_model = settings.coding_model.removesuffix("-cloud")
         return ChatOllama(
@@ -73,6 +86,8 @@ def make_coding_llm_with_key(provider: str, key: str):
             base_url="https://ollama.com",
             headers={"Authorization": f"Bearer {key}"},
             temperature=0.0,
+            num_ctx=_OLLAMA_NUM_CTX,
+            client_kwargs=_OLLAMA_CLIENT_KWARGS,
         )
     elif provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
@@ -81,6 +96,8 @@ def make_coding_llm_with_key(provider: str, key: str):
             google_api_key=key,
             temperature=0.0,
             max_output_tokens=32768,
+            timeout=_REQUEST_TIMEOUT,
+            max_retries=_CLIENT_MAX_RETRIES,
         )
     elif provider == "mistral":
         from langchain_mistralai import ChatMistralAI
@@ -88,6 +105,8 @@ def make_coding_llm_with_key(provider: str, key: str):
             model=settings.mistral_coding_model,
             mistral_api_key=key,
             temperature=0.0,
+            timeout=_REQUEST_TIMEOUT,
+            max_retries=_CLIENT_MAX_RETRIES,
         )
     elif provider == "groq":
         return ChatGroq(
@@ -109,6 +128,7 @@ def make_coding_llm():
             model=settings.coding_model_local,
             temperature=0.0,
             num_ctx=settings.coding_num_ctx_local,
+            client_kwargs=_OLLAMA_CLIENT_KWARGS,
         )
 
     # Pour tous les backends cloud, essaie d'abord via key pool
@@ -137,12 +157,17 @@ def make_coding_llm():
             google_api_key=settings.gemini_api_key,
             temperature=0.0,
             max_output_tokens=32768,
+            timeout=_REQUEST_TIMEOUT,
+            max_retries=_CLIENT_MAX_RETRIES,
         )
     elif settings.llm_backend == "mistral":
         from langchain_mistralai import ChatMistralAI
         return ChatMistralAI(
             model=settings.mistral_coding_model,
+            mistral_api_key=settings.mistral_api_key,
             temperature=0.0,
+            timeout=_REQUEST_TIMEOUT,
+            max_retries=_CLIENT_MAX_RETRIES,
         )
     else:
         # ollama_cloud
@@ -153,8 +178,11 @@ def make_coding_llm():
                 base_url="https://ollama.com",
                 headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
                 temperature=0.0,
+                num_ctx=_OLLAMA_NUM_CTX,
+                client_kwargs=_OLLAMA_CLIENT_KWARGS,
             )
-        return ChatOllama(model=coding_model, temperature=0.0)
+        return ChatOllama(model=coding_model, temperature=0.0,
+                          num_ctx=_OLLAMA_NUM_CTX, client_kwargs=_OLLAMA_CLIENT_KWARGS)
 
 
 def make_orchestrator_llm_with_key(provider: str, key: str):
@@ -164,13 +192,16 @@ def make_orchestrator_llm_with_key(provider: str, key: str):
     """
     if provider in ("ollama_cloud", "ollama"):
         if provider == "ollama" and not key:
-            return ChatOllama(model=settings.ollama_model, temperature=settings.temperature, num_ctx=131_072)
+            return ChatOllama(model=settings.ollama_model, temperature=settings.temperature,
+                              num_ctx=_OLLAMA_NUM_CTX, client_kwargs=_OLLAMA_CLIENT_KWARGS)
         model = settings.ollama_cloud_model.removesuffix("-cloud")
         return ChatOllama(
             model=model,
             base_url="https://ollama.com",
             headers={"Authorization": f"Bearer {key}"},
             temperature=settings.temperature,
+            num_ctx=_OLLAMA_NUM_CTX,
+            client_kwargs=_OLLAMA_CLIENT_KWARGS,
         )
     elif provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
@@ -181,10 +212,14 @@ def make_orchestrator_llm_with_key(provider: str, key: str):
             max_output_tokens=8192,
             streaming=True,
             thinking_budget=0,
+            timeout=_REQUEST_TIMEOUT,
+            max_retries=_CLIENT_MAX_RETRIES,
         )
     elif provider == "mistral":
         from langchain_mistralai import ChatMistralAI
-        return ChatMistralAI(model=settings.mistral_model, mistral_api_key=key, temperature=0.0)
+        return ChatMistralAI(model=settings.mistral_model, mistral_api_key=key,
+                             temperature=0.0, streaming=True, timeout=_REQUEST_TIMEOUT,
+                             max_retries=_CLIENT_MAX_RETRIES)
     elif provider == "groq":
         return ChatGroq(
             api_key=key, model=settings.groq_model,
@@ -215,7 +250,8 @@ def make_llm_gemini():
             return ChatGoogleGenerativeAI(
                 model=settings.gemini_model, google_api_key=key,
                 temperature=settings.temperature, max_output_tokens=8192,
-                streaming=True, thinking_budget=0,
+                streaming=True, thinking_budget=0, timeout=_REQUEST_TIMEOUT,
+                max_retries=_CLIENT_MAX_RETRIES,
             )
     except Exception:
         pass
@@ -227,6 +263,8 @@ def make_llm_gemini():
         max_output_tokens=8192,
         streaming=True,
         thinking_budget=0,
+        timeout=_REQUEST_TIMEOUT,
+        max_retries=_CLIENT_MAX_RETRIES,
     )
 
 
@@ -237,8 +275,13 @@ def make_llm_mistral():
         key = get_pool().next_healthy("mistral")
         if key:
             from langchain_mistralai import ChatMistralAI
-            return ChatMistralAI(model=settings.mistral_model, mistral_api_key=key, temperature=0.0)
+            return ChatMistralAI(model=settings.mistral_model, mistral_api_key=key,
+                             temperature=0.0, streaming=True, timeout=_REQUEST_TIMEOUT,
+                             max_retries=_CLIENT_MAX_RETRIES)
     except Exception:
         pass
     from langchain_mistralai import ChatMistralAI
-    return ChatMistralAI(model=settings.mistral_model, temperature=0.0)
+    return ChatMistralAI(model=settings.mistral_model,
+                         mistral_api_key=settings.mistral_api_key,
+                         temperature=0.0, streaming=True, timeout=_REQUEST_TIMEOUT,
+                             max_retries=_CLIENT_MAX_RETRIES)
