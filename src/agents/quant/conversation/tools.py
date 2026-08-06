@@ -27,6 +27,7 @@ from langchain_core.tools import tool
 from . import session
 from .constraints import PromotionalBalance, constraints_from_request
 from .evidence import EVIDENCE_KEY
+from .observability import collect_readiness
 from .recommend import COMPLETED, bankroll_decimal, run_recommendation
 from .renderer import render
 from .window import resolve_window
@@ -41,6 +42,7 @@ def betting_recommend(
     markets: list[str] | None = None,
     allow_combos: bool = False,
     freebets: float | None = None,
+    debug: bool = False,
     config: RunnableConfig = None,
 ) -> str:
     """Scanne, évalue et recommande — la SEULE façon de produire un pari.
@@ -69,6 +71,9 @@ def betting_recommend(
         allow_combos: autoriser les combinés (construits par le Combo Builder seul).
         freebets: montant de freebets déclaré. Restitué mais JAMAIS optimisé :
             un freebet n'est pas du cash et ses conditions ne sont pas modélisées.
+        debug: rendu complet — catalogue intégral, chemin de décision de chaque
+            événement, readiness des modèles, provenance. À activer quand
+            l'utilisateur demande pourquoi, pas par défaut.
     Returns:
         JSON {status, rendered, betting_evidence, constraints}
     """
@@ -97,7 +102,11 @@ def betting_recommend(
     session.store(fil, contraintes)
 
     try:
-        run = run_recommendation(contraintes, now=maintenant)
+        # La readiness rejoue une validation walk-forward par modèle (~1 s) : elle
+        # mesure le MODÈLE, pas le run, et n'entre donc que dans le rendu debug.
+        run = run_recommendation(
+            contraintes, now=maintenant,
+            readiness=collect_readiness if debug else None)
     except Exception as exc:   # noqa: BLE001 — une panne ne doit rien faire inventer
         return json.dumps({
             "status": "TECHNICAL_FAILURE",
@@ -110,7 +119,7 @@ def betting_recommend(
 
     return json.dumps({
         "status": run.status,
-        "rendered": render(run),
+        "rendered": render(run, debug=debug),
         # La preuve n'accompagne QUE l'exécution complète : un échec ne doit pas
         # débloquer le garde.
         EVIDENCE_KEY: (run.evidence.to_dict()

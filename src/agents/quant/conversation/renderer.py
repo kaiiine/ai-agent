@@ -27,6 +27,7 @@ from .recommend import (
     TECHNICAL_FAILURE,
     RecommendationRun,
 )
+from .observability import INDISPONIBLE, NON_APPLICABLE, NON_MESURE
 from .window import render_kickoff
 
 _CENT = Decimal("0.01")
@@ -71,12 +72,17 @@ _ECHECS = {
 }
 
 
-def render(run: RecommendationRun) -> str:
+def render(run: RecommendationRun, *, debug: bool = False) -> str:
     """Rendu complet d'un tour. Aucune sélection de pari n'apparaît hors
-    `COMPLETED` : un échec s'explique, il ne se contourne pas."""
+    `COMPLETED` : un échec s'explique, il ne se contourne pas.
+
+    `debug` n'ouvre aucune information nouvelle sur la décision — il lève
+    seulement la troncature. Déverser 700 événements dans la réponse normale
+    rendrait illisible ce qu'on cherche justement à rendre lisible.
+    """
     if run.status != COMPLETED:
         return _render_echec(run)
-    return _render_reponse(run)
+    return _render_reponse(run, debug=debug)
 
 
 def _render_echec(run: RecommendationRun) -> str:
@@ -92,19 +98,21 @@ def _render_echec(run: RecommendationRun) -> str:
     return "\n".join(lignes)
 
 
-def _render_reponse(run: RecommendationRun) -> str:
-    response, evidence = run.response, run.evidence
-    outcome = response.outcome.value
+#: Nombre de candidats de revue affichés hors mode debug.
+_TOP_REVIEW = 5
+
+
+def _render_reponse(run: RecommendationRun, *, debug: bool = False) -> str:
+    response, evidence, obs = run.response, run.evidence, run.observability
+    fenetre = run.constraints.time_window
 
     lignes = [
-        f"**{outcome}** — audit `{response.audit_id}`",
+        f"**{response.outcome.value}** — audit `{response.audit_id}`",
         "",
-        f"Fenêtre : {run.constraints.time_window.describe()}",
-        f"Sports scannés : {', '.join(evidence.sports_scanned)}",
-        f"Événements : {evidence.events_scanned} scannés · "
-        f"{evidence.events_in_window} dans la fenêtre · "
-        f"{evidence.events_evaluated} sélections évaluées",
+        f"Fenêtre : {fenetre.describe()}",
     ]
+    lignes += _render_couverture(obs, evidence)
+    lignes += _render_compteurs(obs, evidence)
 
     if response.portfolios:
         lignes += ["", "### Recommandation"]
@@ -114,25 +122,247 @@ def _render_reponse(run: RecommendationRun) -> str:
         lignes += ["", "**Aucune mise recommandée.** Aucun portefeuille n'a été produit : "
                        "rien à placer, et aucune procédure de placement à suivre."]
 
-    if response.review_candidates:
-        lignes += ["", f"### À examiner seulement ({len(response.review_candidates)})",
-                   "Ces sélections ne sont **pas** recommandées : leur modèle n'est pas "
-                   "encore validé pour la mise réelle. Aucune n'a de mise associée."]
-        for evaluation in response.review_candidates[:10]:
-            lignes.append(_render_candidat(evaluation))
-        if len(response.review_candidates) > 10:
-            lignes.append(f"… et {len(response.review_candidates) - 10} autre(s).")
-
-    if response.rejection_summary:
-        detail = " · ".join(f"{code} : {n}"
-                            for code, n in sorted(response.rejection_summary.items()))
-        lignes += ["", f"### Motifs de rejet", detail]
+    lignes += _render_revue(run, debug=debug)
+    lignes += _render_bloqueurs(obs, response)
+    lignes += _render_readiness(obs)
 
     if response.warnings:
         lignes += ["", "### Avertissements"] + [f"- {w}" for w in response.warnings]
 
     lignes += _render_promotions(run)
+
+    if debug:
+        lignes += _render_catalogue(obs)
+        lignes += _render_chemins(obs)
+        lignes += _render_provenance(run)
     return "\n".join(lignes)
+
+
+# ── Couverture : quatre niveaux, quatre nombres ───────────────────────────────
+def _render_couverture(obs: Any, evidence: Any) -> list[str]:
+    """« 7 sports scannés » était vrai et trompeur : Winamax en expose 29. Le
+    même nombre décrivait « ce que le bookmaker propose » et « ce que nous savons
+    modéliser » — deux situations qui se réparent différemment."""
+    if obs is None:
+        return [f"Sports scannés : {', '.join(evidence.sports_scanned)}"]
+
+    catalogue = len(obs.telemetry.catalog_sports)
+    lignes = [
+        "",
+        "### Couverture",
+        f"- Sports exposés par Winamax : **{catalogue if catalogue else INDISPONIBLE}**",
+        f"- Sports disposant d'un modèle : **{len(obs.model_capable_sports)}** "
+        f"({', '.join(obs.model_capable_sports)})",
+        f"- Sports scannés dans ce run : **{len(obs.telemetry.scanned_sports)}**",
+        f"- Sports ayant des événements dans la fenêtre : **{len(obs.sports_in_window)}**"
+        + (f" ({', '.join(obs.sports_in_window)})" if obs.sports_in_window else ""),
+        f"- Sports ayant atteint l'évaluation : **{len(obs.sports_evaluated)}**"
+        + (f" ({', '.join(obs.sports_evaluated)})" if obs.sports_evaluated else ""),
+    ]
+    competitions = obs.competitions_in_window
+    lignes += [
+        f"- Compétitions rencontrées dans la fenêtre : "
+        f"**{sum(len(c) for c in competitions.values())}**",
+        f"- Compétitions résolues canoniquement : **{len(obs.competitions_resolved)}**",
+        f"- Compétitions ayant atteint l'évaluation : **{len(obs.competitions_evaluated)}**",
+    ]
+    return lignes
+
+
+def _render_compteurs(obs: Any, evidence: Any) -> list[str]:
+    if obs is None:
+        return []
+    coherent, detail = obs.counters_balance()
+    lignes = ["", "### Volumes", "```"]
+    for nom, valeur in obs.counters.items():
+        lignes.append(f"{nom:34} {valeur:>6}")
+    lignes += ["```",
+               f"Contrôle : {detail}" if coherent
+               else f"⚠ {detail}"]
+    return lignes
+
+
+# ── Candidats de revue — NON MISABLES ─────────────────────────────────────────
+def _render_revue(run: RecommendationRun, *, debug: bool) -> list[str]:
+    response, obs = run.response, run.observability
+    candidats = list(response.review_candidates)
+    if not candidats:
+        return []
+
+    fenetre = run.constraints.time_window
+    lignes = [
+        "",
+        f"### Candidats à examiner — NON MISABLES ({len(candidats)})",
+        "Le classement reproduit l'ordre de l'Advisor. Il n'indique pas qu'un "
+        "candidat serait plus proche d'être jouable que les autres : aucun ne "
+        "l'est, et l'ordre ne mesure pas cette distance.",
+    ]
+    affiches = candidats if debug else candidats[:_TOP_REVIEW]
+    for evaluation in affiches:
+        lignes += _render_candidat(evaluation, obs, fenetre)
+    if not debug and len(candidats) > _TOP_REVIEW:
+        lignes.append(f"\n… et {len(candidats) - _TOP_REVIEW} autre(s) — mode debug "
+                      "pour la liste complète.")
+    return lignes
+
+
+def _valeur(value: Any, rendu=lambda v: str(v)) -> str:
+    """Une absence n'est pas un zéro. `freshness_score=None` veut dire non
+    mesurée ; l'écrire `0` en ferait une mesure, et la pire possible."""
+    return NON_MESURE if value is None else rendu(value)
+
+
+def _render_candidat(evaluation: Any, obs: Any = None, fenetre: Any = None) -> list[str]:
+    from .observability import primary_blocker
+
+    c = evaluation.candidate
+    adapte = obs.adapted_for(c) if obs is not None else None
+
+    # §13 : un candidat hors fenêtre ne peut pas être rendu. Le vérifier ici, et
+    # pas seulement au scan, ferme le cas où un candidat proviendrait d'ailleurs.
+    if fenetre is not None and not fenetre.contains(c.scheduled_at):
+        return [f"- ⚠ candidat écarté du rendu : coup d'envoi hors fenêtre "
+                f"({render_kickoff(c.scheduled_at)})"]
+
+    no_vig = getattr(adapte, "no_vig_probability", None)
+    observed_at = getattr(adapte, "observed_at", None)
+
+    return [
+        "",
+        f"**{participant_label(c.participant_ids)}**",
+        "> Cette sélection n'est pas une recommandation de pari.",
+        f"- Sport / compétition : {c.sport} · `{c.competition_id}`",
+        f"- Coup d'envoi : {render_kickoff(c.scheduled_at)}",
+        f"- Marché / sélection : {c.market_type} · **{c.selection}**",
+        f"- Cote bookmaker : {c.bookmaker_odds} ({c.bookmaker})",
+        f"- Probabilité modèle : {_pct(c.fair_probability)} "
+        f"(borne basse {_pct(c.probability_low)})",
+        f"- Probabilité sans marge : {_valeur(no_vig, _pct)}",
+        f"- EV moyenne : {_signed(c.expected_value_mean)} · "
+        f"EV pire cas : {_signed(c.expected_value_low)}",
+        f"- Modèle : `{c.model_version}` · maturité **{c.model_maturity}**",
+        f"- Qualité des données : {_valeur(c.data_quality, _pct)} · "
+        f"fraîcheur : {_valeur(c.freshness_score, _pct)} · "
+        f"fiabilité modèle : {_valeur(c.calibration_score, _pct)}",
+        f"- Statut Advisor : **{evaluation.status.value}** · "
+        f"premier bloqueur : **{primary_blocker(evaluation)}**",
+        f"- Raisons complètes : {', '.join(evaluation.policy_reasons) or NON_APPLICABLE}",
+        f"- Provenance : `{c.event_id}` · `{c.market_id}` · "
+        f"observé {_valeur(observed_at, lambda v: render_kickoff(v))}",
+    ]
+
+
+# ── Matrice des bloqueurs, couche par couche ──────────────────────────────────
+def _render_bloqueurs(obs: Any, response: Any) -> list[str]:
+    if obs is None:
+        if not response.rejection_summary:
+            return []
+        detail = " · ".join(f"{code} : {n}"
+                            for code, n in sorted(response.rejection_summary.items()))
+        return ["", "### Motifs de rejet", detail]
+
+    lignes = ["", "### Bloqueurs"]
+    for couche, compte in obs.blocker_matrix().items():
+        if not compte:
+            continue
+        lignes += ["", f"*{couche}*", "```"]
+        for code, n in sorted(compte.items(), key=lambda kv: (-kv[1], kv[0])):
+            lignes.append(f"{code:44} {n:>5}")
+        lignes.append("```")
+    return lignes
+
+
+# ── Readiness des modèles présents ────────────────────────────────────────────
+def _render_readiness(obs: Any) -> list[str]:
+    if obs is None or not obs.readiness:
+        return []
+    # La formulation évite le vocabulaire qu'elle interdit, y compris nié : le
+    # LLM restitue ce texte et le garde relit sa restitution.
+    lignes = ["", "### Readiness des modèles présents dans le run",
+              "La proximité mesurée est celle de la MATURITÉ D'UN MODÈLE, jamais "
+              "celle d'une sélection. Un modèle à 6 critères requis sur 8 reste "
+              "EXPERIMENTAL, et aucune de ses sélections n'est misable."]
+    for r in obs.readiness:
+        lignes += [
+            "",
+            f"**`{r.model_version}`** — {r.sport} · statut **{r.status}**",
+            f"- Critères requis satisfaits : {len(r.passed)}/{r.required_total}",
+            f"- En échec : {', '.join(r.failed) or 'aucun'}",
+            f"- Non mesurables : {', '.join(r.not_measurable) or 'aucun'}",
+            f"- Bloqueurs vers SUPPORTED : {', '.join(r.blockers) or 'aucun'}",
+        ]
+        if r.monitoring:
+            suivi = ", ".join(f"{nom}={verdict}" for nom, verdict in r.monitoring)
+            lignes.append(f"- Suivi (non requis) : {suivi}")
+    return lignes
+
+
+# ── Sections debug ────────────────────────────────────────────────────────────
+def _render_catalogue(obs: Any) -> list[str]:
+    if obs is None:
+        return []
+    lignes = ["", "### Catalogue découvert dans ce run"]
+    sports = obs.telemetry.catalog_sports
+    if sports:
+        lignes.append(f"Sports exposés par Winamax ({len(sports)}) : "
+                      + ", ".join(str(n) for _, n in sorted(sports.items())))
+    for sport, competitions in obs.telemetry.catalog_competitions.items():
+        lignes += ["", f"**{sport}** ({len(competitions)})"]
+        lignes += [f"  - {c}" for c in competitions]
+    return lignes
+
+
+#: Ordre des portes, DÉCLARÉ ici et vérifié contre le code du domaine par
+#: `tests/test_observability.py` : un ordre recopié à la main diverge, un ordre
+#: recopié et testé ne le peut pas.
+GATE_SEQUENCE = (
+    "catalog discovery", "time-window filter", "sport dispatch",
+    "participant identity", "competition identity", "market canonicalization",
+    "provider coverage", "feature readiness", "freshness", "model evaluation",
+    "maturity gate", "value gate", "adapter", "Advisor policy", "ranking/review",
+)
+
+
+def _render_chemins(obs: Any) -> list[str]:
+    """Chemin de décision par événement — lu sur la trace, jamais reconstruit.
+
+    Chaque ligne porte le statut TYPÉ rendu par le domaine et sa raison, pas une
+    déduction faite depuis ce qui manque en sortie.
+    """
+    if obs is None or not obs.traces:
+        return []
+    lignes = ["", "### Chemin de décision par événement",
+              "Portes appliquées, dans l'ordre : " + " → ".join(GATE_SEQUENCE),
+              "", "```"]
+    for trace in obs.traces:
+        horaire = render_kickoff(trace.kickoff) if trace.kickoff else NON_MESURE
+        lignes.append(
+            f"[{trace.status:26}] {trace.sport:18} {trace.competition_label[:28]:30} "
+            f"{horaire}")
+        lignes.append(f"{'':30}{trace.reason[:110]}")
+    lignes.append("```")
+    return lignes
+
+
+def _render_provenance(run: RecommendationRun) -> list[str]:
+    evidence = run.evidence
+    if evidence is None:
+        return []
+    return [
+        "", "### Provenance",
+        "```",
+        f"request_id                 {evidence.request_id}",
+        f"run_id                     {evidence.run_id}",
+        f"audit_id                   {evidence.audit_id}",
+        f"scan_started_at            {evidence.scan_started_at.isoformat()}",
+        f"scan_completed_at          {evidence.scan_completed_at.isoformat()}",
+        f"window_start               {evidence.window_start.isoformat()}",
+        f"window_end                 {evidence.window_end.isoformat()}",
+        # §19 : la portée du state est une information d'exploitation, pas une
+        # promesse de persistance. Un redémarrage repart d'un state vide.
+        "constraints_state_scope    process/thread",
+        "```",
+    ]
 
 
 def _render_portefeuille(pf: Any, bankroll: Decimal | None) -> list[str]:
@@ -170,19 +400,6 @@ def _render_portefeuille(pf: Any, bankroll: Decimal | None) -> list[str]:
     lignes.append("- Ces nombres sont des espérances de long terme, pas une "
                   "prévision de ce match.")
     return lignes
-
-
-def _render_candidat(evaluation: Any) -> str:
-    c = evaluation.candidate
-    motifs = ", ".join(evaluation.policy_reasons) or "—"
-    return (f"- {participant_label(c.participant_ids)} · {c.competition_id} · "
-            f"{render_kickoff(c.scheduled_at)}\n"
-            f"  - {c.selection} @ {c.bookmaker_odds} ({c.bookmaker}) · "
-            f"probabilité modèle {_pct(c.fair_probability)} "
-            f"[{_pct(c.probability_low)} – {_pct(c.probability_high)}]\n"
-            f"  - EV {_signed(c.expected_value_mean)} (borne basse "
-            f"{_signed(c.expected_value_low)}) · maturité {c.model_maturity} · "
-            f"statut {evaluation.status.value} · motifs : {motifs}")
 
 
 def _render_promotions(run: RecommendationRun) -> list[str]:
