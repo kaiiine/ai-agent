@@ -1,0 +1,308 @@
+"""Observabilité d'un run — ADDITIVE. Aucune décision, aucune formule.
+
+Le run rendait six nombres : 757 scannés, 99 dans la fenêtre, 60 évalués,
+REVIEW_CANDIDATES, 0 portefeuille, 0 mise. Exacts, et pourtant illisibles :
+« 7 sports scannés » quand Winamax en expose 29, « 60 évalués » qui comptait des
+SÉLECTIONS et non des rencontres, et un écart de 39 qu'aucune décomposition ne
+justifiait.
+
+Ce module ne calcule rien de neuf. Il assemble ce que le domaine a déjà produit
+et que le rendu jetait : le statut typé de chaque refus, le sport et la
+compétition de chaque rencontre, l'ordre des portes tel qu'il a réellement été
+parcouru, et les critères de maturité de chaque modèle utilisé.
+
+Deux règles de lecture :
+
+- **Un compteur, une définition.** Un événement compté « dans la fenêtre » ne
+  peut plus être décrit comme exclu hors fenêtre. L'identité est vérifiée par
+  construction, pas par commentaire.
+- **Une absence n'est pas un zéro.** `freshness_score=None` veut dire non
+  mesurée ; l'écrire `0` en ferait une mesure, et une mauvaise.
+"""
+
+from __future__ import annotations
+
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Mapping, Sequence
+
+#: Ce que le renderer doit écrire à la place d'une valeur absente. Jamais `0`.
+NON_MESURE = "NON MESURÉ"
+INDISPONIBLE = "INDISPONIBLE"
+NON_APPLICABLE = "NON APPLICABLE"
+
+
+@dataclass(frozen=True)
+class EventTrace:
+    """Le chemin d'UNE rencontre, tel que le domaine l'a parcouru.
+
+    `status` et `reason` viennent de `LiveEvaluationResult` — jamais reconstruits
+    par déduction depuis ce qui manque en sortie.
+    """
+
+    bookmaker_event_id: str
+    sport: str
+    competition_label: str
+    kickoff: datetime | None
+    status: str
+    reason: str
+    event_id: str | None = None
+    competition_id: str | None = None
+    selections: int = 0
+    freshness_score: float | None = None
+
+    @property
+    def evaluated(self) -> bool:
+        return self.status == "EVALUATED"
+
+
+@dataclass(frozen=True)
+class ScanTelemetry:
+    """Ce que le SCAN a vu, avant que l'évaluation ne commence.
+
+    Le catalogue disparaissait entièrement : seuls deux entiers en sortaient. Or
+    c'est là que se joue la différence entre « Winamax n'expose pas ce sport » et
+    « nous n'avons pas de modèle pour ce sport » — deux situations que le même
+    nombre décrivait.
+    """
+
+    catalog_sports: Mapping[int, str] = field(default_factory=dict)
+    scanned_sports: tuple[str, ...] = ()
+    catalog_events_total: int = 0
+    events_outside_window: int = 0
+    events_inside_window: int = 0
+    #: sport -> libellés de compétition rencontrés dans le scan (hors fenêtre inclus)
+    catalog_competitions: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ModelReadiness:
+    """Maturité d'UN modèle, telle que `evaluate_maturity` l'a rendue.
+
+    Proximité de MATURITÉ, jamais proximité d'un pari : « 6 critères requis sur 8 »
+    décrit l'état d'un modèle, pas la sûreté d'une sélection.
+    """
+
+    model_name: str
+    model_version: str
+    sport: str
+    status: str
+    passed: tuple[str, ...]
+    failed: tuple[str, ...]
+    not_measurable: tuple[str, ...]
+    monitoring: tuple[tuple[str, str], ...]
+    blockers: tuple[str, ...]
+
+    @property
+    def required_total(self) -> int:
+        return len(self.passed) + len(self.failed) + len(self.not_measurable)
+
+
+@dataclass(frozen=True)
+class RunObservability:
+    """Vue complète d'un run. Assemblée, jamais inférée."""
+
+    telemetry: ScanTelemetry
+    traces: tuple[EventTrace, ...]
+    model_capable_sports: tuple[str, ...]
+    #: `CandidateEvaluation` de l'Advisor, statut par statut
+    policy_evaluations: tuple[Any, ...] = ()
+    readiness: tuple[ModelReadiness, ...] = ()
+    #: (event_id, market_id, selection) -> `AdaptedEvaluation`. Le générateur
+    #: consomme `no_vig_probability` pour calculer l'edge mais ne le conserve pas
+    #: sur le candidat ; `observed_at` non plus. Cette table les RETROUVE par
+    #: jointure sur la clé du marché — une lecture, jamais un recalcul.
+    adapted_by_key: Mapping[tuple[str, str, str], Any] = field(default_factory=dict)
+
+    def adapted_for(self, candidate: Any) -> Any | None:
+        return self.adapted_by_key.get(
+            (candidate.event_id, candidate.market_id, candidate.selection))
+
+    # ── Couverture, niveau par niveau ─────────────────────────────────────────
+    @property
+    def sports_in_window(self) -> tuple[str, ...]:
+        return tuple(sorted({t.sport for t in self.traces}))
+
+    @property
+    def sports_evaluated(self) -> tuple[str, ...]:
+        return tuple(sorted({t.sport for t in self.traces if t.evaluated}))
+
+    @property
+    def competitions_in_window(self) -> dict[str, tuple[str, ...]]:
+        par_sport: dict[str, set[str]] = defaultdict(set)
+        for trace in self.traces:
+            par_sport[trace.sport].add(trace.competition_label)
+        return {s: tuple(sorted(c)) for s, c in sorted(par_sport.items())}
+
+    @property
+    def competitions_resolved(self) -> tuple[str, ...]:
+        return tuple(sorted({t.competition_id for t in self.traces if t.competition_id}))
+
+    @property
+    def competitions_evaluated(self) -> tuple[str, ...]:
+        return tuple(sorted({t.competition_id for t in self.traces
+                             if t.evaluated and t.competition_id}))
+
+    # ── Compteurs : une définition chacun ─────────────────────────────────────
+    @property
+    def events_evaluated(self) -> int:
+        """RENCONTRES, pas sélections. Le nombre affiché jusqu'ici comptait les
+        sélections — deux ou trois par match — et ne pouvait donc pas se
+        raccorder au nombre d'événements de la fenêtre."""
+        return sum(1 for t in self.traces if t.evaluated)
+
+    @property
+    def selections_evaluated(self) -> int:
+        return sum(t.selections for t in self.traces)
+
+    @property
+    def pre_evaluation_refusals(self) -> dict[str, int]:
+        """Refus AVANT le modèle, par statut typé du Betting Engine."""
+        return dict(Counter(t.status for t in self.traces if not t.evaluated))
+
+    @property
+    def counters(self) -> dict[str, int]:
+        return {
+            "catalog_events_total": self.telemetry.catalog_events_total,
+            "events_outside_window": self.telemetry.events_outside_window,
+            "events_inside_window": self.telemetry.events_inside_window,
+            **{f"events_{code.lower()}": n
+               for code, n in sorted(self.pre_evaluation_refusals.items())},
+            "events_evaluated": self.events_evaluated,
+            "selections_evaluated": self.selections_evaluated,
+        }
+
+    def counters_balance(self) -> tuple[bool, str]:
+        """L'identité vérifiable : dans la fenêtre = refus avant évaluation + évalués.
+
+        Sans elle, un écart de 39 se justifie par « par exemple hors fenêtre ou
+        données insuffisantes » — une phrase qui recompte hors fenêtre des
+        événements déjà comptés dedans, et qui ne peut donc jamais être fausse.
+        """
+        refus = sum(self.pre_evaluation_refusals.values())
+        attendu = self.telemetry.events_inside_window
+        obtenu = refus + self.events_evaluated
+        if attendu == obtenu:
+            return True, f"{attendu} = {refus} refusés + {self.events_evaluated} évalués"
+        return False, (f"incohérence : {attendu} dans la fenêtre ≠ {refus} refusés "
+                       f"+ {self.events_evaluated} évalués")
+
+    # ── Matrice des bloqueurs, par COUCHE ─────────────────────────────────────
+    def blocker_matrix(self) -> dict[str, dict[str, int]]:
+        """Quatre couches distinctes, jamais fondues sous « autres ».
+
+        Un `MODEL_NOT_SUPPORTED` de l'Advisor et un `SPORT_NOT_SUPPORTED` du
+        moteur se réparent à des endroits différents ; les additionner produit un
+        nombre qui ne désigne aucune action.
+        """
+        moteur = self.pre_evaluation_refusals
+
+        advisor: Counter = Counter()
+        maturite: Counter = Counter()
+        for evaluation in self.policy_evaluations:
+            for reason in evaluation.policy_reasons:
+                advisor[reason] += 1
+        for readiness in self.readiness:
+            for critere in readiness.failed:
+                maturite[f"{critere}:FAIL"] += 1
+            for critere in readiness.not_measurable:
+                maturite[f"{critere}:NOT_MEASURABLE"] += 1
+
+        statuts = Counter(e.status.value for e in self.policy_evaluations)
+
+        return {
+            "refus avant modèle (Betting Engine)": dict(sorted(moteur.items())),
+            "statut Advisor": dict(sorted(statuts.items())),
+            "raisons Advisor": dict(sorted(advisor.items())),
+            "critères de maturité en échec": dict(sorted(maturite.items())),
+        }
+
+
+def primary_blocker(evaluation: Any) -> str:
+    """Le PREMIER bloqueur, dans l'ordre des portes du domaine.
+
+    `evaluate_eligibility` court-circuite au premier rejet dur (raison unique) et
+    accumule les raisons de revue dans l'ordre de ses portes. `policy_reasons[0]`
+    est donc le premier bloqueur PAR CONSTRUCTION — le renderer n'a aucun ordre à
+    inventer, et ne peut pas diverger de celui qui a réellement été appliqué.
+    """
+    return evaluation.policy_reasons[0] if evaluation.policy_reasons else NON_APPLICABLE
+
+
+# ── Assemblage ────────────────────────────────────────────────────────────────
+def build_traces(batch_results: Sequence[tuple[Any, Any]]) -> tuple[EventTrace, ...]:
+    """Un `EventTrace` par rencontre, depuis `LiveEvaluationBatch.results`.
+
+    On part du batch de DOMAINE et non de l'`AdaptedBatch` : ce dernier expose
+    une `SkippedEvaluation` réduite à des identifiants, sans sport ni compétition.
+    Un refus n'y est donc attribuable à aucun sport — précisément ce qu'il faut
+    savoir pour agir dessus.
+    """
+    traces: list[EventTrace] = []
+    for raw_event, result in batch_results:
+        canonical = getattr(result, "canonical_event", None)
+        traces.append(EventTrace(
+            bookmaker_event_id=raw_event.bookmaker_event_id,
+            sport=raw_event.sport,
+            competition_label=raw_event.competition or INDISPONIBLE,
+            kickoff=raw_event.start_time,
+            status=result.status.value,
+            reason=result.reason,
+            event_id=getattr(canonical, "event_id", None),
+            competition_id=getattr(canonical, "competition_id", None),
+            selections=len(result.predictions or {}),
+            freshness_score=result.freshness_score,
+        ))
+    return tuple(traces)
+
+
+#: sport -> clé d'évaluateur de `readiness_cli._ASSESSORS`. Un sport absent n'a
+#: pas de readiness calculable ici : il est OMIS, jamais rendu « inconnu = 0 ».
+_READINESS_KEYS: dict[str, tuple[str, ...]] = {
+    "football": ("fl1",),
+    "basketball": ("nba",),
+    "baseball": ("mlb",),
+    "american_football": ("nfl",),
+    "volleyball": ("volley",),
+    "hockey": ("nhl",),
+    "tennis": ("atp", "wta"),
+}
+
+
+def collect_readiness(sports: Sequence[str]) -> tuple[ModelReadiness, ...]:
+    """Maturité des modèles RÉELLEMENT utilisés dans ce run.
+
+    Chaque évaluation rejoue une validation walk-forward sur son dataset embarqué
+    (~1 s). On ne la lance donc que pour les sports présents, et seulement en
+    mode debug : c'est une mesure du modèle, pas du run, et elle ne change aucune
+    décision.
+    """
+    from src.agents.quant.betting_engine.maturity import Verdict
+    from src.agents.quant.betting_engine.readiness_cli import _ASSESSORS
+
+    sorties: list[ModelReadiness] = []
+    for sport in sorted(set(sports)):
+        for cle in _READINESS_KEYS.get(sport, ()):
+            evaluateur = _ASSESSORS.get(cle)
+            if evaluateur is None:
+                continue
+            try:
+                decision = evaluateur().decision
+            except Exception:   # noqa: BLE001 — l'observabilité ne casse jamais un run
+                continue
+            requis = [c for c in decision.criteria if c.required]
+            sorties.append(ModelReadiness(
+                model_name=decision.model_name,
+                model_version=decision.model_version,
+                sport=sport,
+                status=decision.status,
+                passed=tuple(c.name for c in requis if c.verdict is Verdict.PASS),
+                failed=tuple(c.name for c in requis if c.verdict is Verdict.FAIL),
+                not_measurable=tuple(c.name for c in requis
+                                     if c.verdict is Verdict.NOT_MEASURABLE),
+                monitoring=tuple((c.name, c.verdict.value)
+                                 for c in decision.criteria if not c.required),
+                blockers=tuple(c.name for c in requis if c.verdict is not Verdict.PASS),
+            ))
+    return tuple(sorties)

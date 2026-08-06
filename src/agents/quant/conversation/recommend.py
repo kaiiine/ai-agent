@@ -22,6 +22,12 @@ from typing import Any, Callable, Sequence
 
 from .constraints import UserBettingConstraints
 from .evidence import BettingResponseEvidence
+from .observability import (
+    RunObservability,
+    ScanTelemetry,
+    build_traces,
+    collect_readiness,
+)
 from .window import TimeWindow
 
 # Statuts de sortie du pont conversationnel (jamais un texte libre).
@@ -43,6 +49,9 @@ class RecommendationRun:
     evidence: BettingResponseEvidence | None = None
     detail: str = ""
     available: tuple[str, ...] = ()
+    #: Vue additive du run. Aucune décision n'en dépend : la retirer ne changerait
+    #: pas une probabilité, un statut ni une mise.
+    observability: RunObservability | None = None
 
 
 # ── Résolution des filtres : jamais d'élargissement silencieux ────────────────
@@ -103,33 +112,63 @@ def _default_scan(window: TimeWindow, sports: Sequence[str], decision_time: date
     Filtrer après coup laisserait des matchs hors fenêtre atteindre le modèle et,
     de là, le classement : « hors fenêtre mais intéressant » est exactement ce
     qu'il ne faut jamais produire.
+
+    Appelle `evaluate_live_batch` puis `adapt_live_batch` au lieu du raccourci
+    `load_and_adapt`, qui est exactement leur composition. La différence est
+    entièrement observationnelle : le batch de domaine porte UN résultat par
+    rencontre, avec son `RawBookmakerEvent` — donc son sport, sa compétition et
+    son horaire. L'`AdaptedBatch`, lui, réduit un refus à des identifiants, et
+    aucun refus n'y est plus attribuable à un sport.
     """
     import functools
 
-    from ..advisor.input_adapter.betting_engine_adapter import load_and_adapt
+    from ..advisor.input_adapter.betting_engine_adapter import adapt_live_batch
     from ..betting_engine.bookmakers.winamax.catalogue import multisport_events
     from ..betting_engine.bookmakers.winamax.connector import WinamaxConnector
+    from ..betting_engine.live_batch import evaluate_live_batch
     from ..betting_engine.live_coverage import evaluation_coverage_check
     from ..betting_engine.live_evaluation import evaluate_live_event
     from ..betting_engine.sports.registry import build_event_resolver
     from ..gateway import gateway as sports_gateway
 
-    compte = Counter()
+    connector = WinamaxConnector()
+    compte: Counter = Counter()
+    competitions: dict[str, set[str]] = {}
 
-    def catalogue(connector):
-        events = multisport_events(connector, list(sports))
+    def catalogue(conn):
+        events = multisport_events(conn, list(sports))
         compte["scannes"] = len(events)
+        for event in events:
+            competitions.setdefault(event.sport, set()).add(
+                event.competition or "sans libellé")
         retenus = [e for e in events if window.contains(e.start_time)]
         compte["dans_fenetre"] = len(retenus)
         return retenus
 
-    batch = load_and_adapt(
-        WinamaxConnector(), sports_gateway=sports_gateway,
+    batch = evaluate_live_batch(
+        connector, sports_gateway=sports_gateway,
         event_resolver=build_event_resolver(), catalogue=catalogue,
         evaluate=functools.partial(evaluate_live_event,
                                    coverage_check=evaluation_coverage_check),
         now_fn=lambda: decision_time)
-    return batch, dict(compte)
+
+    # Le catalogue de sports est DÉCOUVERT, jamais une whitelist : c'est lui qui
+    # distingue « Winamax n'expose pas ce sport » de « nous n'avons pas de modèle
+    # pour ce sport ». Son échec ne doit pas coûter le run — la carte reste vide.
+    try:
+        catalog_sports = connector.discover_sports()
+    except Exception:   # noqa: BLE001
+        catalog_sports = {}
+
+    telemetrie = ScanTelemetry(
+        catalog_sports=catalog_sports,
+        scanned_sports=tuple(sports),
+        catalog_events_total=compte["scannes"],
+        events_outside_window=compte["scannes"] - compte["dans_fenetre"],
+        events_inside_window=compte["dans_fenetre"],
+        catalog_competitions={s: tuple(sorted(c)) for s, c in sorted(competitions.items())},
+    )
+    return adapt_live_batch(batch), telemetrie, build_traces(batch.results)
 
 
 def _default_configs() -> dict:
@@ -151,6 +190,7 @@ def run_recommendation(
     configs: Callable[[], dict] = _default_configs,
     persist_audit: Callable | None = _default_audit,
     request_id: str | None = None,
+    readiness: Callable[[Sequence[str]], tuple] | None = None,
 ) -> RecommendationRun:
     from ..advisor.domain.enums import MaturityPolicy, RiskProfile
     from ..advisor.domain.requests import RecommendationRequest
@@ -182,7 +222,7 @@ def run_recommendation(
     scan_started_at = now
 
     try:
-        batch, compte = scan(window, sports, now)
+        batch, telemetrie, traces = scan(window, sports, now)
     except Exception as exc:   # noqa: BLE001 — scan total impossible
         return RecommendationRun(
             DATA_UNAVAILABLE, constraints,
@@ -243,6 +283,22 @@ def run_recommendation(
             pass
 
     response = result.recommendation
+
+    # `PipelineRunResult.trace` était produit puis jeté. Il porte l'évaluation de
+    # politique de CHAQUE candidat — y compris ceux qui ne ressortent nulle part
+    # dans la réponse, et dont on ne pouvait donc pas dire pourquoi ils sont
+    # absents.
+    observabilite = RunObservability(
+        telemetry=telemetrie,
+        traces=traces,
+        model_capable_sports=tuple(sorted(SPORT_MODULES)),
+        policy_evaluations=tuple(result.trace.policy_evaluations),
+        readiness=(readiness or (lambda _: ()))(
+            tuple(sorted({t.sport for t in traces if t.evaluated}))),
+        adapted_by_key={(e.event_id, e.market_id, e.selection): e
+                        for e in batch.evaluations},
+    )
+
     evidence = BettingResponseEvidence(
         request_id=request.request_id,
         run_id=f"run:{uuid.uuid4().hex[:12]}",
@@ -254,12 +310,15 @@ def run_recommendation(
         event_ids=tuple(sorted({e.event_id for e in batch.evaluations})),
         recommendation_outcome=response.outcome.value,
         audit_id=response.audit_id,
-        events_scanned=compte.get("scannes", 0),
-        events_in_window=compte.get("dans_fenetre", len(batch.evaluations)),
-        events_evaluated=len(batch.evaluations),
+        events_scanned=telemetrie.catalog_events_total,
+        events_in_window=telemetrie.events_inside_window,
+        # RENCONTRES, pas sélections : `len(batch.evaluations)` comptait deux ou
+        # trois lignes par match, et ne se raccordait donc à aucun autre compteur.
+        events_evaluated=observabilite.events_evaluated,
         reason_counts=dict(response.rejection_summary),
     )
-    return RecommendationRun(COMPLETED, constraints, response=response, evidence=evidence)
+    return RecommendationRun(COMPLETED, constraints, response=response, evidence=evidence,
+                             observability=observabilite)
 
 
 def bankroll_decimal(value: float | str | None) -> Decimal | None:
