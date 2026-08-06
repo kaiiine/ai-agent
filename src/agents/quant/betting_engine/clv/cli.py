@@ -13,10 +13,8 @@ import argparse
 import pathlib
 from datetime import datetime
 
-from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
-from src.agents.quant.betting_engine.bookmakers.bookmaker_registry import BookmakerEventResolver
 from src.agents.quant.betting_engine.bookmakers.winamax.record_replay import load_capture
-from src.agents.quant.betting_engine.sports.identity_aggregate import all_sport_teams
+from src.agents.quant.betting_engine.sports.registry import build_event_resolver
 
 from .observation import ObservationPhase
 from .recorder import record_from_capture
@@ -54,8 +52,9 @@ def main(argv: list[str] | None = None, *, live_loader=_load_live) -> int:
 
     capture = live_loader(args.live) if args.live else load_capture(pathlib.Path(args.capture))
     store = JsonlOddsHistoryStore(None if args.store is None else pathlib.Path(args.store))
-    # Résolveur MULTISPORT (§3) : football + basket + hockey — collecte CLV de tout sport live-câblé.
-    resolver = BookmakerEventResolver(IdentityResolver(list(all_sport_teams())))
+    # Résolveur MULTISPORT via la fabrique UNIQUE : une observation CLV enregistrée
+    # sous une compétition non résolue ne s'apparie jamais à sa décision.
+    resolver = build_event_resolver()
     now = None if args.now is None else datetime.fromisoformat(args.now)
 
     summary = record_from_capture(

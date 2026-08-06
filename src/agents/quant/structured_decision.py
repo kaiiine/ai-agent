@@ -112,14 +112,14 @@ def _default_deps(sport: str = "football"):   # pragma: no cover (I/O réelle)
     """
     from .betting_engine.bookmakers.winamax.connector import WinamaxConnector
     from .betting_engine.bookmakers.winamax.catalogue import all_events
-    from .betting_engine.bookmakers.bookmaker_registry import BookmakerEventResolver
-    from .betting_engine.sports.registry import SPORT_MODULES
+    from .betting_engine.sports.registry import SPORT_MODULES, build_event_resolver
     from .gateway.core.identity_resolver import IdentityResolver
     from .gateway import gateway as sports_gateway
 
+    # La recherche par NOM reste bornée au sport demandé : sur l'union, « Lyon »
+    # pourrait résoudre vers un club de football alors qu'on interroge le tennis.
     module = SPORT_MODULES.get(sport)
-    entities = list(module.known_entities()) if module else []
-    identity = IdentityResolver(entities)
+    identity = IdentityResolver(list(module.known_entities()) if module else [])
 
     def search(name: str) -> dict | None:
         hit = identity.find_by_name(name)
@@ -128,8 +128,9 @@ def _default_deps(sport: str = "football"):   # pragma: no cover (I/O réelle)
     return dict(
         connector=WinamaxConnector(),
         catalogue=all_events,
-        event_resolver=BookmakerEventResolver(
-            identity, competition_resolver=module.resolve_competition if module else None),
+        # La fabrique UNIQUE, comme le batch : un résolveur construit différemment
+        # selon le chemin d'appel rendait deux verdicts sur le même événement.
+        event_resolver=build_event_resolver(),
         sports_gateway=sports_gateway,
         team_search=search,
     )

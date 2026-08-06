@@ -126,12 +126,9 @@ def _default_batch_loader(decision_time: datetime) -> AdaptedBatch:  # pragma: n
     from .input_adapter.betting_engine_adapter import load_and_adapt
     from ..betting_engine.bookmakers.winamax.connector import WinamaxConnector
     from ..betting_engine.bookmakers.winamax.catalogue import multisport_events
-    from ..betting_engine.bookmakers.bookmaker_registry import BookmakerEventResolver
     from ..betting_engine.live_coverage import evaluation_coverage_check
     from ..betting_engine.live_evaluation import evaluate_live_event
-    from ..betting_engine.sports.registry import SPORT_MODULES
-    from ..betting_engine.sports.identity_aggregate import all_sport_teams
-    from ..gateway.core.identity_resolver import IdentityResolver
+    from ..betting_engine.sports.registry import SPORT_MODULES, build_event_resolver
     from ..gateway import gateway as sports_gateway
     # Identité + scan MULTISPORT (§3) : les 6 sports enregistrés sont réellement
     # atteignables. DÉCOUVERTE complète (toutes compétitions) : les non-résolus sont
@@ -139,7 +136,7 @@ def _default_batch_loader(decision_time: datetime) -> AdaptedBatch:  # pragma: n
     # Couverture d'évaluation model-backed (Unité A) : une compétition CANONIQUE d'un modèle
     # validé est couverte par son dataset embarqué quand aucun provider live ne couvre la
     # saison courante -> l'événement atteint le modèle (ABSTAIN car EXPERIMENTAL).
-    resolver = BookmakerEventResolver(IdentityResolver(list(all_sport_teams())))
+    resolver = build_event_resolver()
     sports = sorted(SPORT_MODULES)
     evaluate = functools.partial(evaluate_live_event, coverage_check=evaluation_coverage_check)
     return load_and_adapt(WinamaxConnector(), sports_gateway=sports_gateway,

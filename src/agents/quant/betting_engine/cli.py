@@ -94,15 +94,27 @@ def main(argv: list[str] | None = None, *, connector=None, sports_gateway=None,
         from .bookmakers.winamax.connector import WinamaxConnector
         connector = WinamaxConnector()
     if event_resolver is None:
-        from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
-        from src.agents.quant.gateway.core.identity_data import TEAMS
-        from .bookmakers.bookmaker_registry import BookmakerEventResolver
-        event_resolver = BookmakerEventResolver(IdentityResolver(TEAMS))
+        # Les SEPT sports, pas le seul football : le résolveur filtre par préfixe
+        # d'identifiant, donc les espaces de noms restent étanches. Avec le seul
+        # référentiel football, tout événement non-football était UNRESOLVED avant
+        # même d'atteindre son modèle — pourtant enregistré et prêt.
+        from .sports.registry import build_event_resolver
+        event_resolver = build_event_resolver()
     if sports_gateway is None:
         from src.agents.quant.gateway import gateway as sports_gateway
 
+    # Le catalogue par défaut (`supported_events`) scanne le FOOTBALL seul. Le run
+    # live ne voyait donc jamais les six autres sports, et `multisport_events`
+    # existait sans appelant. Chaque `RawBookmakerEvent` porte son sport : le
+    # dispatch se fait en aval par `SPORT_MODULES`, sans aucun `if sport ==`.
+    from .bookmakers.winamax.catalogue import multisport_events
+    from .sports.registry import SPORT_MODULES
+    sports = sorted(SPORT_MODULES)
+
     try:
-        run = evaluate_live_batch(connector, sports_gateway=sports_gateway, event_resolver=event_resolver)
+        run = evaluate_live_batch(connector, sports_gateway=sports_gateway,
+                                  event_resolver=event_resolver,
+                                  catalogue=lambda c: multisport_events(c, sports))
     except Exception as exc:   # noqa: BLE001 — scan total / erreur technique -> code 1
         print(f"échec du scan / erreur technique : {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
