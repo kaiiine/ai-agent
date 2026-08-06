@@ -209,7 +209,8 @@ def _batch(*evaluations):
 
 
 def _evaluation(maturity="EXPERIMENTAL", sport="tennis",
-                competition="competition:tennis:atp:tour", event="e1"):
+                competition="competition:tennis:atp:tour", event="e1",
+                selection="player_a", freshness=Decimal("0.90")):
     from src.agents.quant.advisor.input_adapter.schema import (
         AdaptedEvaluation, AdaptedExplanation,
     )
@@ -219,12 +220,12 @@ def _evaluation(maturity="EXPERIMENTAL", sport="tennis",
         participant_ids=("player:tennis:atp:a", "player:tennis:atp:b"),
         observed_at=_MAINTENANT, bookmaker="winamax",
         market_id=f"winamax:{event}:MATCH_WINNER", market_type="MATCH_WINNER",
-        selection="player_a", bookmaker_odds=Decimal("2.10"),
+        selection=selection, bookmaker_odds=Decimal("2.10"),
         fair_probability=Decimal("0.57"), probability_low=Decimal("0.55"),
         probability_high=Decimal("0.60"), uncertainty_status="ESTIMATED",
         model_version="tennis.elo.v0", model_maturity=maturity,
         data_quality=Decimal("1.0"), calibration_score=None,
-        freshness_score=Decimal("0.90"), liquidity_score=None,
+        freshness_score=freshness, liquidity_score=None,
         implied_probability_raw=Decimal("0.4762"), no_vig_probability=Decimal("0.50"),
         edge=Decimal("0.07"), expected_value=Decimal("0.19"), is_boosted=False,
         decision="ABSTAIN", decision_reasons=("MODEL_NOT_SUPPORTED",), warnings=(),
@@ -232,15 +233,52 @@ def _evaluation(maturity="EXPERIMENTAL", sport="tennis",
         source_decision_id=None)
 
 
-def _run(constraints, evaluations=(), scan=None):
+def _traces(evaluations, refus=()):
+    """Un `EventTrace` par RENCONTRE. Les évaluations sont des SÉLECTIONS : deux
+    ou trois par match, d'où le regroupement par `event_id`."""
+    from src.agents.quant.conversation.observability import EventTrace
+
+    par_evenement: dict[str, list] = {}
+    for e in evaluations:
+        par_evenement.setdefault(e.event_id, []).append(e)
+
+    traces = [
+        EventTrace(bookmaker_event_id=eid, sport=sel[0].sport,
+                   competition_label=sel[0].competition_id, kickoff=sel[0].scheduled_at,
+                   status="EVALUATED", reason="ok", event_id=eid,
+                   competition_id=sel[0].competition_id, selections=len(sel),
+                   freshness_score=float(sel[0].freshness_score or 0))
+        for eid, sel in par_evenement.items()
+    ]
+    traces += [
+        EventTrace(bookmaker_event_id=f"skip-{i}", sport=sport,
+                   competition_label="—", kickoff=_MAINTENANT + timedelta(hours=3),
+                   status=statut, reason=f"refus {statut}")
+        for i, (sport, statut) in enumerate(refus)
+    ]
+    return tuple(traces)
+
+
+def _run(constraints, evaluations=(), scan=None, refus=(), scannes=40, readiness=None):
+    from src.agents.quant.conversation.observability import ScanTelemetry
+
     vus: dict = {}
+    traces = _traces(evaluations, refus)
 
     def scan_par_defaut(window, sports, decision_time):
         vus["window"], vus["sports"] = window, tuple(sports)
-        return _batch(*evaluations), {"scannes": 40, "dans_fenetre": len(evaluations)}
+        telemetrie = ScanTelemetry(
+            catalog_sports={1: "Football", 5: "Tennis", 23: "Volley-ball"},
+            scanned_sports=tuple(sports),
+            catalog_events_total=scannes,
+            events_outside_window=scannes - len(traces),
+            events_inside_window=len(traces),
+            catalog_competitions={"tennis": ("ATP Montréal",)})
+        return _batch(*evaluations), telemetrie, traces
 
     run = run_recommendation(constraints, now=_MAINTENANT,
-                             scan=scan or scan_par_defaut, persist_audit=None)
+                             scan=scan or scan_par_defaut, persist_audit=None,
+                             readiness=readiness)
     return run, vus
 
 
