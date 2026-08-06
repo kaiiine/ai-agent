@@ -73,6 +73,40 @@ def _keyword_groups(query: str) -> list[str]:
     return [g for g, spec in TOOL_GROUPS.items() if spec.keywords & mots]
 
 
+# ── Porte déterministe d'intention money ──────────────────────────────────────
+# Le routing sémantique est un plus-proche-voisin : son résultat dépend du corpus
+# d'embeddings, qui dérive. Mesuré sur douze intentions de pari, deux n'élisaient
+# jamais le groupe `quant` — « que dois-je jouer ce soir » et « scanne tout ce qui
+# est disponible aujourd'hui et demain », c'est-à-dire les formulations mêmes du
+# dump. Sans `betting_recommend` dans la sélection, le modèle n'a plus que des
+# outils de données et refait exactement ce qu'on vient de fermer.
+#
+# Une intention d'argent ne peut pas dépendre d'une distance vectorielle. Cette
+# porte s'ajoute au routing sémantique sans le remplacer : elle ne fait
+# qu'ADJOINDRE le groupe, jamais en retirer un autre. Un faux positif coûte un
+# outil de plus dans le prompt ; un faux négatif rouvre le second moteur. Face à
+# cette asymétrie, on inclut.
+_MONEY_INTENT = re.compile(
+    r"(?i)("
+    r"\bparis?\b|\bparier\b|\bcotes?\b|\bbankroll\b|\bfreebets?\b"
+    r"|\bmise[rz]?\b|\bmises\b|\bcombin[ée]s?\b|\bvalue\s*bets?\b"
+    r"|\bbookmaker\b|\bwinamax\b|\bpronostics?\b"
+    # « que dois-je jouer », « je joue quoi », « quoi jouer » — aucun de ces
+    # tours ne contient de mot du lexique du pari.
+    # Infinitif ET conjugué : « quoi jouer » comme « je joue quoi ». Seul le
+    # second est spontané à l'oral, et c'est celui qui manquait.
+    r"|\b(?:que|qu'est[- ]ce\s+que|quoi)\b[^.?!]{0,30}\bjoue[rs]?\b"
+    r"|\bjoue[rs]?\b[^.?!]{0,15}\bquoi\b"
+    # « scanne tout ce qui est disponible aujourd'hui et demain ».
+    r"|\bscann?[ez]r?\b[^.?!]{0,60}\b(?:disponibles?|dispos?|matchs?|sports?|"
+    r"comp[ée]titions?|aujourd'?hui|demain|ce\s+soir)\b"
+    r")")
+
+
+def _money_intent(query: str) -> bool:
+    return bool(_MONEY_INTENT.search(query or ""))
+
+
 def _skill_topics() -> list[str]:
     """Les skills visibles par l'orchestrateur décrivent eux-mêmes leur domaine."""
     try:
@@ -287,6 +321,8 @@ _TOOL_TO_GROUP: dict[str, str] = {
 # machine à n'importe quel moment d'un raisonnement.
 _PINNED_TOOLS = {"get_current_time", "ask_clarification", "notify"}
 _PINNED_GROUPS = ("shell",)
+#: Groupe élu par la porte déterministe d'intention money (`_money_intent`).
+_MONEY_GROUP = "quant"
 
 # ── Réglages du routing ───────────────────────────────────────
 # Mesuré sur les deux jeux de tests/test_tool_routing.py :
@@ -411,6 +447,11 @@ class ToolRetriever:
     def get(self, query: str) -> list:
         ranked = self._rank_groups(query)
         groups = ranked + [g for g in _PINNED_GROUPS if g not in ranked]
+
+        # Adjoint, jamais substitué : le rang 1 reste celui du sémantique, donc le
+        # dépouillement `coding` ci-dessous garde exactement le même déclencheur.
+        if _money_intent(query) and _MONEY_GROUP not in groups:
+            groups.append(_MONEY_GROUP)
 
         selected: set[str] = set(_PINNED_TOOLS)
         for group in groups:
