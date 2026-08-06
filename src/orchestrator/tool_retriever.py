@@ -258,13 +258,17 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
         keywords=frozenset({"cron", "planifie", "planifier", "recurrent", "récurrent"}),
     ),
     "quant": ToolGroup(
-        covers="Paris sportifs et analyse quantitative : cotes d'un match chez le "
-               "bookmaker, y a-t-il un bon pari à jouer ce soir, value bet, statistiques "
-               "et forme d'une équipe, probabilité de victoire, espérance de gain, "
-               "rentabilité d'un pari, mise à engager, combinés.",
-        tools=("winamax_odds_fetch", "sports_stats_fetch", "probability_compute",
-               "ev_analyze", "parlay_analyze", "same_match_combo_analyze"),
-        keywords=frozenset({"winamax", "pari", "paris", "parier", "cote", "cotes", "combine", "combiné"}),
+        covers="Paris sportifs et analyse quantitative : scanner les matchs disponibles "
+               "aujourd'hui ou demain et proposer quoi jouer avec une bankroll, cotes d'un "
+               "match chez le bookmaker, y a-t-il un bon pari à jouer ce soir, value bet, "
+               "statistiques et forme d'une équipe, probabilité de victoire, espérance de "
+               "gain, rentabilité d'un pari, mise à engager, freebets, combinés.",
+        tools=("betting_recommend", "winamax_odds_fetch", "sports_stats_fetch",
+               "probability_compute", "ev_analyze", "parlay_analyze",
+               "same_match_combo_analyze"),
+        keywords=frozenset({"winamax", "pari", "paris", "parier", "cote", "cotes",
+                            "combine", "combiné", "bankroll", "freebet", "freebets",
+                            "miser", "mise"}),
     ),
 }
 

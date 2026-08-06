@@ -16,9 +16,11 @@ décision, ni combiné, ni mise.
 """
 
 from .constraints import UserBettingConstraints, merge_constraints
+from .evidence import BettingResponseEvidence
 from .window import TimeWindow, resolve_window
 
 __all__ = [
+    "BettingResponseEvidence",
     "TimeWindow",
     "UserBettingConstraints",
     "merge_constraints",

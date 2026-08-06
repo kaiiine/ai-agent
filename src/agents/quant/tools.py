@@ -55,17 +55,20 @@ def winamax_odds_fetch(sport: str = "football", team: str = "") -> str:
 
     Passe par l'UNIQUE source canonique (WinamaxConnector -> PRELOADED_STATE -> parser),
     la MÊME que coverage/recommend/record-odds. Cotes SCHEMA-AWARE : 2-way (tennis,
-    basket…) ou 3-way (foot, hockey) — jamais un `draw` fabriqué. Retourne les cotes
-    brutes + la probabilité IMPLICITE (1/cote, marge INCLUSE — ni no-vig ni edge).
+    basket…) ou 3-way (foot, hockey) — jamais un `draw` fabriqué.
+
+    Ne rend AUCUNE probabilité. Une cote n'est pas une probabilité : `1/cote`
+    contient la marge du bookmaker, et l'espérance qu'on en tire vaut zéro avant
+    marge, négative après — jamais « positive ». La probabilité d'un modèle et la
+    décision viennent de `betting_recommend`, jamais d'un calcul sur cette sortie.
 
     Args:
         sport: football, tennis, basketball, hockey, rugby, baseball, volleyball… (défaut football)
         team: filtre optionnel sur un nom de participant (ex: "PSG", "Sinner")
     Returns:
-        JSON des matchs avec cotes vainqueur horodatées + implied_probability (brute)
+        JSON des matchs avec cotes vainqueur horodatées (données descriptives seules)
     """
     from src.agents.quant.betting_engine.bookmakers.winamax.odds_quotes import fetch_odds_quotes
-    from src.agents.quant.betting_engine.value_engine import margin_removal
     try:
         quotes = fetch_odds_quotes(sport, team)
         if not quotes:
@@ -76,9 +79,6 @@ def winamax_odds_fetch(sport: str = "football", team: str = "") -> str:
                 "slot_1": q.slot_1_name, "slot_2": q.slot_2_name,
                 "start_time": q.start_time, "status": q.status,
                 "odds": q.odds,
-                # Implicite = 1/cote (marge incluse) via la primitive CANONIQUE, sur les
-                # seules sélections PRÉSENTES (aucun None -> plus de TypeError 2-way).
-                "implied_probability": {k: round(margin_removal.implied_raw(v), 4) for k, v in q.odds.items()},
                 "bookmaker": q.bookmaker, "fetched_at": q.fetched_at,
             }
             for q in quotes

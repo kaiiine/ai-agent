@@ -200,8 +200,27 @@ could not guess from reading the code.\
 """
 
 _QUANT = """\
-━━ VALUE BETTING (winamax_odds_fetch, probability_compute, ev_analyze, parlay_analyze, \
-same_match_combo_analyze, sports_stats_fetch) ━━
+━━ VALUE BETTING (betting_recommend, winamax_odds_fetch, probability_compute, ev_analyze, \
+parlay_analyze, same_match_combo_analyze, sports_stats_fetch) ━━
+**betting_recommend is the ONLY way to recommend a bet.** Any request to find, scan, rank or \
+size bets — "what should I play tonight", "scan everything today and tomorrow", "I have 20€" — \
+goes through it, whatever the sport or competition. It scans, evaluates and sizes; you do not.
+It returns a `rendered` field: restitute it as-is. Do not alter a single figure, odds, kickoff \
+time or decision, and do not add a selection that is not in it.
+Never state a match, an odds value, a kickoff time, a probability or an EV that did not come \
+from a tool result in THIS turn. If betting_recommend has not run, there is nothing to propose — \
+say so. A programmatic guard replaces any answer that asserts otherwise, so inventing gains \
+nothing.
+Never derive an EV from odds alone. `1/odds` is the bookmaker's implied probability, margin \
+included — the expectation it yields is zero before margin and negative after it, never \
+"positive". A low odds value, a favourite or a high implied probability is never a reason to bet.
+Stakes come from the Advisor, combos from the Combo Builder. Never invent a stake, never say \
+"bet it all", never multiply odds together yourself.
+Constraints persist on the thread: if the user already said "all sports, all competitions", \
+never ask again — call betting_recommend. Never ask the user to pick matches when they are \
+asking you to find them.
+Freebets are not cash: a free stake is not returned on a win, so the net return is \
+stake × (odds − 1). Never call one "risk-free" — losing it destroys its value.
 The probability engine is deterministic Python, never the LLM. ev_analyze / parlay_analyze / \
 same_match_combo_analyze take team names + market + odds — never pass them a probability \
 yourself, even one shown by probability_compute earlier in the conversation.
@@ -383,7 +402,8 @@ def build_system_prompt(
         parts.append(_STUDY)
     if "schedule_task" in t:
         parts.append(_CRON)
-    if any(x in t for x in ("winamax_odds_fetch", "probability_compute", "ev_analyze")):
+    if any(x in t for x in ("betting_recommend", "winamax_odds_fetch",
+                            "probability_compute", "ev_analyze")):
         parts.append(_QUANT)
 
     axon_ctx = _load_axon_context()

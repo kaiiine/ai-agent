@@ -102,6 +102,7 @@ from src.agents.quant.tools import (
     winamax_odds_fetch, sports_stats_fetch, probability_compute,
     ev_analyze, parlay_analyze, same_match_combo_analyze,
 )
+from src.agents.quant.conversation.tools import betting_recommend
 
 from langchain_core.tools import tool as lc_tool
 
@@ -260,6 +261,10 @@ def build_all_tools() -> List[BaseTool]:
         list_cron_task,
         stop_cron_task,
         # === VALUE BETTING (QUANT) ===
+        # L'UNIQUE chemin de recommandation : scan -> Betting Engine -> Advisor.
+        # Sans lui, une demande de scan n'avait aucun outil capable d'y répondre,
+        # et le modèle terminait le travail lui-même.
+        betting_recommend,
         winamax_odds_fetch,
         sports_stats_fetch,
         probability_compute,
