@@ -133,8 +133,11 @@ def test_le_graphe_branche_les_tools_mcp_a_cote_des_natifs():
     assert "retriever.get(query) + _mcp.select(query)" in src   # sélectionnables
     # l'index natif est construit AVANT l'ajout des tools MCP : il ne les indexe pas
     assert src.index("retriever = ToolRetriever(tools)") < src.index("tools = tools + _mcp.tools")
-    # la redaction ne doit pas perdre l'artefact multimodal en reconstruisant le message
-    assert 'artifact=getattr(msg, "artifact", None)' in src
+
+    # La rédaction ne doit pas perdre l'artefact multimodal en reconstruisant le
+    # message. Elle vit avec l'exécution des tools, dans `tool_node.py`.
+    noeud = pathlib.Path("src/orchestrator/tool_node.py").read_text(encoding="utf-8")
+    assert 'artifact=getattr(msg, "artifact", None)' in noeud
 
 
 # ── bout en bout : config -> sous-processus -> tool LangChain synchrone ─────────

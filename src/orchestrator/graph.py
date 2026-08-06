@@ -8,8 +8,28 @@ from typing import List
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import START, StateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import tools_condition
 from rich.console import Console as RichConsole
+
+from src.orchestrator.context import (
+    _BACKEND_POLICY,
+    _MAX_TOOL_MSG_CHARS,
+    _SUMMARY_MARKER,
+    _backend_policy,
+    _cap_tool_messages,
+    _compress_context,
+    _drop_smartest,
+    _estimate_tokens,
+    _should_compress,
+    _usable_budget,
+)
+from src.orchestrator.provider_quirks import (
+    _MALFORMED_TOOL_CALL_RE,
+    _sanitize_messages_for_mistral,
+)
+from src.orchestrator.invocation import invoke_with_recovery
+from src.orchestrator.resilience import tool_error_to_message
+from src.orchestrator.tool_node import CachedToolNode
 
 console = RichConsole()
 
@@ -18,66 +38,9 @@ console = RichConsole()
 # d'outil en texte brut avec une balise maison ("xxx:tool_call ... </xxx:tool_call>")
 # au lieu du vrai mécanisme de function calling. LangChain ne le reconnaît pas —
 # tool_calls reste vide et la commande n'est jamais exécutée.
-_MALFORMED_TOOL_CALL_RE = re.compile(r"\w+:tool_call\b.*?</\w+:tool_call>", re.DOTALL | re.IGNORECASE)
 
-# ── Context budget constants ───────────────────────────────────────────────────
-_CONTEXT_LIMITS: dict[str, int] = {
-    "ollama": 131_072,
-    "ollama_cloud": 128_000,
-    "groq": 131_072,
-    "gemini": 1_000_000,
-}
-_COMPACTION_BUFFER = 20_000
-_PRUNE_PROTECT = 40_000
-_PRUNE_MINIMUM = 12_000
-_BACKEND_POLICY = {
-    "ollama": {"ratio": 0.40, "keep_recent": 6},
-    "ollama_cloud": {"ratio": 0.70, "keep_recent": 12},
-    "gemini": {"ratio": 0.75, "keep_recent": 24},
-    "mistral": {"ratio": 0.60, "keep_recent": 8},
-    "groq": {"ratio": 0.65, "keep_recent": 12},
-}
 
-_CODING_KEYWORDS = frozenset(
-    {
-        "code",
-        "fichier",
-        "file",
-        "fonction",
-        "function",
-        "composant",
-        "component",
-        "bug",
-        "fix",
-        "erreur",
-        "error",
-        "npm",
-        "pnpm",
-        "yarn",
-        "git",
-        "migration",
-        "supabase",
-        "next",
-        "react",
-        "vue",
-        "svelte",
-        "angular",
-        "typescript",
-        "python",
-        "shell",
-        "terminal",
-        "build",
-        "deploy",
-        "css",
-        "html",
-        "sql",
-        "api",
-        "endpoint",
-    }
-)
 
-_SUMMARY_MARKER = "[COMPRESSED SESSION MEMORY]"
-_MAX_TOOL_MSG_CHARS = 3_000
 _MAX_TOOL_ROUNDS = 12
 
 # ── Compile callback ───────────────────────────────────────────────────────────
@@ -132,433 +95,6 @@ def _consecutive_tool_rounds(messages: List) -> int:
     return rounds
 
 
-# ── Token estimation ───────────────────────────────────────────────────────────
-
-
-def _estimate_tokens(messages: List) -> int:
-    total = 0
-    for m in messages:
-        content = m.content if isinstance(m.content, str) else str(m.content)
-        total += max(1, len(content) // 3)
-        for tc in getattr(m, "tool_calls", []) or []:
-            total += len(str(tc)) // 3
-        total += 4
-    return total
-
-
-def _backend_policy(backend: str) -> dict:
-    return _BACKEND_POLICY.get(
-        backend,
-        {"ratio": 0.6, "keep_recent": 10},
-    )
-
-
-def _usable_budget(backend: str) -> int:
-    policy = _backend_policy(backend)
-    return int(_CONTEXT_LIMITS.get(backend, 128_000) * policy["ratio"])
-
-
-def _should_compress(messages: List, backend: str) -> bool:
-    effective = [
-        m
-        for m in messages
-        if not (isinstance(m, SystemMessage) and _SUMMARY_MARKER in str(m.content))
-    ]
-    return _estimate_tokens(effective) > _usable_budget(backend)
-
-
-# ── Context helpers ────────────────────────────────────────────────────────────
-
-
-def _cap_tool_messages(messages: List) -> List:
-    out = []
-
-    for m in messages:
-        if (
-            isinstance(m, ToolMessage)
-            and isinstance(m.content, str)
-            and len(m.content) > _MAX_TOOL_MSG_CHARS
-        ):
-            content = m.content.strip()
-
-            head_size = int(_MAX_TOOL_MSG_CHARS * 0.75)
-            tail_size = _MAX_TOOL_MSG_CHARS - head_size
-
-            content = (
-                content[:head_size] + "\n...[truncated]...\n" + content[-tail_size:]
-            )
-
-            m = ToolMessage(
-                content=content,
-                tool_call_id=m.tool_call_id,
-                name=getattr(m, "name", None),
-            )
-
-        out.append(m)
-
-    return out
-
-
-def _is_coding_session(messages: List) -> bool:
-    """Detect if the session is code-related based on message content."""
-    for m in messages:
-        if isinstance(m, HumanMessage):
-            content = str(m.content).lower()
-            if any(kw in content for kw in _CODING_KEYWORDS):
-                return True
-    return False
-
-
-def _drop_smartest(messages: List) -> List | None:
-    """Drop the oldest tool round (AIMessage + its ToolMessages) first.
-    Falls back to dropping the oldest non-system message if no tool round found."""
-    start = 1 if messages and isinstance(messages[0], SystemMessage) else 0
-
-    for i in range(start, len(messages)):
-        m = messages[i]
-        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
-            # Find where the tool results for this round end
-            j = i + 1
-            while j < len(messages) and isinstance(messages[j], ToolMessage):
-                j += 1
-            if j > i + 1:
-                return messages[:i] + messages[j:]
-
-    # No complete tool round found — drop oldest non-system, non-human message
-    for i in range(start, len(messages)):
-        if not isinstance(messages[i], HumanMessage):
-            return messages[:i] + messages[i + 1 :]
-
-    return None
-
-
-def _sanitize_messages_for_mistral(messages: List) -> List:
-    """Mistral requires strict tool_call/tool_result pairing.
-    Removes AIMessages with unanswered tool_calls AND ToolMessages
-    that became orphaned (e.g. after context compression dropped their parent AIMessage)."""
-    all_response_ids = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
-
-    valid_call_ids: set[str] = set()
-    removed_ai: set[int] = set()
-    for i, m in enumerate(messages):
-        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
-            tc_ids = [tc["id"] for tc in m.tool_calls]
-            if all(tid in all_response_ids for tid in tc_ids):
-                valid_call_ids.update(tc_ids)
-            else:
-                removed_ai.add(i)
-
-    return [
-        m
-        for i, m in enumerate(messages)
-        if i not in removed_ai
-        and not (isinstance(m, ToolMessage) and m.tool_call_id not in valid_call_ids)
-    ]
-
-
-def _compress_context(
-    messages: List, llm, backend: str = "ollama_cloud"
-) -> tuple[List, List]:
-    """Compress old context while preserving recent raw messages.
-    Removes old summaries, compresses old conversation, keeps recent messages raw.
-    Uses a coding-specific prompt or a general one based on session content.
-    """
-    # Collect old summaries to remove from LangGraph state
-    old_summaries = [
-        m
-        for m in messages
-        if isinstance(m, SystemMessage) and _SUMMARY_MARKER in str(m.content)
-    ]
-
-    clean_messages = [m for m in messages if m not in old_summaries]
-
-    system_msg = (
-        clean_messages[0]
-        if clean_messages and isinstance(clean_messages[0], SystemMessage)
-        else None
-    )
-
-    conversation = [m for m in clean_messages if not isinstance(m, SystemMessage)]
-
-    keep_recent = _backend_policy(backend)["keep_recent"]
-
-    if len(conversation) <= keep_recent:
-        # Nothing to compress — but still remove old summaries if any
-        if old_summaries:
-            return clean_messages, old_summaries
-        return messages, []
-
-    old = conversation[:-keep_recent]
-    recent = conversation[-keep_recent:]
-
-    last_human = next(
-        (m for m in reversed(conversation) if isinstance(m, HumanMessage)),
-        None,
-    )
-    if last_human and last_human not in recent:
-        recent = [last_human] + recent[:-1]
-
-    # Build transcript of old messages
-    transcript_parts = []
-    for m in old:
-        content = m.content if isinstance(m.content, str) else str(m.content)
-        if isinstance(m, HumanMessage):
-            transcript_parts.append(f"[USER]: {content[:4000]}")
-        elif isinstance(m, AIMessage):
-            if content.strip():
-                transcript_parts.append(f"[ASSISTANT]: {content[:2500]}")
-            for tc in getattr(m, "tool_calls", []) or []:
-                args_str = str(tc.get("args", {}))[:1200]
-                transcript_parts.append(
-                    f"[TOOL CALL] {tc.get('name', '?')}({args_str})"
-                )
-        elif isinstance(m, ToolMessage):
-            name = getattr(m, "name", "tool") or "tool"
-            transcript_parts.append(f"[TOOL RESULT] {name}: {content[:2000]}")
-
-    transcript = "\n".join(transcript_parts)
-
-    # Select prompt based on session type
-    is_coding = _is_coding_session(conversation)
-
-    if is_coding:
-        prompt = f"""
-You are the memory module of a coding AI agent.
-
-Compress the old context below to free tokens without losing task continuity.
-
-Rules:
-- Be dense, technical, and structured.
-- Do NOT retell the conversation.
-- Preserve exact paths, filenames, commands, errors, and decisions.
-- Clearly distinguish completed work from remaining work.
-- If information is unknown, write "unknown".
-
-Required format:
-
-# User Objective
-...
-
-# Current State
-- cwd:
-- backend:
-- mode:
-- git branch:
-- status:
-
-# Plan
-## Completed
-- ...
-## Remaining
-- ...
-
-# Important Files
-## Read
-- path: useful content
-## Modified/Created
-- path: exact change
-## To Modify
-- path: intention
-
-# Executed Commands
-- command → useful result
-
-# Errors / Blockers
-- error → cause → status
-
-# Technical Decisions
-- decision → reason
-
-# Exact Resume Point
-Describe precisely what the agent should do next.
-
-OLD CONTEXT:
-{transcript}
-"""
-    else:
-        prompt = f"""
-You are a memory assistant. Compress the conversation below into a dense summary
-that preserves all key information needed to continue the conversation.
-
-Rules:
-- Be concise and factual.
-- Preserve decisions, conclusions, and action items.
-- Keep user preferences and constraints.
-- Note what was asked and what was answered.
-- If something is unknown or unclear, say so.
-
-Required format:
-
-# Conversation Summary
-Brief overview of the conversation.
-
-# Key Facts & Decisions
-- ...
-
-# User Preferences & Constraints
-- ...
-
-# Current Task / Next Step
-What the user is trying to accomplish and where things stand.
-
-# Unresolved Questions
-- ...
-
-OLD CONTEXT:
-{transcript}
-"""
-
-    try:
-        summary_response = llm.invoke([HumanMessage(content=prompt)])
-        summary_content = summary_response.content
-
-        if isinstance(summary_content, list):
-            summary_content = " ".join(
-                p.get("text", "") if isinstance(p, dict) else str(p)
-                for p in summary_content
-            )
-
-        summary_msg = SystemMessage(content=f"{_SUMMARY_MARKER}\n{summary_content}")
-
-        compressed = ([system_msg] if system_msg else []) + [summary_msg] + recent
-        # Return old conversation messages + old summaries as "removed"
-        return compressed, old + old_summaries
-
-    except Exception:
-        dropped = _drop_smartest(messages) or messages
-        kept_ids = {id(m) for m in dropped}
-        removed = [m for m in messages if id(m) not in kept_ids]
-        return dropped, removed + old_summaries
-
-
-# ── Cached ToolNode ────────────────────────────────────────────────────────────
-
-
-def _log_failure(backend: str, exc: Exception, strategy: str, recovered: bool) -> None:
-    """Consigne l'échec pour que « ce backend est instable » devienne mesurable."""
-    try:
-        from src.infra.failure_log import record
-        record(backend=backend, error_type=type(exc).__name__, message=str(exc),
-               strategy=strategy, recovered=recovered)
-    except Exception:
-        pass
-
-
-def tool_error_to_message(exc: Exception) -> str:
-    """Transforme l'échec d'un outil en RÉSULTAT lisible par le modèle.
-
-    Le handler par défaut de LangGraph ne rattrape que `ToolInvocationError`
-    (arguments invalides) et re-lève tout le reste. Conséquence : une panne
-    réseau, une clé absente ou un `KeyError` dans n'importe quel outil faisait
-    remonter l'exception jusqu'à l'affichage et tuait le tour — l'utilisateur
-    voyait « erreur : … » et perdait tout, sans que le modèle sache seulement
-    qu'un outil avait échoué.
-
-    Ici l'échec redevient une information : le modèle la lit, l'explique, et
-    tente autre chose. C'est le comportement attendu d'un agent — un outil qui
-    échoue est un fait du monde, pas un plantage du programme.
-
-    `GraphBubbleUp` reste levée : ce n'est pas une erreur mais le mécanisme
-    d'interruption de LangGraph (`interrupt()`, `Command`). L'avaler bloquerait
-    les confirmations utilisateur. `KeyboardInterrupt` et `SystemExit` ne sont
-    pas des `Exception` et ne passent donc jamais ici.
-    """
-    from langgraph.errors import GraphBubbleUp
-
-    if isinstance(exc, GraphBubbleUp):
-        raise exc
-
-    return json.dumps({
-        "status": "TOOL_ERROR",
-        "error_type": type(exc).__name__,
-        "message": str(exc) or "échec sans message",
-        "note": "Cet outil a échoué. Ce n'est PAS un résultat : ne présente pas "
-                "ce contenu comme une donnée. Explique brièvement l'échec, puis "
-                "soit tente une autre approche, soit dis clairement que tu n'as "
-                "pas pu aboutir. N'invente jamais le résultat attendu.",
-    }, ensure_ascii=False)
-
-
-class CachedToolNode:
-    """Wraps LangGraph's ToolNode with session-level result caching.
-    If ALL tool calls in a batch are cached, skips execution entirely.
-    Otherwise executes normally and caches eligible results.
-    """
-
-    def __init__(self, tools: list) -> None:
-        from src.infra.tools_cache import CACHEABLE_TOOLS, session_cache
-
-        self._inner = ToolNode(tools=tools, handle_tool_errors=tool_error_to_message)
-        self._cache = session_cache
-        self._cacheable = CACHEABLE_TOOLS
-
-    def __call__(self, state: dict, config=None) -> dict:
-        last = state["messages"][-1] if state.get("messages") else None
-        tool_calls = getattr(last, "tool_calls", None) or []
-
-        # Attempt full-batch cache hit
-        cached_msgs: list[ToolMessage] = []
-        for tc in tool_calls:
-            name, args = tc["name"], tc.get("args", {})
-            if name not in self._cacheable:
-                cached_msgs = []
-                break
-            hit = self._cache.get(name, args)
-            if hit is None:
-                cached_msgs = []
-                break
-            cached_msgs.append(
-                ToolMessage(content=hit, tool_call_id=tc["id"], name=name)
-            )
-
-        if cached_msgs:
-            return {"messages": cached_msgs}
-
-        # Execute and cache eligible results
-        result = self._inner.invoke(state, config or {})
-        tc_by_id = {tc["id"]: tc for tc in tool_calls}
-
-        for msg in result.get("messages", []):
-            if not isinstance(msg, ToolMessage):
-                continue
-            tc = tc_by_id.get(msg.tool_call_id)
-            if tc and tc["name"] in self._cacheable:
-                from src.infra.tools_cache import CACHE_TTLS
-
-                self._cache.set(
-                    tc["name"], tc.get("args", {}), msg.content, CACHE_TTLS[tc["name"]]
-                )
-            if tc:
-                self._cache.on_tool_executed(tc["name"])
-
-        # Redact sensitive data before it enters the LLM context on cloud backends
-        from src.infra.redactor import is_sensitive_path, redact, should_redact
-        from src.infra.settings import settings
-
-        if should_redact(settings.llm_backend):
-            cleaned: list[ToolMessage] = []
-            for msg in result.get("messages", []):
-                if isinstance(msg, ToolMessage) and isinstance(msg.content, str):
-                    tc = tc_by_id.get(msg.tool_call_id, {})
-                    args = tc.get("args", {}) if tc else {}
-                    path = args.get("path", "") or args.get("file_path", "")
-                    content = redact(msg.content)
-                    if is_sensitive_path(path) and len(content) > 50:
-                        content = "[contenu redacté — fichier sensible non transmis au LLM cloud]"
-                    msg = ToolMessage(
-                        content=content,
-                        tool_call_id=msg.tool_call_id,
-                        name=getattr(msg, "name", None),
-                        # L'artefact porte le résultat non textuel (images,
-                        # ressources) : le reconstruire sans lui le perdrait
-                        # silencieusement, ce que la redaction ne demande pas.
-                        artifact=getattr(msg, "artifact", None),
-                        status=getattr(msg, "status", "success"),
-                    )
-                cleaned.append(msg)
-            result = {"messages": cleaned}
-
-        return result
 
 
 # ── Orchestrator ───────────────────────────────────────────────────────────────
@@ -612,10 +148,7 @@ def _chat_node_factory():
     tools = build_all_tools()
     retriever = ToolRetriever(tools)
 
-    # Tools MCP : découverts dynamiquement, indexés et routés SÉPARÉMENT des
-    # natifs (routing à deux étages avec filtrage par serveur). Ils rejoignent
-    # ensuite la même liste : le ToolNode ne fait aucune différence entre les deux.
-    # Sans serveur déclaré, `mcp_runtime()` est inerte et ne coûte rien.
+
     from src.mcp_client.runtime import mcp_runtime
 
     _mcp = mcp_runtime()
@@ -747,206 +280,24 @@ def _chat_node_factory():
         compressed = False
         transient_retries = 0
         degraded = False
-        stripped_tools = False
+        def _notifier(msg: str) -> None:
+            console.print(f"[dim]  ↩  {msg}[/dim]")
 
-        # Key pool tracking pour rotation sur 429
-        _orch_provider = backend
-        try:
-            from src.llm.key_pool import get_pool as _get_pool
+        def _compresser_une_fois() -> None:
+            global _compressed_this_turn
+            if not _compressed_this_turn:
+                _compressed_this_turn = True
+                _on_compress()
 
-            _orch_key = _get_pool().next_healthy(backend) or ""
-        except Exception:
-            _orch_key = ""
-
-        _RATE_LIMIT_MARKERS = (
-            "429",
-            "too many requests",
-            "resource_exhausted",
-            "rate limit",
-            "quota exceeded",
-            "session usage limit",
+        _issue = invoke_with_recovery(
+            llm_with_tools, working,
+            backend=backend, factory=factory, selected_tools=selected_tools,
+            force_text=force_text, on_compress=_compresser_une_fois, notify=_notifier,
         )
-
-        # Coupures de FLUX : la connexion tombe en cours de lecture, sans que la
-        # requête soit invalide. Ni un rate-limit, ni un dépassement de contexte —
-        # les deux seules classes traitées jusqu'ici — donc l'erreur remontait
-        # telle quelle et le tour entier était perdu, réponse comprise. Réémettre
-        # est sûr : rien n'a été livré, aucun outil n'a pu s'exécuter.
-        _TRANSIENT_MARKERS = (
-            "incompleteread",
-            "chunkedencoding",
-            "protocolerror",
-            "connection reset",
-            "connection aborted",
-            "remotedisconnected",
-            "server disconnected",
-            "read timed out",
-            "readtimeout",
-            "timed out",
-            "econnreset",
-        )
-        _MAX_TRANSIENT_RETRIES = 3
-
-        while True:
-            try:
-                response = llm_with_tools.invoke(working)
-
-                usage = getattr(response, "usage_metadata", None)
-                if usage:
-                    from src.ui.token_gauge import update_usage
-
-                    update_usage(usage)
-
-                break
-
-            except Exception as e:
-                err = f"{type(e).__name__}: {e}".lower()
-
-                # Flux coupé : on réessaie, avec une pause croissante. Borné —
-                # au-delà, la panne n'est plus transitoire et la masquer par des
-                # reprises indéfinies serait pire que de la signaler.
-                if any(k in err for k in _TRANSIENT_MARKERS):
-                    transient_retries += 1
-                    if transient_retries <= _MAX_TRANSIENT_RETRIES:
-                        import time as _time
-                        console.print(
-                            f"[dim]  ↩  flux interrompu — reprise "
-                            f"{transient_retries}/{_MAX_TRANSIENT_RETRIES}…[/dim]"
-                        )
-                        _time.sleep(2 ** (transient_retries - 1))
-                        _log_failure(_orch_provider, e, "retry", True)
-                        continue
-                    _log_failure(_orch_provider, e, "retry", False)
-                    raise
-
-                # rotation vers la prochaine clef
-                if any(k in err for k in _RATE_LIMIT_MARKERS):
-                    try:
-                        from src.llm.key_pool import get_fallback_order as _gfo
-                        from src.llm.key_pool import get_pool as _kp
-
-                        _nxt = _kp().next_provider_and_key(
-                            _orch_provider, _orch_key, _gfo()
-                        )
-                        if _nxt:
-                            _prev_provider = _orch_provider
-                            _orch_provider, _orch_key = _nxt
-                            settings.llm_backend = _orch_provider
-                            # Bascule AUTOMATIQUE -> réversible au prochain tour.
-                            from src.llm.key_pool import note_auto_fallback as _note
-                            _note(_prev_provider, _orch_provider)
-                            _new_llm = make_orchestrator_llm_with_key(
-                                _orch_provider, _orch_key
-                            )
-                            llm_with_tools = (
-                                _new_llm
-                                if force_text
-                                else _new_llm.bind_tools(selected_tools)
-                            )
-                            continue
-                    except Exception:
-                        pass
-                    raise
-
-                if "context" not in err and "length" not in err and "token" not in err:
-                    # DÉGRADATION plutôt qu'arrêt. Une erreur inconnue à ce point
-                    # vient presque toujours du provider — modèle retiré, schéma
-                    # d'outil refusé, réponse malformée — et l'utilisateur perdait
-                    # alors tout son tour sur un message brut qu'il ne pouvait pas
-                    # exploiter. Un basculement de provider a de bonnes chances
-                    # d'aboutir là où le précédent a échoué ; à défaut, le modèle
-                    # doit au moins pouvoir DIRE ce qui s'est passé.
-                    if not degraded:
-                        degraded = True
-                        try:
-                            from src.llm.key_pool import get_fallback_order as _gfo
-                            from src.llm.key_pool import get_pool as _kp
-
-                            _nxt = _kp().next_provider_and_key(
-                                _orch_provider, _orch_key, _gfo())
-                            if _nxt:
-                                _prev = _orch_provider
-                                _orch_provider, _orch_key = _nxt
-                                settings.llm_backend = _orch_provider
-                                from src.llm.key_pool import note_auto_fallback as _note
-                                _note(_prev, _orch_provider)
-                                console.print(
-                                    f"[dim]  ↩  {_prev} a échoué ({type(e).__name__}) — "
-                                    f"bascule sur {_orch_provider}…[/dim]")
-                                _log_failure(_prev, e, "provider_switch", True)
-                                _new_llm = make_orchestrator_llm_with_key(
-                                    _orch_provider, _orch_key)
-                                llm_with_tools = (
-                                    _new_llm if force_text
-                                    else _new_llm.bind_tools(selected_tools))
-                                continue
-                        except Exception:
-                            pass
-
-                    # Dernier recours : sans outils. Un schéma d'outil rejeté par
-                    # le provider est une cause fréquente, et le modèle peut encore
-                    # répondre en texte — mieux qu'une erreur nue.
-                    if not stripped_tools and not force_text:
-                        stripped_tools = True
-                        console.print(
-                            "[dim]  ↩  nouvel échec — dernière tentative sans "
-                            "outils…[/dim]")
-                        llm_with_tools = factory()
-                        _log_failure(_orch_provider, e, "no_tools", True)
-                        working = working + [
-                            SystemMessage(content=(
-                                "Les appels d'outils viennent d'échouer "
-                                f"({type(e).__name__}: {str(e)[:200]}). Réponds en "
-                                "texte : explique brièvement que l'action n'a pas pu "
-                                "être exécutée et pourquoi. N'invente aucun résultat."))
-                        ]
-                        continue
-                    _log_failure(_orch_provider, e, "none", False)
-                    raise
-
-                if not capped:
-                    capped = True
-                    working = _cap_tool_messages(working)
-                    console.print(
-                        "[dim]  ↩  contexte trop long — tronquage des résultats tools…[/dim]"
-                    )
-
-                elif not compressed:
-                    compressed = True
-                    if not _compressed_this_turn:
-                        _compressed_this_turn = True
-                        _on_compress()
-                    plain_llm = factory()
-                    working, removed = _compress_context(working, plain_llm, backend)
-                    before_tokens = _estimate_tokens(messages)
-                    after_tokens = _estimate_tokens(working)
-                    freed = before_tokens - after_tokens
-                    console.print(
-                        f"[dim]  ↩  compression: -{freed:,} tokens estimés "
-                        f"({before_tokens:,} → {after_tokens:,})[/dim]"
-                    )
-                    _state_removals.extend(
-                        r for r in removed if r not in _state_removals
-                    )
-                    _summary_msg = next(
-                        (
-                            m
-                            for m in working
-                            if isinstance(m, SystemMessage)
-                            and _SUMMARY_MARKER in str(m.content)
-                        ),
-                        _summary_msg,
-                    )
-                    console.print("[dim]  ↩  contexte compressé — reprise…[/dim]")
-
-                else:
-                    reduced = _drop_smartest(working)
-                    if reduced is None or len(reduced) <= 1:
-                        raise
-                    working = reduced
-                    console.print(
-                        f"[dim]  ↩  drop tool round ({len(working)} messages restants)…[/dim]"
-                    )
+        response = _issue.response
+        working = _issue.working
+        _state_removals.extend(r for r in _issue.removals if r not in _state_removals)
+        _summary_msg = _issue.summary or _summary_msg
 
         # Garde-fou : le LLM rappelle ask_clarification avec une question à laquelle
         # il a déjà une réponse dans cette conversation (le modèle ignore la réponse

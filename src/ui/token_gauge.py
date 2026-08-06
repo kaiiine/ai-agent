@@ -6,14 +6,11 @@ from __future__ import annotations
 _input_tokens: int = 0
 _output_tokens: int = 0
 
-# Context window limits per backend (used for gauge fill ratio).
-# We track input_tokens — the real measure of how full the context is.
-_CONTEXT_LIMITS: dict[str, int] = {
-    "ollama":       131_072,
-    "ollama_cloud": 128_000,
-    "groq":         131_072,
-    "gemini":     1_000_000,
-}
+# Les fenêtres de contexte viennent de `orchestrator.context` : la jauge et le
+# seuil de compression doivent répondre la MÊME chose à « où en est-on de la
+# fenêtre ». Deux tables séparées finissaient par diverger, et l'utilisateur
+# voyait alors 60 % pendant qu'une compression se déclenchait.
+from src.orchestrator.context import _CONTEXT_LIMIT_DEFAUT, _CONTEXT_LIMITS
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
@@ -36,7 +33,7 @@ def has_tokens() -> bool:
 
 
 def get_ratio(backend: str = "ollama_cloud") -> float:
-    limit = _CONTEXT_LIMITS.get(backend, 128_000)
+    limit = _CONTEXT_LIMITS.get(backend, _CONTEXT_LIMIT_DEFAUT)
     return min(_input_tokens / limit, 1.0)
 
 
