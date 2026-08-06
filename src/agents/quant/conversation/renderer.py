@@ -163,8 +163,12 @@ def _render_portefeuille(pf: Any, bankroll: Decimal | None) -> list[str]:
         f"{_eur(pf.unallocated_bankroll)}")
     if pf.explanation and pf.explanation.major_risks:
         lignes += [f"- Risque : {r}" for r in pf.explanation.major_risks]
-    lignes.append("- Aucun résultat n'est garanti : ces nombres sont des espérances "
-                  "de long terme, pas une prévision de ce match.")
+    # Le vocabulaire de certitude est banni ICI AUSSI, y compris sous forme niée.
+    # Le LLM restitue ce texte, le garde relit sa restitution : une phrase comme
+    # « aucun résultat n'est garanti » contient le mot interdit, et ferait
+    # bloquer la réponse valide qu'elle accompagne.
+    lignes.append("- Ces nombres sont des espérances de long terme, pas une "
+                  "prévision de ce match.")
     return lignes
 
 
@@ -194,12 +198,14 @@ def _render_promotions(run: RecommendationRun) -> list[str]:
     if not soldes:
         return []
     total = sum((p.amount for p in soldes), Decimal("0"))
+    cash = _eur(run.constraints.bankroll) if run.constraints.bankroll else "n/d"
     return [
         "",
         "### Soldes promotionnels",
-        f"Déclarés : {_eur(total)} — **PROMOTION_TERMS_UNKNOWN**.",
-        "Ils sont exclus de la bankroll de dimensionnement et ne font l'objet "
-        "d'aucune optimisation : un freebet n'est pas du cash (mise non rendue), "
-        "et ses conditions exactes ne sont pas modélisées. Il n'est jamais « sans "
-        "risque » : perdre le freebet en détruit toute la valeur.",
+        f"La bankroll cash est prise en compte : {cash}.",
+        f"Le freebet n'est pas utilisé car ses conditions promotionnelles ne sont "
+        f"pas connues : {_eur(total)} déclaré(s), **PROMOTION_TERMS_UNKNOWN**.",
+        "Il est exclu du dimensionnement et ne fait l'objet d'aucune optimisation. "
+        "Un freebet n'est pas du cash : sa mise n'est pas rendue en cas de gain, et "
+        "sa perte en détruit toute la valeur économique.",
     ]
