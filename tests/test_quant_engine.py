@@ -15,10 +15,7 @@ from src.agents.quant.dixon_coles import (
     dixon_coles_probabilities,
 )
 from src.agents.quant.ev_engine import (
-    analyze_bet,
-    analyze_parlay,
     no_vig_probabilities,
-    probability_ev_positive,
     minimum_odds,
     EV_THRESHOLD,
 )
@@ -125,25 +122,6 @@ def test_ev_threshold_is_conservative():
     assert EV_THRESHOLD >= 0.05, "seuil provisoire ≥ 5% tant que l'IC n'est pas calibré"
 
 
-def test_bet_in_noise_zone_gets_no_stake():
-    """EV point positif mais borne basse sous le seuil → decision WATCH/ABSTAIN, mise 0."""
-    result = analyze_bet(
-        model_prob=0.55, confidence_90=[0.45, 0.65], samples=[0.5] * 20, odds=1.95, bankroll=100
-    )
-    assert result["decision"] in ("WATCH", "ABSTAIN")
-    assert result["recommended_stake"] == 0.0
-
-
-def test_bet_confirmed_when_edge_is_robust():
-    """P(EV>0) élevée et borne basse au-dessus du seuil → BET, mise > 0."""
-    samples = [0.62] * 90 + [0.5] * 10  # 90% des tirages gardent un edge net
-    result = analyze_bet(
-        model_prob=0.62, confidence_90=[0.58, 0.66], samples=samples, odds=1.9, bankroll=100
-    )
-    assert result["decision"] == "BET"
-    assert result["recommended_stake"] > 0.0
-
-
 def test_no_vig_probabilities_sum_to_one():
     probs = no_vig_probabilities({"home": 2.1, "draw": 3.4, "away": 3.2})
     assert abs(sum(probs.values()) - 1) < 1e-9
@@ -156,37 +134,10 @@ def test_no_vig_probabilities_skips_missing_outcome():
     assert abs(sum(probs.values()) - 1) < 1e-9
 
 
-def test_probability_ev_positive_counts_correctly():
-    samples = [0.6] * 8 + [0.4] * 2  # à cote 1.8, 0.6*1.8-1>0 mais 0.4*1.8-1<0
-    assert probability_ev_positive(samples, odds=1.8) == 0.8
-
-
 def test_minimum_odds_matches_ev_threshold():
     prob = 0.5
     odds = minimum_odds(prob)
     assert abs((prob * odds - 1) - EV_THRESHOLD) < 1e-3
-
-
-# ── Point 5 : combinés multi-matchs ───────────────────────────────────────────
-
-def test_parlay_correlated_legs_flagged():
-    legs = [
-        {"model_prob": 0.6, "odds": 1.9, "match_id": "m1"},
-        {"model_prob": 0.5, "odds": 1.8, "match_id": "m1"},
-    ]
-    result = analyze_parlay(legs)
-    assert result["correlation_detected"]
-    assert result["recommended_stake"] == 0.0
-
-
-def test_parlay_independent_legs_ok():
-    legs = [
-        {"model_prob": 0.7, "odds": 1.8, "match_id": "m1"},
-        {"model_prob": 0.65, "odds": 1.85, "match_id": "m2"},
-    ]
-    result = analyze_parlay(legs)
-    assert not result["correlation_detected"]
-    assert abs(result["combined_odds"] - 1.8 * 1.85) < 1e-9
 
 
 # ── Bootstrap reproductible ───────────────────────────────────────────────────
@@ -197,3 +148,45 @@ def test_bootstrap_is_deterministic():
     r1 = dixon_coles_probabilities(form_a, form_b)
     r2 = dixon_coles_probabilities(form_a, form_b)
     assert r1 == r2, "seed fixe → résultats identiques"
+
+
+# ── Aucune seconde pile de décision ───────────────────────────────────────────
+
+def test_ev_engine_n_expose_aucune_decision_ni_aucun_dimensionnement():
+    """`ev_engine` portait `analyze_bet` et `analyze_parlay` : BET / WATCH /
+    ABSTAIN, `recommended_stake`, quart de Kelly. Une seconde pile de décision
+    complète, avec son propre dimensionnement, en parallèle de l'Advisor.
+
+    Elle était morte — aucun module du produit ne l'importait — mais rien ne le
+    disait, et sa signature en faisait une API d'apparence légitime, à un import
+    d'être vivante. Ce test empêche qu'elle revienne par mégarde : le seuil, la
+    comparaison et le dimensionnement appartiennent au value_engine et à
+    l'Advisor.
+    """
+    import src.agents.quant.ev_engine as ev
+
+    interdits = {"analyze_bet", "analyze_parlay", "kelly_stake", "KELLY_FRACTION",
+                 "conservative_ev", "probability_ev_positive",
+                 "P_EV_POSITIVE_THRESHOLD"}
+    presents = interdits & set(vars(ev))
+
+    assert not presents, f"seconde pile de décision réintroduite : {sorted(presents)}"
+
+
+def test_aucun_module_racine_ne_calcule_de_mise():
+    """Le dimensionnement vit dans l'Advisor, et nulle part ailleurs. Un second
+    calculateur de mise, même juste, se désynchronise du premier au premier
+    changement de politique."""
+    import ast
+    import pathlib
+
+    racine = pathlib.Path(__file__).resolve().parent.parent / "src" / "agents" / "quant"
+    coupables = []
+    for fichier in sorted(racine.glob("*.py")):          # couche racine seulement
+        arbre = ast.parse(fichier.read_text())
+        for noeud in ast.walk(arbre):
+            if isinstance(noeud, ast.FunctionDef) and (
+                    "kelly" in noeud.name.lower() or "stake" in noeud.name.lower()):
+                coupables.append(f"{fichier.name}:{noeud.name}")
+
+    assert not coupables, f"dimensionnement hors Advisor : {coupables}"
