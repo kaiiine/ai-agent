@@ -21,6 +21,7 @@ from datetime import datetime
 
 from src.agents.quant.betting_engine.core.canonical_event import CanonicalEvent
 from src.agents.quant.betting_engine.core.feature_set import EventFeatureSet
+from src.agents.quant.betting_engine.uncertainty import bound_for
 from src.agents.quant.betting_engine.core.market_model import (
     DataReadiness,
     MarketPrediction,
@@ -134,10 +135,16 @@ class TennisMoneylineModel:
                                 "variantes surface/Glicko-2 mesurées non supérieures"])
 
         def mk(sel: str, p: float) -> MarketPrediction:
+            # Borne basse MESURÉE sur l'historique du modèle (cf. uncertainty.py).
+            # Sans mesure disponible, elle vaut la probabilité et le statut reste
+            # NOT_ESTIMATED — jamais une marge inventée.
+            _low, _mesure = bound_for(self.model_version, p)
             return MarketPrediction(
                 sport="tennis", market_type="MATCH_WINNER", selection=sel,
-                fair_probability=p, probability_low=p, probability_high=p,
-                uncertainty_status=UncertaintyStatus.NOT_ESTIMATED, model_version=self.model_version,
+                fair_probability=p, probability_low=_low, probability_high=p,
+                uncertainty_status=(UncertaintyStatus.ESTIMATED if _mesure
+                                    else UncertaintyStatus.NOT_ESTIMATED),
+                model_version=self.model_version,
                 data_quality=data_quality, calibration_status=readiness,
                 point_in_time=point_in_time, explanation=expl)
         return {"player_a": mk("player_a", pa), "player_b": mk("player_b", 1.0 - pa)}
