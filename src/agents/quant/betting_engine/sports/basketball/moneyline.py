@@ -49,7 +49,7 @@ HOME_EDGE = 100.0            # prior d'avantage domicile (≈ 0.60), non fité
 MIN_PRIOR_GAMES = 10         # démarrage à froid : sous ce seuil, aucune prédiction
 
 _CLASSES = ("home", "away")
-_FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "nba_2022_2023_games.json"
+_FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "nba_api_sports_games.json"
 
 
 @dataclass(frozen=True)

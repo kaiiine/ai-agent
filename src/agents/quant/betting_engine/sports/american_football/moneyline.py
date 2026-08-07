@@ -33,7 +33,7 @@ NFL_PARAMS = EloParams(
     init_rating=1500.0, k_factor=20.0, home_edge=48.0, min_prior_games=6,
     notes="NFL: home ~57% -> home_edge 48 ; K=20 (Elo NFL standard) ; cold-start 6 (17 matchs/saison)")
 
-_FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "nfl_2021_2023_games.json"
+_FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "nfl_api_sports_games.json"
 
 
 def load_nfl_games(path: Path = _FIXTURE) -> tuple[list[PairwiseGame], str]:

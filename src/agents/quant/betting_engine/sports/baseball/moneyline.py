@@ -32,7 +32,7 @@ MLB_PARAMS = EloParams(
     init_rating=1500.0, k_factor=4.0, home_edge=24.0, min_prior_games=20,
     notes="MLB: home ~54% -> home_edge 24 ; K=4 (haute variance) ; cold-start 20/162")
 
-_FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "mlb_2022_games.json"
+_FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "mlb_api_sports_games.json"
 
 
 def load_mlb_games(path: Path = _FIXTURE) -> tuple[list[PairwiseGame], str]:

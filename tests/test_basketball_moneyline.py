@@ -17,10 +17,15 @@ from src.agents.quant.betting_engine.sports.basketball.moneyline import (
 
 
 def test_dataset_is_real_and_loaded():
+    """Trois saisons NBA acquises (2022-23 à 2024-25). On vérifie un PLANCHER et
+    les invariants du sport, pas un compte exact : figer la taille ferait échouer
+    le test à chaque acquisition sans jamais détecter une donnée corrompue."""
     games, fingerprint = load_nba_games()
-    assert len(games) == 1386                                # saison NBA 2022-23 complète
+    assert len(games) >= 1386                                # jamais de régression
     assert fingerprint.startswith("sha256:")
     assert all(g.home_points != g.away_points for g in games)   # pas de nul en NBA
+    assert len({g.game_id for g in games}) == len(games)        # aucun doublon d'acquisition
+    assert games == sorted(games, key=lambda g: g.tipoff)       # ordre chronologique
 
 
 def test_no_dixon_coles_or_football_reuse():

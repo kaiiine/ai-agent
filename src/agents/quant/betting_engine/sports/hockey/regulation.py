@@ -34,7 +34,7 @@ NHL_PARAMS = Davidson3Params(
     init_rating=1500.0, k_factor=10.0, home_edge=28.0, min_prior_games=10, default_draw_rate=0.22,
     notes="NHL réglementaire : home décisif ~0.54 -> home_edge 28 ; K=10 ; ν point-in-time (draw~0.22)")
 
-_FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "nhl_2022_2023_regulation.json"
+_FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "nhl_api_sports_games.json"
 
 
 def load_nhl_regulation(path: Path = _FIXTURE) -> tuple[list[ThreeWayGame], str]:

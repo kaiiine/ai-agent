@@ -128,10 +128,10 @@ def _providers() -> dict[str, tuple[str, Callable[[], list[datetime]]]]:
     from .sports.volleyball.moneyline import load_volleyball_games
 
     return {
-        "nfl": ("nfl_2021_2023_games.json", _dates_pairwise(load_nfl_games)),
-        "mlb": ("mlb_2022_games.json", _dates_pairwise(load_mlb_games)),
-        "nba": ("nba_2022_2023_games.json", _dates_pairwise(load_nba_games)),
-        "nhl": ("nhl_2022_2023_regulation.json", _dates_pairwise(load_nhl_regulation)),
+        "nfl": ("nfl_api_sports_games.json", _dates_pairwise(load_nfl_games)),
+        "mlb": ("mlb_api_sports_games.json", _dates_pairwise(load_mlb_games)),
+        "nba": ("nba_api_sports_games.json", _dates_pairwise(load_nba_games)),
+        "nhl": ("nhl_api_sports_games.json", _dates_pairwise(load_nhl_regulation)),
         "volley": ("volleyball_ita_a1_games.json", _dates_pairwise(load_volleyball_games)),
         "atp": ("sackmann atp", _dates_tennis("atp")),
         "wta": ("sackmann wta", _dates_tennis("wta")),
