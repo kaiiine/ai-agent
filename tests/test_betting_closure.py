@@ -225,7 +225,10 @@ def test_chaque_nombre_du_rendu_provient_d_un_champ_structure():
         c = evaluation.candidate
         for valeur in (c.bookmaker_odds, c.fair_probability, c.probability_low,
                        c.probability_high, c.expected_value_mean,
-                       c.expected_value_low, c.data_quality):
+                       c.expected_value_low, c.data_quality,
+                       # Champs ajoutés à la shortlist : la probabilité implicite
+                       # (1/cote) et l'edge, tous deux portés par le candidat.
+                       c.implied_probability, c.edge_mean, c.edge_low):
             autorises.add(str(valeur))
             autorises.add(f"{(valeur * 100).quantize(Decimal('0.01'))}")
             autorises.add(f"{valeur.quantize(Decimal('0.0001'))}")

@@ -114,13 +114,20 @@ def _render_reponse(run: RecommendationRun, *, debug: bool = False) -> str:
     lignes += _render_couverture(obs, evidence)
     lignes += _render_compteurs(obs, evidence)
 
+    # Deux niveaux STRICTEMENT séparés. Le produit répondait « Aucune mise
+    # recommandée » puis énumérait trente candidats : la phrase de tête niait ce
+    # que la suite montrait, et l'utilisateur lisait un refus là où il y avait un
+    # résultat.
+    lignes += ["", "## 1 · Recommandations actionnables"]
     if response.portfolios:
-        lignes += ["", "### Recommandation"]
         for pf in response.portfolios:
             lignes += _render_portefeuille(pf, run.constraints.bankroll)
     else:
-        lignes += ["", "**Aucune mise recommandée.** Aucun portefeuille n'a été produit : "
-                       "rien à placer, et aucune procédure de placement à suivre."]
+        lignes += [
+            "Aucune. Aucun modèle n'est encore validé pour la mise réelle, donc "
+            "aucun portefeuille n'a pu être produit — rien à placer, aucune "
+            "procédure de placement à suivre.",
+        ]
 
     lignes += _render_revue(run, debug=debug)
     lignes += _render_bloqueurs(obs, response)
@@ -189,21 +196,46 @@ def _render_revue(run: RecommendationRun, *, debug: bool) -> list[str]:
     if not candidats:
         return []
 
+    from .review_ranking import rank_review
+
     fenetre = run.constraints.time_window
+    classees = rank_review(candidats)
     lignes = [
         "",
-        f"### Candidats à examiner — NON MISABLES ({len(candidats)})",
-        "Le classement reproduit l'ordre de l'Advisor. Il n'indique pas qu'un "
-        "candidat serait plus proche d'être jouable que les autres : aucun ne "
-        "l'est, et l'ordre ne mesure pas cette distance.",
+        f"## 2 · Shortlist de revue — NON MISABLES ({len(classees)} rencontres)",
+        "Ce que le modèle trouve intéressant, et qui reste bloqué. Aucune de ces "
+        "lignes n'est un pari : pas de mise, pas de Kelly, aucune procédure de "
+        "placement. Classement par borne basse d'edge — il ne mesure pas une "
+        "distance au misable, aucun candidat ne l'étant.",
+        "",
+        "| # | rencontre | h. Paris | sél. | cote | implicite | modèle | borne basse | edge | EV |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
-    affiches = candidats if debug else candidats[:_TOP_REVIEW]
-    for evaluation in affiches:
-        lignes += _render_candidat(evaluation, obs, fenetre)
-    if not debug and len(candidats) > _TOP_REVIEW:
-        lignes.append(f"\n… et {len(candidats) - _TOP_REVIEW} autre(s) — mode debug "
+    affichees = classees if debug else classees[:_TOP_REVIEW]
+    for ligne in affichees:
+        lignes.append(_render_ligne_revue(ligne, fenetre))
+    if not debug and len(classees) > _TOP_REVIEW:
+        lignes.append(f"\n… et {len(classees) - _TOP_REVIEW} autre(s) — mode debug "
                       "pour la liste complète.")
+
+    lignes += ["", "**Détail des trois premiers**"]
+    for ligne in affichees[:3]:
+        lignes += _render_candidat(ligne.evaluation, obs, fenetre)
     return lignes
+
+
+def _render_ligne_revue(ligne: Any, fenetre: Any) -> str:
+    """Une ligne de tableau. Tous les nombres viennent du candidat structuré."""
+    c = ligne.candidate
+    if fenetre is not None and not fenetre.contains(c.scheduled_at):
+        return f"| {ligne.rang} | ⚠ hors fenêtre — écarté du rendu | | | | | | | | |"
+    from .window import to_paris
+
+    return (f"| {ligne.rang} | {participant_label(c.participant_ids)} "
+            f"| {to_paris(c.scheduled_at):%d/%m %H:%M} | {c.selection} "
+            f"| {c.bookmaker_odds} | {_pct(c.implied_probability)} "
+            f"| {_pct(c.fair_probability)} | {_pct(c.probability_low)} "
+            f"| {_signed(c.edge_low)} | {_signed(c.expected_value_low)} |")
 
 
 def _valeur(value: Any, rendu=lambda v: str(v)) -> str:
@@ -235,9 +267,11 @@ def _render_candidat(evaluation: Any, obs: Any = None, fenetre: Any = None) -> l
         f"- Coup d'envoi : {render_kickoff(c.scheduled_at)}",
         f"- Marché / sélection : {c.market_type} · **{c.selection}**",
         f"- Cote bookmaker : {c.bookmaker_odds} ({c.bookmaker})",
+        f"- Probabilité implicite (1/cote, marge incluse) : {_pct(c.implied_probability)}",
         f"- Probabilité modèle : {_pct(c.fair_probability)} "
         f"(borne basse {_pct(c.probability_low)})",
         f"- Probabilité sans marge : {_valeur(no_vig, _pct)}",
+        f"- Edge : {_signed(c.edge_mean)} (borne basse {_signed(c.edge_low)})",
         f"- EV moyenne : {_signed(c.expected_value_mean)} · "
         f"EV pire cas : {_signed(c.expected_value_low)}",
         f"- Modèle : `{c.model_version}` · maturité **{c.model_maturity}**",

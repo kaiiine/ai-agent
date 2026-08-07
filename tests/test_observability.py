@@ -140,7 +140,7 @@ def test_review_candidates_sont_rendus_avec_leurs_raisons():
     rendu = render(run)
 
     assert run.response.outcome.value == "REVIEW_CANDIDATES"
-    assert "Candidats à examiner — NON MISABLES" in rendu
+    assert "Shortlist de revue — NON MISABLES" in rendu
     assert "premier bloqueur : **EXPERIMENTAL_REVIEW_ONLY**" in rendu
     assert "Raisons complètes : EXPERIMENTAL_REVIEW_ONLY, FRESHNESS_UNKNOWN" in rendu
 
@@ -159,7 +159,9 @@ def test_aucune_mise_ni_instruction_de_placement_en_revue():
     run, _ = _run(_contraintes(), [_evaluation()])
     rendu = render(run)
 
-    assert "Aucune mise recommandée" in rendu
+    # Le niveau actionnable est vide et le dit, sans nier la shortlist qui suit.
+    assert "## 1 · Recommandations actionnables" in rendu
+    assert "Aucune. Aucun modèle n'est encore validé" in rendu
     for interdit in ("meilleur pari", "proche de passer", "presque recommandé",
                      "ouvrez winamax", "placez", "mise recommandée de"):
         assert interdit.lower() not in rendu.lower()
