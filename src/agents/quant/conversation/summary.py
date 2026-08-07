@@ -267,6 +267,41 @@ def _rencontre(ligne: Any, obs: Any, index: int) -> list[str]:
     return lignes
 
 
+#: Refus du Betting Engine, dits en français. Un code absent d'ici s'affiche tel
+#: quel : un code brut vaut mieux qu'une phrase inventée qui le trahirait.
+_REFUS = {
+    "EVENT_NOT_RESOLVED": "participants inconnus de notre référentiel",
+    "COMPETITION_NOT_RESOLVED": "compétition non identifiée",
+    "COMPETITION_NOT_COVERED": "aucun provider ne couvre cette compétition",
+    "SPORT_NOT_SUPPORTED": "sport sans modèle",
+    "MARKET_CANONICALIZATION_FAILED": "marché illisible",
+    "INSUFFICIENT_FEATURES": "données insuffisantes pour ce match",
+    "DATA_TOO_STALE": "données trop anciennes",
+    "GATEWAY_UNAVAILABLE": "source de données indisponible",
+}
+
+
+def _pourquoi_rien(run: Any, obs: Any) -> list[str]:
+    """Ce qui a réellement manqué, agrégé — jamais une raison plausible."""
+    if obs is None:
+        return []
+    telemetrie = obs.telemetry
+    if telemetrie.events_inside_window == 0:
+        return ["",
+                f"Aucune rencontre dans cette fenêtre : {telemetrie.catalog_events_total} "
+                f"événement(s) au catalogue, tous en dehors. Élargis la période "
+                f"pour en trouver."]
+
+    refus = obs.pre_evaluation_refusals
+    if not refus:
+        return []
+    lignes = ["", f"{telemetrie.events_inside_window} rencontre(s) dans la fenêtre, "
+                  "aucune évaluable :"]
+    for code, nombre in sorted(refus.items(), key=lambda kv: (-kv[1], kv[0])):
+        lignes.append(f"  · {nombre} — {_REFUS.get(code, code)}")
+    return lignes
+
+
 def render_resume(run: Any, *, top_liste: int = TOP_LISTE,
                   top_detaille: int = TOP_DETAILLE) -> list[str]:
     """Le résumé lisible. Ne remplace pas le rendu technique — il le précède."""
@@ -275,7 +310,14 @@ def render_resume(run: Any, *, top_liste: int = TOP_LISTE,
     response, obs = run.response, run.observability
     contraintes = run.constraints
     fenetre = contraintes.time_window
+
+    # Les sports RENCONTRÉS d'abord ; à défaut, ceux qui ont été DEMANDÉS. Une
+    # fenêtre vide ne doit pas transformer « basket » en « tous sports » : le
+    # titre décrirait alors la recherche que l'utilisateur n'a pas faite.
     sports = list(obs.sports_in_window) if obs is not None else []
+    if not sports:
+        demandes = contraintes.resolved_scope("sports")
+        sports = sorted(demandes) if demandes else []
 
     lignes = [f"{_sport_entete(sports)} — {fenetre.describe()}"]
 
@@ -300,7 +342,10 @@ def render_resume(run: Any, *, top_liste: int = TOP_LISTE,
 
     candidats = list(response.review_candidates or ())
     if not candidats:
-        return lignes
+        # Sans candidat, « aucun modèle validé » n'est PAS la raison — et le dire
+        # enverrait chercher au mauvais endroit. Ce qui manque se lit dans les
+        # refus du scan, comptés par le domaine.
+        return lignes + _pourquoi_rien(run, obs)
 
     classees = rank_review(candidats)
     montrees = classees[:top_liste]

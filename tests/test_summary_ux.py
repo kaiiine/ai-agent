@@ -216,27 +216,49 @@ def test_le_resume_explique_pourquoi_ce_n_est_pas_misable():
 
 
 # ══ §6 — Le renderer consomme le classement, il ne classe pas ══════════════
-def test_le_resume_ne_reclasse_jamais_les_candidats():
+def test_le_resume_ne_trie_aucun_candidat_lui_meme():
     """Une seconde logique de classement pour l'affichage finirait par diverger
-    de celle qui décide."""
+    de celle qui décide.
+
+    La vérification porte sur les CANDIDATS, pas sur tout appel à `sorted` : le
+    résumé ordonne légitimement des compteurs de refus, et une interdiction en
+    bloc l'aurait confondu avec un reclassement.
+    """
+    import ast
     import inspect
 
     from src.agents.quant.conversation import summary
-    from src.agents.quant.conversation.review_ranking import rank_review
 
-    source = inspect.getsource(summary)
-    assert "rank_review" in source
-    assert "sorted(" not in source, "le résumé trie lui-même"
+    arbre = ast.parse(inspect.getsource(summary))
+    coupables = []
+    for noeud in ast.walk(arbre):
+        if not (isinstance(noeud, ast.Call)
+                and getattr(noeud.func, "id", None) in ("sorted", "min", "max")):
+            continue
+        noms = {n.attr for n in ast.walk(noeud) if isinstance(n, ast.Attribute)}
+        noms |= {n.id for n in ast.walk(noeud) if isinstance(n, ast.Name)}
+        if noms & {"review_candidates", "candidate", "candidats", "classees"}:
+            coupables.append(f"L{noeud.lineno}")
+
+    assert not coupables, f"le résumé classe des candidats : {coupables}"
+    assert "rank_review" in inspect.getsource(summary)
+
+
+def test_l_ordre_affiche_est_exactement_celui_du_classement():
+    """Preuve par le texte : les rencontres apparaissent dans l'ordre rendu par
+    `rank_review`, sans exception."""
+    from src.agents.quant.conversation.review_ranking import rank_review
+    from src.agents.quant.conversation.summary import rencontre_lisible
 
     run = _run_revue()
-    attendu = [l.candidate.candidate_id for l in rank_review(run.response.review_candidates)]
+    attendu = [rencontre_lisible(l.candidate)
+               for l in rank_review(run.response.review_candidates)]
     texte = "\n".join(render_resume(run))
-    from src.agents.quant.conversation.summary import rencontre_lisible
-    ordre_affiche = [rencontre_lisible(l.candidate)
-                     for l in rank_review(run.response.review_candidates)]
 
-    assert attendu                       # le classement existe
-    assert texte.index(ordre_affiche[0]) < texte.index("État") if "État" in texte else True
+    positions = [texte.index(nom) for nom in attendu if nom in texte]
+
+    assert len(positions) >= 1
+    assert positions == sorted(positions), "l'affichage réordonne le classement"
 
 
 # ══ §5 — Rien plutôt que du remplissage ════════════════════════════════════
@@ -298,3 +320,111 @@ def test_une_vraie_borne_basse_n_est_pas_signalee_a_tort():
     """Le jour où un intervalle sera estimé, la mise en garde doit disparaître
     d'elle-même — sinon elle deviendrait un mensonge inverse."""
     assert "borne basse = probabilité" not in render(_run_revue())
+
+
+# ══ §15-C — Aucun événement exploitable : dire POURQUOI ═════════════════════
+def _run_vide(refus=(), scannes=15, dans_fenetre=0):
+    from src.agents.quant.conversation.observability import ScanTelemetry
+    from src.agents.quant.conversation.recommend import run_recommendation
+
+    contraintes = constraints_from_request(
+        None, bankroll=Decimal("20"), sports=["basketball"],
+        time_window=resolve_window("", _MAINTENANT))
+    traces = _traces_refus(refus)
+
+    def scan(window, sports, decision_time):
+        return (_batch_vide(), ScanTelemetry(
+            catalog_sports={2: "Basket"}, scanned_sports=("basketball",),
+            catalog_events_total=scannes,
+            events_outside_window=scannes - dans_fenetre,
+            events_inside_window=dans_fenetre), traces)
+
+    return run_recommendation(contraintes, now=_MAINTENANT, scan=scan, persist_audit=None)
+
+
+def _traces_refus(refus):
+    from datetime import timedelta
+
+    from src.agents.quant.conversation.observability import EventTrace
+
+    return tuple(
+        EventTrace(bookmaker_event_id=f"x{i}", sport="basketball",
+                   competition_label="—", kickoff=_MAINTENANT + timedelta(hours=1),
+                   status=statut, reason=statut)
+        for i, statut in enumerate(refus))
+
+
+def _batch_vide():
+    from tests.test_betting_conversation_safety import _batch
+    return _batch()
+
+
+def test_une_fenetre_sans_rencontre_le_dit_et_propose_d_elargir():
+    """« Aucun modèle validé » serait FAUX ici : il n'y avait rien à évaluer.
+    Dire la mauvaise raison envoie chercher au mauvais endroit."""
+    texte = "\n".join(render_resume(_run_vide()))
+
+    assert "Aucune rencontre dans cette fenêtre" in texte
+    assert "15 événement(s) au catalogue" in texte
+    assert "Élargis la période" in texte
+
+
+def test_des_rencontres_non_evaluables_sont_ventilees_par_motif():
+    texte = "\n".join(render_resume(_run_vide(
+        refus=("EVENT_NOT_RESOLVED", "EVENT_NOT_RESOLVED", "INSUFFICIENT_FEATURES"),
+        dans_fenetre=3)))
+
+    assert "3 rencontre(s) dans la fenêtre, aucune évaluable" in texte
+    assert "2 — participants inconnus de notre référentiel" in texte
+    assert "1 — données insuffisantes pour ce match" in texte
+
+
+def test_le_titre_garde_le_sport_demande_meme_sans_evenement():
+    """Une fenêtre vide ne doit pas transformer « basket » en « tous sports » :
+    le titre décrirait la recherche que l'utilisateur n'a pas faite."""
+    texte = "\n".join(render_resume(_run_vide()))
+
+    assert "Basket" in texte and "Tous sports" not in texte
+
+
+# ══ §15-D — Panne provider : rien ne peut être affirmé ═════════════════════
+def test_une_panne_de_scan_ne_laisse_rien_affirmer():
+    """Le scan tombe : la chaîne rend un échec typé, sans preuve, et le garde
+    bloque toute affirmation de pari qui prétendrait le contraire."""
+    import json
+    from unittest.mock import patch
+
+    from src.agents.quant.betting_engine.bookmakers.winamax import connector as C
+    from src.agents.quant.conversation import session
+    from src.agents.quant.conversation import tools as T
+    from src.agents.quant.conversation.evidence import EVIDENCE_KEY
+    from src.agents.quant.conversation.guard import enforce
+
+    def scan_casse(self, sport):
+        raise ConnectionError("winamax.fr injoignable")
+
+    session.reset()
+    with patch.object(C.WinamaxConnector, "scan_catalog", scan_casse):
+        charge = json.loads(T.betting_recommend.func(
+            when="aujourd'hui", bankroll=20.0, sports=["tennis"],
+            config={"configurable": {"thread_id": "panne"}}))
+
+    assert charge["status"] in ("DATA_UNAVAILABLE", "TECHNICAL_FAILURE")
+    assert charge[EVIDENCE_KEY] is None
+    # Aucune cote, aucune sélection, aucun horaire dans le texte d'échec.
+    for interdit in ("@", "cote ", "%", "€"):
+        assert interdit not in charge["rendered"].lower(), interdit
+    # Et le rendu d'échec lui-même passe : il explique, il n'affirme pas.
+    assert not enforce(charge["rendered"], None).blocked
+
+
+@pytest.mark.parametrize("invention", [
+    "Mise 10 € sur Djokovic.",
+    "Le meilleur pari du soir est Alcaraz.",
+    "Djokovic est à 1.75 chez Winamax.",
+    "Le moteur a retourné BET sur ce match.",
+])
+def test_aucune_invention_ne_passe_apres_une_panne(invention):
+    from src.agents.quant.conversation.guard import enforce
+
+    assert enforce(invention, None).blocked, invention

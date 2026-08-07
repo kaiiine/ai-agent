@@ -121,3 +121,67 @@ def test_live_multisport_odds_fetch_no_fallback():   # pragma: no cover (réseau
             assert None not in q.odds.values() and len(q.odds) >= 2
             {k: margin_removal.implied_raw(v) for k, v in q.odds.items()}   # ne lève jamais
         print(f"{sport}: {len(quotes)} quotes (source unique PRELOADED_STATE)")
+
+
+# ══ Scan multisport : de front, mais déterministe ══════════════════════════
+def test_le_scan_multisport_conserve_l_ordre_des_sports_demandes():
+    """Les scans partent ensemble — sept appels réseau enchaînés coûtaient leur
+    somme (0,98 s mesurée) alors qu'ils ne dépendent pas les uns des autres.
+
+    L'ordre de sortie doit rester celui des sports DEMANDÉS, jamais celui des
+    réponses : deux runs identiques doivent produire le même catalogue, dans le
+    même ordre, sinon un classement aval hériterait d'un aléa réseau.
+    """
+    import time
+
+    from src.agents.quant.betting_engine.bookmakers.winamax.catalogue import multisport_events
+
+    class _Lent:
+        """Le premier sport répond en dernier — cas qui révèle un tri par arrivée."""
+        def scan_catalog(self, sport):
+            if sport == "a":
+                time.sleep(0.05)
+            return [f"{sport}-1", f"{sport}-2"]
+
+    assert list(multisport_events(_Lent(), ["a", "b", "c"])) == [
+        "a-1", "a-2", "b-1", "b-2", "c-1", "c-2"]
+
+
+def test_le_scan_multisport_mene_les_sports_de_front():
+    import threading
+    import time
+
+    from src.agents.quant.betting_engine.bookmakers.winamax.catalogue import multisport_events
+
+    simultanes, maximum, verrou = 0, 0, threading.Lock()
+
+    class _Compteur:
+        def scan_catalog(self, sport):
+            nonlocal simultanes, maximum
+            with verrou:
+                simultanes += 1
+                maximum = max(maximum, simultanes)
+            time.sleep(0.05)
+            with verrou:
+                simultanes -= 1
+            return []
+
+    multisport_events(_Compteur(), ["a", "b", "c", "d"])
+
+    assert maximum >= 2, "les scans sont restés séquentiels"
+
+
+def test_un_scan_qui_echoue_reste_une_panne_pas_un_sport_vide():
+    """Confondre les deux ferait répondre « rien aujourd'hui » à une coupure."""
+    import pytest
+
+    from src.agents.quant.betting_engine.bookmakers.winamax.catalogue import multisport_events
+
+    class _Casse:
+        def scan_catalog(self, sport):
+            if sport == "b":
+                raise ConnectionError("winamax injoignable")
+            return [f"{sport}-1"]
+
+    with pytest.raises(ConnectionError):
+        multisport_events(_Casse(), ["a", "b", "c"])
