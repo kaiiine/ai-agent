@@ -91,36 +91,77 @@ def load_competition_season(
     return matches, dataset_fingerprint(raw), n_finished
 
 
-def load_fl1_2025(resolver: IdentityResolver, path: Path = DEFAULT_FL1_FIXTURE):
-    """Ligue 1 2025-26 (wrapper du chargeur générique)."""
-    return load_competition_season(resolver, path, FL1_LEAGUE_ID, FL1_SEASON)
+#: Saisons historiques acquises (football-data.org, free tier). 2022 et
+#: antérieures répondent 403 : hors fenêtre gratuite, pas hors existence.
+HISTORICAL_SEASONS = ("2023", "2024")
 
 
-def load_sa_2025(resolver: IdentityResolver, path: Path = DEFAULT_SA_FIXTURE):
+def load_competition_history(
+    resolver: IdentityResolver, prefixe: str, league_id: str, season: str,
+    path: Path | None = None,
+):
+    """Toutes les saisons disponibles d'une compétition, dans l'ordre chronologique.
+
+    Une seule saison laisse presque toutes les équipes sans historique au début du
+    corpus : le cold-start y est mécaniquement maximal, et l'échantillon plafonne
+    à ~300 matchs. Empiler les saisons antérieures ne change ni le modèle ni ses
+    paramètres — cela donne simplement au walk-forward un passé à lire avant de
+    prédire.
+
+    L'ordre chronologique n'est pas cosmétique : le rejeu walk-forward suppose que
+    les matchs arrivent dans le temps, et mélanger les saisons ferait prédire 2023
+    avec des notes acquises en 2025. `path` force une saison unique (tests).
+    """
+    if path is not None:
+        return load_competition_season(resolver, path, league_id, season)
+
+    tous: list[CanonicalMatch] = []
+    empreintes: list[str] = []
+    n_finished = 0
+    for saison in (*HISTORICAL_SEASONS, season):
+        fichier = _FIXTURES / f"{prefixe}_{saison}_matches.json"
+        if not fichier.exists():
+            continue
+        matchs, empreinte, n = load_competition_season(
+            resolver, fichier, league_id, saison)
+        tous.extend(matchs)
+        empreintes.append(empreinte)
+        n_finished += n
+
+    tous.sort(key=lambda m: m.kickoff)
+    return tous, dataset_fingerprint("|".join(empreintes).encode()), n_finished
+
+
+def load_fl1_2025(resolver: IdentityResolver, path: Path = None):
+    """Ligue 1 — toutes saisons acquises."""
+    return load_competition_history(resolver, "fl1", FL1_LEAGUE_ID, FL1_SEASON, path)
+
+
+def load_sa_2025(resolver: IdentityResolver, path: Path = None):
     """Serie A 2025-26 (wrapper du chargeur générique) — onboardée le 2026-07-31."""
-    return load_competition_season(resolver, path, SA_LEAGUE_ID, SA_SEASON)
+    return load_competition_history(resolver, "sa", SA_LEAGUE_ID, SA_SEASON, path)
 
 
-def load_pd_2025(resolver: IdentityResolver, path: Path = DEFAULT_PD_FIXTURE):
+def load_pd_2025(resolver: IdentityResolver, path: Path = None):
     """LaLiga 2025-26 (wrapper du chargeur générique)."""
-    return load_competition_season(resolver, path, PD_LEAGUE_ID, PD_SEASON)
+    return load_competition_history(resolver, "pd", PD_LEAGUE_ID, PD_SEASON, path)
 
 
-def load_bl1_2025(resolver: IdentityResolver, path: Path = DEFAULT_BL1_FIXTURE):
+def load_bl1_2025(resolver: IdentityResolver, path: Path = None):
     """Bundesliga (Allemagne) 2025-26 (wrapper du chargeur générique)."""
-    return load_competition_season(resolver, path, BL1_LEAGUE_ID, BL1_SEASON)
+    return load_competition_history(resolver, "bl1", BL1_LEAGUE_ID, BL1_SEASON, path)
 
 
-def load_elc_2025(resolver: IdentityResolver, path: Path = DEFAULT_ELC_FIXTURE):
+def load_elc_2025(resolver: IdentityResolver, path: Path = None):
     """Championship anglaise 2025-26 (wrapper du chargeur générique)."""
-    return load_competition_season(resolver, path, ELC_LEAGUE_ID, ELC_SEASON)
+    return load_competition_history(resolver, "elc", ELC_LEAGUE_ID, ELC_SEASON, path)
 
 
-def load_ded_2025(resolver: IdentityResolver, path: Path = DEFAULT_DED_FIXTURE):
+def load_ded_2025(resolver: IdentityResolver, path: Path = None):
     """Eredivisie 2025-26 (wrapper du chargeur générique)."""
-    return load_competition_season(resolver, path, DED_LEAGUE_ID, DED_SEASON)
+    return load_competition_history(resolver, "ded", DED_LEAGUE_ID, DED_SEASON, path)
 
 
-def load_ppl_2025(resolver: IdentityResolver, path: Path = DEFAULT_PPL_FIXTURE):
+def load_ppl_2025(resolver: IdentityResolver, path: Path = None):
     """Primeira Liga 2025-26 (wrapper du chargeur générique)."""
-    return load_competition_season(resolver, path, PPL_LEAGUE_ID, PPL_SEASON)
+    return load_competition_history(resolver, "ppl", PPL_LEAGUE_ID, PPL_SEASON, path)

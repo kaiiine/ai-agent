@@ -41,10 +41,14 @@ def test_winamax_names_resolve_exactly_no_fuzzy():
 
 
 def test_teams_absent_from_dataset_stay_unresolved():
-    # Frosinone/Monza/Venise apparaissent chez Winamax mais PAS dans le dataset 2025 :
-    # aucune identité -> UNRESOLVED (isolé, jamais mal résolu).
+    """Une équipe hors référentiel reste UNRESOLVED — isolée, jamais mal résolue.
+
+    Frosinone, Monza et Venise servaient d'exemples : ils jouaient en Serie A
+    2023-24 et sont désormais AU référentiel, puisque le corpus acquis les
+    contient. L'invariant, lui, ne change pas — on l'éprouve donc sur un nom qui
+    n'existe nulle part, ce qui le rend indépendant du roster du jour."""
     ber = BookmakerEventResolver(_RESOLVER)
-    for name in ("Frosinone", "Monza", "Venise"):
+    for name in ("Club Inexistant", "Equipe Fantome"):
         matches, _ = ber._name_matches("football", name)
         assert matches == []
 
@@ -56,15 +60,29 @@ def test_competition_mapping_resolved():
 
 def test_historical_dataset_real_and_fully_resolved():
     matches, fingerprint, n_finished = load_sa_2025(_RESOLVER)
-    assert n_finished == 380 and len(matches) == 380          # saison complète, 100 % résolue
+    # Trois saisons acquises : c'est l'INVARIANT de résolution qui est vérifié,
+    # pas la taille d'une saison — la figer ferait échouer le test à chaque
+    # acquisition sans jamais détecter une équipe perdue.
+    assert len(matches) == n_finished and n_finished >= 380   # 100 % résolu
     assert fingerprint.startswith("sha256:")                  # provenance/reproductibilité
-    assert all(m.league_id == SA_LEAGUE_ID and m.season == SA_SEASON for m in matches)
+    # La compétition reste la même sur tout le corpus ; la saison, elle, varie
+    # désormais — chaque match porte la sienne, jamais celle de la plus récente.
+    from src.agents.quant.betting_engine.calibration.historical_dataset import (
+        HISTORICAL_SEASONS,
+    )
+
+    assert all(m.league_id == SA_LEAGUE_ID for m in matches)
+    assert {m.season for m in matches} <= {*HISTORICAL_SEASONS, SA_SEASON}
+    assert len({m.season for m in matches}) > 1               # l'historique est bien empilé
 
 
 def test_generic_loader_matches_wrapper():
+    """Le wrapper délègue au chargeur générique : mêmes matchs pour la MÊME
+    saison. Le wrapper empile désormais l'historique, donc on compare à saison
+    forcée — sinon on comparerait trois saisons à une."""
     a, fa, na = load_competition_season(_RESOLVER, DEFAULT_SA_FIXTURE, SA_LEAGUE_ID, SA_SEASON)
-    b, fb, nb = load_sa_2025(_RESOLVER)
-    assert (len(a), fa, na) == (len(b), fb, nb)                # wrapper == chargeur générique
+    b, fb, nb = load_sa_2025(_RESOLVER, path=DEFAULT_SA_FIXTURE)
+    assert (len(a), fa, na) == (len(b), fb, nb)
 
 
 def test_walk_forward_is_experimental_never_fabricated_supported():
@@ -74,7 +92,11 @@ def test_walk_forward_is_experimental_never_fabricated_supported():
     assert o.n_evaluated > 300 and o.n_temporal_folds >= 3     # hors échantillon réel
     assert o.model_brier < o.best_baseline_brier              # bat la baseline (mesuré)
     blockers = {c.name for c in d.criteria if c.required and c.verdict.value != "PASS"}
-    assert "min_sample_size" in blockers                      # 370 < 500 : honnêtement bloqué
+    # `min_sample_size` est franchi depuis l'acquisition de 2023-24 et 2024-25 —
+    # par les DONNÉES, aucun seuil n'ayant bougé. Le verdict reste EXPERIMENTAL
+    # parce que la CLV, elle, n'est toujours pas mesurable.
+    assert "min_sample_size" not in blockers
+    assert "positive_clv" in blockers
 
 
 def test_walk_forward_is_deterministic():

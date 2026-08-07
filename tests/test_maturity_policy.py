@@ -234,11 +234,11 @@ def test_real_fl1_model_stays_experimental_mechanically():
     # Seuls les critères REQUIS et non-PASS bloquent la promotion.
     blockers = {c.name: c.verdict for c in a.decision.criteria
                 if c.required and c.verdict is not Verdict.PASS}
-    # Blocages ATTENDUS et honnêtes : échantillon d'une seule saison + CLV non collectée.
-    assert blockers == {
-        "min_sample_size": Verdict.FAIL,
-        "positive_clv": Verdict.NOT_MEASURABLE,
-    }
+    # Blocage ATTENDU et honnête : la CLV n'est toujours pas collectée.
+    # `min_sample_size` a été franchi par l'ACQUISITION des saisons 2023-24 et
+    # 2024-25 (296 -> 903 évaluations), pas par un seuil abaissé : la barre reste
+    # à 500, c'est le corpus qui a grandi.
+    assert blockers == {"positive_clv": Verdict.NOT_MEASURABLE}
     # La fraîcheur live est désormais câblée -> mesurable -> PASS (plus un blocage).
     freshness = next(c for c in a.decision.criteria if c.name == "measurable_live_freshness")
     assert freshness.verdict is Verdict.PASS
@@ -257,7 +257,29 @@ def test_real_assessment_never_fabricates_clv():
     assert a.observations.clv_mean is None          # jamais 0
 
 
-def test_real_assessment_recommends_raw_probabilities():
-    # Constat honnête : la re-calibration point-in-time n'améliore pas l'ECE sur FL1.
+def test_calibration_recommendation_is_measured_and_never_served_blindly():
+    """La recommandation de calibration est MESURÉE, donc elle peut changer.
+
+    Sur une seule saison, la re-calibration point-in-time n'améliorait pas l'ECE
+    et la mesure disait « raw ». Avec trois saisons elle dit « calibrated » — un
+    constat, pas une décision. Ce qui doit rester vrai est qu'aucun code de
+    production ne LIT ce champ pour servir des probabilités : le modèle dérive
+    son statut du ledger de support. Figer la valeur testerait le corpus ; c'est
+    l'absence de consommateur qu'il faut verrouiller."""
+    import pathlib
+
     a = assess_default_one_x_two()
-    assert a.metrics["calibration"]["recommendation"]["use"] == "raw"
+    assert a.metrics["calibration"]["recommendation"]["use"] in ("raw", "calibrated")
+
+    # Recherche CIBLÉE sur le chemin de calibration : `payload["recommendation"]`
+    # existe aussi dans l'audit Advisor et désigne tout autre chose.
+    racine = pathlib.Path(__file__).resolve().parents[1] / "src"
+    consommateurs = [
+        f"{c.relative_to(racine)}" for c in racine.rglob("*.py")
+        if '"calibration"' in (texte := c.read_text(encoding="utf-8"))
+        and '"recommendation"' in texte
+        # `calibration/` la PRODUIT ; ce qu'on interdit, c'est qu'on la lise
+        # ailleurs — en particulier sur le chemin qui sert les probabilités.
+        and "betting_engine/calibration/" not in str(c)
+    ]
+    assert not consommateurs, f"la recommandation est lue en production : {consommateurs}"

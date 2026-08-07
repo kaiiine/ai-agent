@@ -67,8 +67,18 @@ def test_competition_mapping_resolved(slug, tid, loader, comp_id, n_fin, samples
 
 @pytest.mark.parametrize("slug,tid,loader,comp_id,n_fin,samples", _LEAGUES)
 def test_historical_fully_resolved(slug, tid, loader, comp_id, n_fin, samples):
+    """100 % résolu : tout match FINISHED doit atteindre un canonical_id.
+
+    Le nombre attendu n'est plus figé sur une saison — le corpus en compte
+    désormais trois. Ce qui compte est l'INVARIANT (aucune perte à la résolution)
+    et un plancher (le corpus ne rétrécit jamais), pas la taille d'une saison
+    donnée : figer celle-ci ferait échouer le test à chaque acquisition, sans
+    jamais détecter une équipe perdue.
+    """
     matches, fingerprint, n_finished = loader(_RESOLVER)
-    assert n_finished == n_fin and len(matches) == n_fin      # 100 % résolu
+    assert len(matches) == n_finished, (
+        f"{n_finished - len(matches)} match(s) écarté(s) à la résolution")
+    assert n_finished >= n_fin                                # jamais de régression
     assert fingerprint.startswith("sha256:")
 
 

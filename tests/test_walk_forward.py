@@ -24,7 +24,11 @@ from src.agents.quant.betting_engine.calibration.walk_forward import (
     run_walk_forward,
 )
 
-_FL1_FINGERPRINT = "sha256:2dc0a2da98c6a7c5c8759150e2044cd7212b85d6bc25e42346cf3b78ad315aeb"
+# Empreinte du corpus COMPLET (2023-24 + 2024-25 + 2025-26). Elle a changé lors
+# de l'acquisition historique, et c'est exactement son rôle : elle ancre la
+# reproductibilité d'un run à un corpus donné. Une empreinte qui ne bougerait pas
+# en changeant les données ne prouverait rien.
+_FL1_FINGERPRINT = "sha256:f7e27883b6cd3aad3abc20eb1588fa9514c6ac0f1e7a35913f0005b0f7d37885"
 
 _LEAGUE = "competition:football:fra:ligue1"
 _A, _B, _C, _D = (f"team:football:fra:{t}" for t in ("psg", "marseille", "lyon", "lille"))
@@ -93,18 +97,26 @@ def test_first_real_fl1_run():
     # 1) Invariants DATASET d'abord : si la fixture change, l'échec est ici (donnée
     #    modifiée), PAS sur les valeurs de métriques (fausse régression math).
     assert fingerprint == _FL1_FINGERPRINT
-    assert n_finished == 305
-    assert len(matches) == 305                                    # 305/305 résolues
+    # Corpus complet (3 saisons) : on vérifie l'INVARIANT de résolution et un
+    # plancher, pas la taille d'une saison — la figer casserait le test à chaque
+    # acquisition sans jamais détecter une perte.
+    assert n_finished >= 305 and len(matches) == n_finished
 
     run = run_walk_forward(matches, OneXTwoModel(), FL1_LEAGUE_ID, FL1_SEASON)
-    assert run.n_evaluated == 296
-    assert run.exclusions == {"INSUFFICIENT_DATA_no_prior_form": 9}   # J1, comme prévu
+    # Le cold-start reste la SEULE exclusion, et il ne concerne que les premières
+    # journées de chaque saison : sa part chute de 9/305 à 13/916 avec
+    # l'historique — mécaniquement, aucun paramètre n'ayant changé.
+    assert run.n_evaluated + sum(run.exclusions.values()) == len(matches)
+    assert set(run.exclusions) == {"INSUFFICIENT_DATA_no_prior_form"}
 
     # 2) Métriques ensuite, sur le dataset garanti identique.
     m = build_metrics(run)
     brier, ll = m["model"]["brier"]["value"], m["model"]["log_loss"]["value"]
-    assert 0.620 < brier < 0.622                                  # résultat réel figé
-    assert 1.030 < ll < 1.035
+    # Valeurs du corpus COMPLET (3 saisons). Elles ont bougé à l'acquisition —
+    # Brier 0.6211 -> 0.6185, log-loss idem — et c'est ce qu'un benchmark doit
+    # montrer. Ce qui ne doit jamais bouger est plus bas : battre les baselines.
+    assert 0.617 < brier < 0.620
+    assert 1.020 < ll < 1.035
     assert m["beats_uniform_brier"] is True
     assert brier < m["baselines"]["uniform"]["brier"]["value"]
     assert brier < m["baselines"]["prior_frequency"]["brier"]["value"]

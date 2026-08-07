@@ -46,4 +46,6 @@ def test_readiness_render_is_honest_experimental():
     lines = readiness_render(assess_default_one_x_two())
     text = "\n".join(lines)
     assert "-> EXPERIMENTAL" in text                       # verdict mécanique, jamais SUPPORTED
-    assert "bloqueurs vers SUPPORTED : min_sample_size, positive_clv" in text
+    # Un seul bloqueur depuis l'acquisition historique : la CLV, qui demande des
+    # captures CLOSING réelles — pas plus de données passées.
+    assert "bloqueurs vers SUPPORTED : positive_clv" in text
