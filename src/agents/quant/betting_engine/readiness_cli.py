@@ -65,7 +65,7 @@ _ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a,
               "atp": _assess_atp, "wta": _assess_wta}
 
 
-def render(assessment) -> list[str]:
+def render(assessment, recency=None) -> list[str]:
     d = assessment.decision
     o = assessment.observations
     lines = [
@@ -74,12 +74,19 @@ def render(assessment) -> list[str]:
         f"  échantillon hors échantillon : {o.n_evaluated}   | folds temporels : {o.n_temporal_folds}",
         f"  calibration (ECE) : {o.calibration_error}   | Brier {o.model_brier} vs baseline {o.best_baseline_brier}",
         f"  coverage : {o.data_coverage}   | data_quality : {o.mean_data_quality}",
+        # Deux grandeurs distinctes, affichées séparément : la fraîcheur de la
+        # donnée LIVE au point de décision, et la récence du CORPUS historique.
+        # Un corpus arrêté il y a trois ans avec des cotes fraîches, ou l'inverse,
+        # sont deux situations différentes qui appelaient le même diagnostic tant
+        # qu'un seul chiffre les représentait.
         f"  CLV : {o.clv_status}   | freshness live : {o.live_freshness_status}",
         # §17 : progression empirique CLV visible sans ouvrir les fichiers.
         f"  CLV échantillon : {o.clv_n_events} événement(s) indép. | moyenne : {o.clv_mean}"
         f" | borne basse : {o.clv_lower_bound}",
         "  critères :",
     ]
+    if recency is not None:
+        lines.insert(-1, f"  dataset : {recency.describe()}")
     for c in d.criteria:
         flag = "REQUIS" if c.required else "monitoring"
         lines.append(f"    {c.name:28} {c.verdict.value:15} [{flag}]  {c.detail}")
@@ -94,7 +101,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--competition", choices=tuple(_ASSESSORS), default="fl1",
                    help="compétition à évaluer (dataset réel embarqué)")
     args = p.parse_args(argv)
-    for line in render(_ASSESSORS[args.competition]()):
+    from .dataset_recency import for_model
+
+    for line in render(_ASSESSORS[args.competition](), for_model(args.competition)):
         print(line)
     return 0
 

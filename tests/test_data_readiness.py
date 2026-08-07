@@ -124,6 +124,90 @@ def test_une_donnee_trop_ancienne_est_refusee_meme_avec_base_degradee():
     assert res.status is S.DATA_TOO_STALE
 
 
+# ══ §1-4 — `dataset_recency` ne se confond jamais avec la freshness live ═════
+def _recency(dates, as_of):
+    from src.agents.quant.betting_engine.dataset_recency import measure
+
+    return measure(dates, source="corpus", as_of=as_of)
+
+
+def test_un_corpus_ancien_avec_une_cote_fraiche_donne_deux_verdicts_opposes():
+    """Le cas qui justifie la séparation. Les fondre ferait qu'un corpus arrêté
+    en 2023 rendrait « périmée » une cote observée il y a cinq minutes."""
+    from src.agents.quant.betting_engine.dataset_recency import MEASURABLE
+
+    res = _resultat(_mesure(0.95, _DECISION - timedelta(minutes=5), degraded=False))
+    corpus = _recency([_DECISION - timedelta(days=900)], _DECISION)
+
+    assert res.freshness_score == 0.95                     # la donnée live est fraîche
+    assert corpus.status == MEASURABLE and corpus.age_days == 900   # le corpus, non
+
+
+def test_un_corpus_recent_sans_donnee_live_laisse_la_freshness_inconnue():
+    """L'inverse : un corpus à jour ne rend pas fraîche une donnée live absente.
+    `freshness_score = None` reste la seule réponse honnête."""
+    from src.agents.quant.betting_engine.dataset_recency import MEASURABLE
+
+    res = _resultat(None)
+    corpus = _recency([_DECISION - timedelta(days=2)], _DECISION)
+
+    assert res.freshness_score is None
+    assert corpus.status == MEASURABLE and corpus.age_days == 2
+
+
+def test_un_corpus_ancien_ne_declenche_jamais_data_too_stale():
+    """Tant qu'aucune politique de récence de corpus n'existe, l'ancienneté du
+    dataset ne rejette rien. Ce test tombera le jour où quelqu'un branchera la
+    récence sur le gate de staleness — c'est exactement son rôle."""
+    res = _resultat(_mesure(0.95, _DECISION - timedelta(minutes=5), degraded=False))
+
+    assert res.status is S.EVALUATED
+
+
+def test_la_recence_de_corpus_n_alimente_jamais_le_candidat():
+    """Preuve structurelle : ni l'adaptateur ni le générateur de candidats ne
+    connaissent `dataset_recency`. Le lien ne peut donc pas exister par accident."""
+    import inspect
+
+    from src.agents.quant.advisor.candidate_generation import generator
+    from src.agents.quant.advisor.input_adapter import betting_engine_adapter
+
+    for module in (betting_engine_adapter, generator):
+        assert "dataset_recency" not in inspect.getsource(module)
+
+
+def test_un_corpus_vide_est_non_mesurable_jamais_zero_jour():
+    """« Zéro jour d'ancienneté » se lirait comme parfaitement à jour — l'exact
+    contraire de ce qu'une absence de données signifie."""
+    from src.agents.quant.betting_engine.dataset_recency import NOT_MEASURABLE
+
+    vide = _recency([], _DECISION)
+
+    assert vide.status == NOT_MEASURABLE
+    assert vide.age_days is None and vide.last_observation_at is None
+
+
+def test_chaque_modele_enregistre_expose_sa_recence():
+    """Un modèle sans récence mesurable rendrait le diagnostic muet là où il doit
+    précisément distinguer « code incomplet » de « données à accumuler »."""
+    from src.agents.quant.betting_engine.dataset_recency import MEASURABLE, for_model
+    from src.agents.quant.betting_engine.readiness_cli import _ASSESSORS
+
+    muets = [cle for cle in _ASSESSORS if for_model(cle).status != MEASURABLE]
+
+    assert not muets, f"récence de corpus non mesurable : {muets}"
+
+
+def test_readiness_affiche_les_deux_grandeurs_separement():
+    from src.agents.quant.betting_engine.dataset_recency import for_model
+    from src.agents.quant.betting_engine.readiness_cli import _ASSESSORS, render
+
+    lignes = "\n".join(render(_ASSESSORS["nhl"](), for_model("nhl")))
+
+    assert "freshness live :" in lignes
+    assert "dataset :" in lignes
+
+
 # ══ §16 — Aucun seuil de maturité modifié ════════════════════════════════════
 def test_aucun_seuil_de_maturite_n_a_bouge():
     """La mission corrige des MESURES, jamais des barres. Un seuil déplacé ferait
