@@ -508,3 +508,22 @@ def test_l_ordre_du_rendu_ne_depend_pas_de_l_ordre_d_arrivee_reseau():
     b = enrich_event(**args, recherche=rapide, cache=EnrichmentCache())
 
     assert [(f.feature_type, f.value) for f in a] == [(f.feature_type, f.value) for f in b]
+
+
+def test_un_cache_injecte_vide_n_est_pas_remplace_par_le_cache_global():
+    """`cache = kw.get("cache") or CACHE` remplaçait un cache injecté VIDE par le
+    cache global : `EnrichmentCache` définit `__len__`, donc un cache neuf est
+    falsy. L'appelant croyait s'isoler et écrivait dans l'état partagé du
+    processus — un test remplissait alors le cache d'un autre."""
+    from src.agents.quant.enrichment import enrich as module
+
+    propre = EnrichmentCache()
+    assert not propre, "un cache vide est bien falsy — c'est tout le piège"
+
+    global_avant = len(module.CACHE)
+    sans, _ = _run_enrichi()
+    module.enrich_review_candidates(sans.response, ["tennis"],
+                                    recherche=lambda q, d: [], cache=propre)
+
+    assert len(propre) > 0, "les résultats ne sont pas allés dans le cache fourni"
+    assert len(module.CACHE) == global_avant, "le cache global a été touché"

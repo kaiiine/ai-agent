@@ -163,7 +163,12 @@ def enrich_review_candidates(
         return {}
 
     recherche = kw.get("recherche", _tavily_search)
-    cache = kw.get("cache") or CACHE
+    # `or CACHE` remplaçait silencieusement un cache injecté VIDE par le cache
+    # global : `EnrichmentCache` définit `__len__`, donc un cache neuf est falsy.
+    # L'appelant croyait s'isoler et écrivait dans l'état partagé du processus.
+    cache = kw.get("cache")
+    if cache is None:
+        cache = CACHE
 
     # UNE passe pour toutes les rencontres. Enrichir chacune dans son propre fil
     # les faisait partir ensemble, avant qu'aucune n'ait rempli le cache : les

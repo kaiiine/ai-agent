@@ -961,3 +961,96 @@ def test_le_retour_brut_et_le_profit_net_ont_une_seule_definition():
     assert ligne.gross_return == Decimal("15.00")
     assert ligne.net_profit == Decimal("5.00")
     assert ligne.gross_return - ligne.stake == ligne.net_profit
+
+
+# ══ §9 — L'outil lui-même, de bout en bout ══════════════════════════════════
+# `betting_recommend` est le SEUL outil capable de produire un pari, et son corps
+# n'était exercé par aucun test : ses parties l'étaient, jamais son contrat. Or
+# c'est le contrat que le graphe consomme — statut, texte rendu, preuve, et la
+# mémoire de fil qui empêche de reposer une question déjà répondue.
+def _appel_outil(**kwargs):
+    """Invoque l'outil comme le graphe le fait, en neutralisant le réseau."""
+    import json as _json
+    from unittest.mock import patch
+
+    from src.agents.quant.conversation import tools as tools_mod
+
+    contraintes_vues = {}
+
+    def faux_run(contraintes, *, now, readiness=None, enrich=None, **_):
+        contraintes_vues["c"] = contraintes
+        # L'enrichissement est neutralisé : le laisser passer ferait sortir de
+        # vraies requêtes réseau d'un test unitaire, et remplirait le cache
+        # global du processus au passage.
+        return _run(contraintes, [_evaluation(), _evaluation(event="e2")],
+                    readiness=readiness, enrich=lambda *_a, **_k: {})[0]
+
+    with patch.object(tools_mod, "run_recommendation", faux_run):
+        brut = tools_mod.betting_recommend.func(**kwargs)
+    return _json.loads(brut), contraintes_vues.get("c")
+
+
+def test_l_outil_rend_le_contrat_attendu_par_le_graphe():
+    session.reset()
+    charge, _ = _appel_outil(when="aujourd'hui", bankroll=100.0, sports=["tennis"],
+                             config={"configurable": {"thread_id": "t-contrat"}})
+
+    assert set(charge) == {"status", "rendered", EVIDENCE_KEY, "constraints"}
+    assert charge["status"] == COMPLETED
+    assert charge["rendered"].strip()
+    assert charge[EVIDENCE_KEY] is not None          # preuve présente si COMPLETED
+    assert not enforce(charge["rendered"], None).blocked
+
+
+def test_l_outil_memorise_les_contraintes_du_fil():
+    """§11 : une réponse déjà donnée ne doit pas être redemandée au tour suivant."""
+    session.reset()
+    fil = {"configurable": {"thread_id": "t-memoire"}}
+
+    _appel_outil(when="aujourd'hui", bankroll=100.0, sports=["tennis"], config=fil)
+    _, contraintes = _appel_outil(when="demain", config=fil)   # ni bankroll ni sport
+
+    assert contraintes.bankroll == Decimal("100")             # hérité
+    assert contraintes.resolved_scope("sports") == frozenset({"tennis"})
+
+
+def test_deux_fils_ne_partagent_pas_leur_bankroll():
+    session.reset()
+    _appel_outil(bankroll=100.0, sports=["tennis"],
+                 config={"configurable": {"thread_id": "fil-a"}})
+    _, contraintes = _appel_outil(bankroll=20.0,
+                                  config={"configurable": {"thread_id": "fil-b"}})
+
+    assert contraintes.bankroll == Decimal("20")
+    assert not contraintes.is_explicit("sports")
+
+
+def test_une_panne_technique_ne_produit_ni_preuve_ni_selection():
+    """Une chaîne tombée ne doit rien laisser affirmer : sans preuve, le garde
+    bloque toute reprise du modèle qui prétendrait le contraire."""
+    import json as _json
+    from unittest.mock import patch
+
+    from src.agents.quant.conversation import tools as tools_mod
+
+    session.reset()
+    with patch.object(tools_mod, "run_recommendation",
+                      side_effect=RuntimeError("gateway indisponible")):
+        charge = _json.loads(tools_mod.betting_recommend.func(
+            bankroll=50.0, config={"configurable": {"thread_id": "t-panne"}}))
+
+    assert charge["status"] == "TECHNICAL_FAILURE"
+    assert charge[EVIDENCE_KEY] is None
+    assert "RuntimeError" in charge["rendered"]
+    assert enforce("Mise 10 € sur le favori.", None).blocked
+
+
+def test_les_freebets_sont_restitues_mais_jamais_optimises():
+    """§ freebet, option A : un freebet n'est pas du cash et ses conditions ne
+    sont pas modélisées. Il est déclaré, jamais dimensionné."""
+    session.reset()
+    _, contraintes = _appel_outil(bankroll=100.0, freebets=10.0,
+                                  config={"configurable": {"thread_id": "t-freebet"}})
+
+    assert contraintes.promotional_balances
+    assert contraintes.bankroll == Decimal("100")     # la bankroll cash est intacte
