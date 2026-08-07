@@ -140,6 +140,65 @@ def has_structured_output(messages: Sequence[Any]) -> bool:
     )
 
 
+#: Dimensions de périmètre, et les mots qui les désignent dans une question.
+_DIMENSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("sports", ("sport", "sports", "discipline")),
+    ("competitions", ("compétition", "competition", "compétitions", "competitions",
+                      "championnat", "ligue", "tournoi")),
+    ("markets", ("marché", "marche", "marchés", "marches", "type de pari")),
+    ("time_window", ("période", "periode", "fenêtre", "fenetre", "quand",
+                     "aujourd'hui", "demain", "horaire", "date")),
+    ("bankroll", ("bankroll", "budget", "montant", "combien")),
+)
+
+
+def redundant_scope_question(messages: Sequence[Any], questions: Sequence[Any]) -> bool:
+    """La question porte-t-elle sur un périmètre auquel ce tour a DÉJÀ répondu ?
+
+    Le modèle relance une clarification (« restreindre à un sport ? ») après avoir
+    reçu un scan complet, alors que la contrainte est explicite dans le state. En
+    conversation réelle il l'a fait trois fois de suite — c'est la boucle du dump,
+    déplacée après le scan au lieu d'avant.
+
+    On lit les contraintes DANS le `ToolMessage` du tour, pas dans un registre
+    parallèle : la preuve reste le message lui-même. Une question qui porte sur
+    une dimension non renseignée passe — c'est une clarification légitime.
+    """
+    contraintes = _constraints_of_turn(messages)
+    if contraintes is None:
+        return False
+
+    # Le libellé porte rarement la dimension : elle vit dans les CHOIX proposés
+    # (« Spécifier un sport », « Étendre la fenêtre »). Ne lire que `question`
+    # laissait passer exactement les relances observées en conversation réelle.
+    morceaux: list[str] = []
+    for q in questions:
+        if isinstance(q, dict):
+            morceaux.append(str(q.get("question") or ""))
+            morceaux.extend(str(c) for c in (q.get("choices") or []))
+        else:
+            morceaux.append(str(q))
+    texte = " ".join(morceaux).lower()
+    if not texte.strip():
+        return False
+
+    touchees = [champ for champ, mots in _DIMENSIONS
+                if any(mot in texte for mot in mots)]
+    # Aucune dimension connue : ce n'est pas une question de périmètre, on ne la
+    # juge pas. Une dimension non renseignée : la question est légitime.
+    return bool(touchees) and all(contraintes.get(c) is not None for c in touchees)
+
+
+def _constraints_of_turn(messages: Sequence[Any]) -> Mapping[str, Any] | None:
+    for message in reversed(current_turn(messages)):
+        if _role(message) != "tool" or getattr(message, "name", None) != TOOL_NAME:
+            continue
+        payload = _json(message)
+        contraintes = (payload or {}).get("constraints")
+        return contraintes if isinstance(contraintes, dict) else None
+    return None
+
+
 def _role(message: Any) -> str:
     role = getattr(message, "type", None)
     return role if isinstance(role, str) else ""

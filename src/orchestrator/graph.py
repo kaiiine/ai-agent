@@ -442,6 +442,33 @@ def _chat_node_factory():
                 except Exception:
                     pass  # échec de la correction → on garde la réponse originale
 
+        # Garde BETTING nº1 : une clarification de PÉRIMÈTRE à laquelle le tour
+        # courant a déjà répondu. Observé en conversation réelle : après un scan
+        # complet rendu par `betting_recommend`, le modèle propose « restreindre à
+        # un sport ? » — trois fois de suite. C'est la boucle du dump, déplacée
+        # après le scan au lieu d'avant. Le garde de doublon existant ne l'attrape
+        # pas : la question est nouvelle, c'est sa RÉPONSE qui est déjà connue.
+        _ask = [tc for tc in (getattr(response, "tool_calls", None) or [])
+                if tc.get("name") == "ask_clarification"]
+        if _ask:
+            from src.agents.quant.conversation.evidence import redundant_scope_question
+
+            if all(redundant_scope_question(working, tc.get("args", {}).get("questions") or [])
+                   for tc in _ask):
+                console.print(
+                    "[dim]  ↩  clarification de périmètre déjà répondue — correction…[/dim]")
+                _rappel = HumanMessage(content=(
+                    "[SYSTEME] Tu redemandes un périmètre (sport, compétition, "
+                    "marché, période ou bankroll) que l'utilisateur a déjà fixé et "
+                    "que betting_recommend a déjà appliqué dans ce tour. La réponse "
+                    "est dans le champ `rendered` de son résultat : restitue-la "
+                    "telle quelle, sans poser de question. Si l'utilisateur veut "
+                    "restreindre, il le dira de lui-même."))
+                try:
+                    response = llm_with_tools.invoke(working + [response, _rappel])
+                except Exception:
+                    pass  # échec de la correction → on garde la réponse originale
+
         # Garde de provenance BETTING — programmatique, jamais un prompt.
         # Une réponse de pari doit venir de la chaîne structurée du TOUR COURANT.
         # Sans preuve, le texte est remplacé : le modèle n'est pas convaincu, il
