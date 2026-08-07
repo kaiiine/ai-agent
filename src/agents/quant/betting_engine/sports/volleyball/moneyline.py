@@ -34,7 +34,7 @@ VOLLEY_PARAMS = EloParams(
     init_rating=1500.0, k_factor=20.0, home_edge=33.0, min_prior_games=5,
     notes="Volley Serie A1 ITA : home_win_rate mesuré 0.547 -> home_edge 33 (DÉRIVÉ) ; K=20 ; cold-start 5")
 
-_FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "volleyball_ita_a1_games.json"
+_FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "volley_api_sports_games.json"
 
 
 def load_volleyball_games(path: Path = _FIXTURE) -> tuple[list[PairwiseGame], str]:

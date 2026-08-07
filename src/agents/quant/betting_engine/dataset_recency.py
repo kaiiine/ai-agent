@@ -132,7 +132,7 @@ def _providers() -> dict[str, tuple[str, Callable[[], list[datetime]]]]:
         "mlb": ("mlb_api_sports_games.json", _dates_pairwise(load_mlb_games)),
         "nba": ("nba_api_sports_games.json", _dates_pairwise(load_nba_games)),
         "nhl": ("nhl_api_sports_games.json", _dates_pairwise(load_nhl_regulation)),
-        "volley": ("volleyball_ita_a1_games.json", _dates_pairwise(load_volleyball_games)),
+        "volley": ("volley_api_sports_games.json", _dates_pairwise(load_volleyball_games)),
         "atp": ("sackmann atp", _dates_tennis("atp")),
         "wta": ("sackmann wta", _dates_tennis("wta")),
         **{cle: (f"{fichier}_2025_matches.json", _dates_football(loader))

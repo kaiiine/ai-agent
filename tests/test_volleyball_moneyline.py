@@ -25,13 +25,20 @@ def test_home_edge_is_derived_not_guessed():
     assert VOLLEY_PARAMS.home_edge == 33.0 and "DÉRIVÉ" in VOLLEY_PARAMS.notes
 
 
-def test_experimental_strong_skill_blocked_by_sample():
+def test_experimental_despite_strong_skill():
+    """Skill fort mais verdict EXPERIMENTAL — pour d'autres raisons qu'avant.
+
+    `min_sample_size` bloquait à 368 évaluations ; l'acquisition des saisons
+    2022 à 2024 le porte à 574 et le critère passe, par les données. Ce qui reste
+    est de nature différente : une calibration insuffisante, que davantage
+    d'historique ne corrige pas, et une CLV non collectée."""
     a = assess_volleyball()
     o, d, m = a.observations, a.decision, a.metrics
     assert d.status == "EXPERIMENTAL"
     assert m["beats_baseline"] is True and o.model_brier < 0.42   # skill fort (volley prévisible)
     blockers = {c.name for c in d.criteria if c.required and c.verdict.value != "PASS"}
-    assert "min_sample_size" in blockers                          # 368 < 500 : honnêtement bloqué
+    assert "min_sample_size" not in blockers
+    assert blockers == {"max_calibration_error", "positive_clv"}
 
 
 def test_no_future_leakage():
