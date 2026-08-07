@@ -112,11 +112,14 @@ def betting_recommend(
     session.store(fil, contraintes)
 
     try:
-        # La readiness rejoue une validation walk-forward par modèle (~1 s) : elle
-        # mesure le MODÈLE, pas le run, et n'entre donc que dans le rendu debug.
+        # La readiness rejoue une validation walk-forward par modèle. Elle est
+        # MÉMORISÉE pour la durée du processus — un modèle et son dataset embarqué
+        # ne bougent pas entre deux tours — donc son coût ne se paie qu'une fois.
+        # Elle entre désormais dans la réponse normale : « pourquoi ce n'est pas
+        # misable » sans dire ce qui manque au modèle n'explique rien.
         run = run_recommendation(
             contraintes, now=maintenant,
-            readiness=collect_readiness if debug else None,
+            readiness=collect_readiness,
             # Enrichissement APRÈS l'évaluation, borné aux premiers candidats de
             # revue. Son échec réseau ne coûte jamais la réponse structurée.
             enrich=_enrichir)

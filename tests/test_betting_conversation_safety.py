@@ -806,9 +806,10 @@ def test_une_formulation_legitime_n_est_jamais_bloquee(phrase):
     assert not enforce(phrase, None).blocked, phrase
 
 
-def test_le_texte_du_renderer_traverse_le_garde_durci():
+def test_le_texte_du_renderer_traverse_le_garde_avec_sa_preuve():
     """Le piège de cette règle : bloquer le rendu déterministe qu'elle accompagne.
-    Le renderer nomme des joueurs, des cotes et des horaires — tous réels."""
+    Le renderer nomme des joueurs, des cotes et des horaires — tous réels, et tous
+    accompagnés de la preuve du tour."""
     from src.agents.quant.conversation.renderer import render
 
     contraintes = constraints_from_request(
@@ -817,10 +818,44 @@ def test_le_texte_du_renderer_traverse_le_garde_durci():
     run, _ = _run(contraintes, [_evaluation(), _evaluation(event="e2")])
 
     for debug in (False, True):
-        rendu = render(run, debug=debug)
-        assert not enforce(rendu, run.evidence).blocked
-        # Sans preuve non plus : un tour dégradé ne doit pas perdre son rendu.
-        assert not enforce(rendu, None).blocked, f"rendu bloqué (debug={debug})"
+        assert not enforce(render(run, debug=debug), run.evidence).blocked, debug
+
+
+def test_le_meme_texte_sans_preuve_est_bloque():
+    """La symétrie qui donne son sens au garde.
+
+    Ce test affirmait l'inverse — que le rendu devait passer même sans preuve —
+    au nom d'un « tour dégradé ». C'était se tromper de cas : un run COMPLETED
+    porte toujours sa preuve, et un run en échec ne rend pas de cotes du tout. Le
+    seul scénario où ce texte apparaît sans preuve est celui où quelqu'un l'a
+    écrit sans que la chaîne ait tourné — et c'est précisément ce qu'il faut
+    bloquer. « Cote Winamax : 2.4 » est une affirmation de provenance.
+    """
+    from src.agents.quant.conversation.renderer import render
+
+    contraintes = constraints_from_request(
+        None, bankroll=Decimal("100"),
+        time_window=resolve_window("", datetime(2026, 8, 6, 15, 30, tzinfo=PARIS)))
+    run, _ = _run(contraintes, [_evaluation()])
+
+    assert enforce(render(run), None).blocked
+
+
+@pytest.mark.parametrize("statut", [CLARIFICATION_REQUIRED, EMPTY_WINDOW,
+                                    FILTER_UNRESOLVED, "TECHNICAL_FAILURE"])
+def test_un_rendu_d_echec_traverse_le_garde_sans_preuve(statut):
+    """Le VRAI cas dégradé : un run qui n'aboutit pas n'a pas de preuve, et son
+    texte ne contient ni cote ni sélection. Il doit passer intact — sinon le
+    garde supprimerait l'explication de l'échec."""
+    from src.agents.quant.conversation.recommend import RecommendationRun
+    from src.agents.quant.conversation.renderer import render
+
+    contraintes = constraints_from_request(
+        None, time_window=resolve_window("", datetime(2026, 8, 6, 15, 30, tzinfo=PARIS)))
+    run = RecommendationRun(status=statut, constraints=contraintes,
+                            detail="détail", available=("tennis", "football"))
+
+    assert not enforce(render(run), None).blocked, statut
 
 
 def test_une_negation_dans_une_phrase_ne_couvre_pas_l_affirmation_suivante():
@@ -999,7 +1034,11 @@ def test_l_outil_rend_le_contrat_attendu_par_le_graphe():
     assert charge["status"] == COMPLETED
     assert charge["rendered"].strip()
     assert charge[EVIDENCE_KEY] is not None          # preuve présente si COMPLETED
-    assert not enforce(charge["rendered"], None).blocked
+    # Le rendu passe le garde AVEC sa preuve — et serait bloqué sans elle, car il
+    # affirme des cotes. C'est la garantie recherchée, pas une gêne.
+    from src.agents.quant.conversation.evidence import BettingResponseEvidence
+    preuve = BettingResponseEvidence.from_dict(charge[EVIDENCE_KEY])
+    assert not enforce(charge["rendered"], preuve).blocked
 
 
 def test_l_outil_memorise_les_contraintes_du_fil():

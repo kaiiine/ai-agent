@@ -103,10 +103,23 @@ _TOP_REVIEW = 5
 
 
 def _render_reponse(run: RecommendationRun, *, debug: bool = False) -> str:
+    from .summary import render_etat_modeles, render_resume
+
     response, evidence, obs = run.response, run.evidence, run.observability
     fenetre = run.constraints.time_window
 
-    lignes = [
+    # Le résumé LISIBLE d'abord. Le rendu qui suit reste exact et exhaustif, mais
+    # une réponse qui s'ouvre sur « **REVIEW_CANDIDATES** — audit
+    # audit:a025678bee4e16e704275690 » demande un effort avant d'apprendre quoi
+    # que ce soit — et c'est la première ligne que l'utilisateur lit.
+    lignes = render_resume(run)
+    lignes += render_etat_modeles(obs)
+
+    lignes += [
+        "",
+        "---",
+        "",
+        "### Détail technique",
         f"**{response.outcome.value}** — audit `{response.audit_id}`",
         "",
         f"Fenêtre : {fenetre.describe()}",
@@ -269,7 +282,13 @@ def _render_candidat(evaluation: Any, obs: Any = None, fenetre: Any = None) -> l
         f"- Cote bookmaker : {c.bookmaker_odds} ({c.bookmaker})",
         f"- Probabilité implicite (1/cote, marge incluse) : {_pct(c.implied_probability)}",
         f"- Probabilité modèle : {_pct(c.fair_probability)} "
-        f"(borne basse {_pct(c.probability_low)})",
+        f"(borne basse {_pct(c.probability_low)})"
+        # §14 : ne pas laisser croire à une prudence qui n'existe pas. Tant
+        # qu'aucun intervalle n'est estimé, la borne basse VAUT la probabilité —
+        # la présenter sans le dire donnerait à un chiffre unique l'apparence de
+        # deux mesures indépendantes.
+        + ("  ⚠ borne basse = probabilité : aucun intervalle n'est encore estimé"
+           if c.probability_low == c.fair_probability else ""),
         f"- Probabilité sans marge : {_valeur(no_vig, _pct)}",
         f"- Edge : {_signed(c.edge_mean)} (borne basse {_signed(c.edge_low)})",
         f"- EV moyenne : {_signed(c.expected_value_mean)} · "

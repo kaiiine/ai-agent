@@ -22,6 +22,8 @@ Deux règles de lecture :
 
 from __future__ import annotations
 
+import functools
+
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -93,6 +95,14 @@ class ModelReadiness:
     not_measurable: tuple[str, ...]
     monitoring: tuple[tuple[str, str], ...]
     blockers: tuple[str, ...]
+    #: Avancement de la CLV : rencontres indépendantes collectées et seuil requis.
+    #: Additifs et purement descriptifs — « bloqué par la CLV » ne dit pas s'il
+    #: manque une rencontre ou vingt-neuf, et c'est la seule chose qu'on puisse
+    #: réellement suivre dans le temps.
+    clv_events: int | None = None
+    clv_required: int | None = None
+    #: Détail affichable de chaque critère requis : (nom, verdict, explication).
+    criteres: tuple[tuple[str, str, str], ...] = ()
 
     @property
     def required_total(self) -> int:
@@ -282,10 +292,30 @@ def collect_readiness(sports: Sequence[str]) -> tuple[ModelReadiness, ...]:
     """Maturité des modèles RÉELLEMENT utilisés dans ce run.
 
     Chaque évaluation rejoue une validation walk-forward sur son dataset embarqué
-    (~1 s). On ne la lance donc que pour les sports présents, et seulement en
-    mode debug : c'est une mesure du modèle, pas du run, et elle ne change aucune
-    décision.
+    (~1,5 s pour le tennis, ~3 s pour quatre sports). On ne la lance donc que pour
+    les sports présents : c'est une mesure du modèle, pas du run, et elle ne
+    change aucune décision.
+
+    Le résultat est MÉMORISÉ pour la durée du processus. Un modèle et son dataset
+    embarqué ne bougent pas entre deux tours de conversation ; recalculer la même
+    validation à chaque question payait plusieurs secondes pour un résultat
+    identique au caractère près. C'est la même mesure, pas une approximation.
     """
+    return _readiness_memorisee(tuple(sorted(set(sports))))
+
+
+@functools.lru_cache(maxsize=1)
+def _seuil_clv() -> int | None:
+    """Rencontres indépendantes exigées par la politique de maturité."""
+    from src.agents.quant.betting_engine.maturity import load_maturity_policy
+    try:
+        return load_maturity_policy().criteria["min_clv_events"]
+    except Exception:   # noqa: BLE001
+        return None
+
+
+@functools.lru_cache(maxsize=32)
+def _readiness_memorisee(sports: tuple[str, ...]) -> tuple[ModelReadiness, ...]:
     from src.agents.quant.betting_engine.maturity import Verdict
     from src.agents.quant.betting_engine.readiness_cli import _ASSESSORS
 
@@ -296,9 +326,11 @@ def collect_readiness(sports: Sequence[str]) -> tuple[ModelReadiness, ...]:
             if evaluateur is None:
                 continue
             try:
-                decision = evaluateur().decision
+                evaluation = evaluateur()
             except Exception:   # noqa: BLE001 — l'observabilité ne casse jamais un run
                 continue
+            decision = evaluation.decision
+            observations = getattr(evaluation, "observations", None)
             requis = [c for c in decision.criteria if c.required]
             sorties.append(ModelReadiness(
                 model_name=decision.model_name,
@@ -312,5 +344,8 @@ def collect_readiness(sports: Sequence[str]) -> tuple[ModelReadiness, ...]:
                 monitoring=tuple((c.name, c.verdict.value)
                                  for c in decision.criteria if not c.required),
                 blockers=tuple(c.name for c in requis if c.verdict is not Verdict.PASS),
+                clv_events=getattr(observations, "clv_n_events", None),
+                clv_required=_seuil_clv(),
+                criteres=tuple((c.name, c.verdict.value, c.detail) for c in requis),
             ))
     return tuple(sorties)

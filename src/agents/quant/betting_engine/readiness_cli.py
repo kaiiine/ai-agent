@@ -18,7 +18,7 @@ from .assessment import (
     assess_primeira_liga,
     assess_serie_a,
 )
-from .maturity import Verdict
+from .maturity import Verdict, load_maturity_policy
 
 # Compétitions ayant un dataset réel embarqué -> readiness mesurable par walk-forward.
 # Football (Dixon-Coles 1X2) + basket NBA (Elo moneyline, famille statistique PROPRE).
@@ -65,11 +65,75 @@ _ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a,
               "atp": _assess_atp, "wta": _assess_wta}
 
 
-def render(assessment, recency=None) -> list[str]:
+#: Compétition canonique de chaque modèle — pour lire sa couverture provider et
+#: nommer, quand c'est le cas, le besoin EXTERNE exact.
+_COMPETITIONS = {
+    "fl1": "competition:football:fra:ligue1",
+    "serie-a": "competition:football:ita:serie_a",
+    "laliga": "competition:football:esp:laliga",
+    "bundesliga": "competition:football:deu:bundesliga",
+    "championship": "competition:football:eng:championship",
+    "eredivisie": "competition:football:nld:eredivisie",
+    "primeira-liga": "competition:football:prt:primeira_liga",
+    "nba": "competition:basketball:usa:nba",
+    "mlb": "competition:baseball:usa:mlb",
+    "nfl": "competition:american_football:usa:nfl",
+    "nhl": "competition:hockey:usa:nhl",
+    "volley": "competition:volleyball:ita:serie_a1",
+    "atp": "competition:tennis:atp:tour",
+    "wta": "competition:tennis:wta:tour",
+}
+
+#: Besoins EXTERNES connus, avec leur objet exact. Ne rien souscrire, mais dire
+#: précisément ce qui manque : « bloqué » sans dire par quoi n'aide personne à
+#: décider s'il faut payer.
+_BESOINS_EXTERNES = {
+    "min_data_coverage": {
+        "tennis": "abonnement couvrant Challenger, ITF et qualifications — "
+                  "le corpus actuel s'arrête aux tableaux finaux",
+    },
+}
+
+
+def besoin_externe(cle: str, blocker: str) -> str | None:
+    """Ce qu'il faudrait acheter pour lever ce bloqueur, ou None.
+
+    La réponse vient de deux faits enregistrés, jamais d'une estimation : la note
+    de couverture du provider (issue d'une sonde réelle) et, pour le tennis, le
+    manque de plateau documenté.
+    """
+    competition = _COMPETITIONS.get(cle)
+    if competition is None:
+        return None
+    sport = competition.split(":")[1]
+
+    par_sport = _BESOINS_EXTERNES.get(blocker, {})
+    if sport in par_sport:
+        return par_sport[sport]
+
+    if blocker != "measurable_live_freshness":
+        return None
+    from .live_coverage import _sport_of  # noqa: F401  (même lecture du sport)
+    from src.agents.quant.gateway.gateway import current_season
+    from src.agents.quant.gateway.registries.provider_coverage_registry import (
+        CoverageStatus, all_coverage,
+    )
+    saison = current_season()
+    absentes = [e for e in all_coverage(competition, saison)
+                if e.status is CoverageStatus.ABSENT and e.notes]
+    if absentes:
+        return f"{absentes[0].provider} saison {saison} : {absentes[0].notes}"
+    return f"aucun provider ne couvre {competition} pour la saison {saison}"
+
+
+def render(assessment, recency=None, cle: str | None = None) -> list[str]:
     d = assessment.decision
     o = assessment.observations
+    prets = sum(1 for c in d.criteria if c.required and c.verdict is Verdict.PASS)
+    requis = sum(1 for c in d.criteria if c.required)
     lines = [
         f"Readiness {d.model_name} {d.model_version} -> {d.status}",
+        f"  progression : {prets}/{requis} critères requis prêts",
         f"  policy maturité v{d.policy_version} (checksum {d.policy_checksum[:12]}…)",
         f"  échantillon hors échantillon : {o.n_evaluated}   | folds temporels : {o.n_temporal_folds}",
         f"  calibration (ECE) : {o.calibration_error}   | Brier {o.model_brier} vs baseline {o.best_baseline_brier}",
@@ -89,9 +153,23 @@ def render(assessment, recency=None) -> list[str]:
         lines.insert(-1, f"  dataset : {recency.describe()}")
     for c in d.criteria:
         flag = "REQUIS" if c.required else "monitoring"
-        lines.append(f"    {c.name:28} {c.verdict.value:15} [{flag}]  {c.detail}")
+        detail = c.detail
+        # §11 : la CLV est le seul bloqueur qui n'avance qu'avec le temps. Dire
+        # « NOT_MEASURABLE » n'indique pas s'il manque une rencontre ou trente.
+        if c.name == "positive_clv" and c.verdict is not Verdict.PASS:
+            requis_clv = load_maturity_policy().criteria.get("min_clv_events")
+            detail = (f"EN ATTENTE — {o.clv_n_events or 0}/{requis_clv} rencontres "
+                      f"indépendantes collectées ({detail})")
+        lines.append(f"    {c.name:28} {c.verdict.value:15} [{flag}]  {detail}")
     blockers = [c.name for c in d.criteria if c.required and c.verdict is not Verdict.PASS]
     lines.append(f"  bloqueurs vers SUPPORTED : {', '.join(blockers) if blockers else 'aucun'}")
+
+    # §12 : nommer le besoin externe, sans jamais rien souscrire.
+    for blocker in blockers:
+        besoin = besoin_externe(cle, blocker) if cle else None
+        if besoin:
+            lines.append(f"    EXTERNAL_PROVIDER_REQUIRED [{blocker}] : {besoin}")
+
     return lines
 
 
@@ -103,7 +181,8 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     from .dataset_recency import for_model
 
-    for line in render(_ASSESSORS[args.competition](), for_model(args.competition)):
+    for line in render(_ASSESSORS[args.competition](), for_model(args.competition),
+                       cle=args.competition):
         print(line)
     return 0
 

@@ -277,6 +277,34 @@ def _extraire(plans: list[tuple[str, str]], brut: dict[str, list[dict]], *,
     return tuple(sort_by_authority(trouvees))
 
 
+def _est_une_phrase(texte: str) -> bool:
+    """Distingue une PHRASE d'un fragment de tableau.
+
+    Une page de joueur ATP est surtout constituée de grilles de résultats. Une
+    fois mise à plat, « Darderi (16) 7 6 1 6 4 Bye R16J. » devient une suite de
+    mots qui contient bien le nom cherché, et qui n'affirme rien. Affichée sous
+    « contexte vérifié », elle a pourtant l'autorité de sa source.
+
+    Trois mesures, aucune subtile : la proportion de lettres, le nombre de vrais
+    mots, et la densité de nombres. Un score en est saturé — « 6-7 6-4 [10-6]
+    11-Feb » — là où une phrase en contient une, parfois deux : un millésime, un
+    classement. Le seuil est donc bas, mais pas nul.
+    """
+    # Tavily rend la page en markdown : ses titres et ses séparateurs de menu
+    # traversent le texte. « ## Singles News More News All Singles News Social
+    # Buzz » compte des mots, des lettres, et n'affirme rien.
+    if any(marque in texte for marque in ("#", "|", "**", "▼", "›")):
+        return False
+    lettres = sum(c.isalpha() or c.isspace() for c in texte)
+    if not texte or lettres / len(texte) < 0.75:
+        return False
+    mots = [m for m in re.findall(r"[^\W\d_]+", texte) if len(m) >= 3]
+    if len(mots) < 6:
+        return False
+    nombres = [t for t in texte.split() if any(c.isdigit() for c in t)]
+    return len(nombres) <= 2
+
+
 def _extrait_pertinent(resultat: dict, sujet: str) -> str:
     """Une phrase qui PARLE du sujet, ou rien.
 
@@ -285,9 +313,10 @@ def _extrait_pertinent(resultat: dict, sujet: str) -> str:
     sans rapport avec la rencontre. Afficher ça sous « contexte externe » donne
     l'apparence d'une information là où il n'y a qu'une page.
 
-    On ne garde donc qu'une phrase qui mentionne un nom du sujet. Ne rien
-    afficher est préférable à afficher du remplissage : l'utilisateur ne peut pas
-    distinguer un fait d'un fragment de navigation.
+    On ne garde donc qu'une phrase qui mentionne un nom du sujet ET qui ressemble
+    à une phrase. Ne rien afficher est préférable à afficher du remplissage :
+    l'utilisateur ne peut pas distinguer un fait d'un fragment de navigation ou
+    d'une ligne de tableau de scores.
     """
     contenu = " ".join((resultat.get("content") or "").split())
     if not contenu:
@@ -300,9 +329,14 @@ def _extrait_pertinent(resultat: dict, sujet: str) -> str:
         return ""
 
     for phrase in re.split(r"(?<=[.!?])\s+", contenu):
-        minuscule = phrase.lower()
-        if any(cle in minuscule for cle in cles) and 30 <= len(phrase) <= 300:
-            return phrase.strip()
+        phrase = phrase.strip()
+        if not (30 <= len(phrase) <= 300):
+            continue
+        if not any(cle in phrase.lower() for cle in cles):
+            continue
+        if not _est_une_phrase(phrase):
+            continue
+        return phrase
     return ""
 
 
