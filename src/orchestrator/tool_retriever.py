@@ -49,6 +49,17 @@ class ToolGroup:
     # rate jamais. Un terme ambigu ici ferait élire un groupe à tort : n'y mettre
     # que ce qui ne désigne rien d'autre.
     keywords: frozenset[str] = frozenset()
+    # Rang minimal exigé à l'étage 1 pour que le groupe entre dans la sélection.
+    # `None` = aucun seuil, le cas normal : admettre `local_grep` au rang 5 ne
+    # coûte qu'un outil de plus dans le prompt.
+    #
+    # Ce seuil existe pour les groupes dont l'outil AGIT — `run_coding_agent`
+    # délègue et écrit des fichiers sur le disque. Le proposer parce qu'il est
+    # cinquième, sur « lis le fichier src/main.py » ou « télécharge cette page »,
+    # met à portée du modèle une action lourde que la requête ne demandait pas.
+    # Un seuil de rang généralise à toutes les formulations, là où une liste de
+    # phrases ne couvrirait que celles qu'on a pensé écrire.
+    requires_top_rank: int | None = field(default=None, compare=False)
 
     def document(self, name: str, *, max_chars: int = 2000) -> str:
         covers = self.covers
@@ -119,6 +130,14 @@ def _skill_topics() -> list[str]:
 # ── Groupes de tools ──────────────────────────────────────────
 TOOL_GROUPS: dict[str, ToolGroup] = {
     "coding": ToolGroup(
+        # Le document le plus long du registre (510 caractères) et le plus large :
+        # il énumérait tant de vocabulaire technique général qu'il remontait sur
+        # cinq requêtes non-coding — un schéma d'architecture, une lecture de
+        # fichier, un téléchargement de page. La largeur d'un document agit comme
+        # la cardinalité d'un index : elle achète de la proximité avec tout.
+        #
+        # On mène donc par l'ACTE — écrire du code dans des fichiers — et on
+        # nomme explicitement ce qui n'en relève pas.
         covers="Déléguer un travail de développement sur un projet de code à un agent "
                "spécialisé qui écrit les fichiers lui-même. Corriger un bug, déboguer un "
                "crash, ajouter une fonctionnalité, une route d'API, un composant ou une "
@@ -126,16 +145,29 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "configurer le build ou le linting. Aussi : créer une application ou un "
                "site web à partir de rien — landing page, site vitrine, page d'accueil, "
                "projet Next.js, React, Vue ou Svelte. Le livrable est du code source "
-               "sur le disque.",
+               "sur le disque. Écris une fonction, une classe, un script, un composant. "
+               "Crée un site vitrine, une boutique en ligne, un portfolio, un tableau "
+               "de bord, une API.",
         tools=("run_coding_agent",),
+        requires_top_rank=3,
     ),
     "git": ToolGroup(
-        covers="Dépôt git : voir les fichiers modifiés et l'état de la copie de travail, "
-               "lire l'historique des commits, comparer les différences, ajouter des "
-               "fichiers à l'index, committer, changer de branche, remiser.",
+        # La description menait par le jargon (« Dépôt git », index, remisage) et
+        # l'embedding s'en trouvait tiré loin d'une question posée en français
+        # courant : « quels sont mes fichiers modifiés » ne remontait même pas
+        # `git` dans les cinq premiers, alors que la phrase « voir les fichiers
+        # modifiés » y figurait mot pour mot. On mène donc par l'INTENTION, et le
+        # vocabulaire technique vient après.
+        covers="Savoir quels fichiers j'ai modifiés, changés ou touchés dans mon projet, "
+               "et ce qui a changé depuis la dernière fois : état de la copie de travail, "
+               "modifications en cours non encore validées, différences ligne à ligne. "
+               "Aussi l'historique des commits, ajouter des fichiers à l'index, committer, "
+               "changer de branche, remiser. Dépôt git. Ne lit pas le contenu d'un "
+               "fichier et ne cherche pas un fichier par son nom.",
         tools=("git_status", "git_log", "git_diff", "git_suggest_commit",
                "git_add", "git_commit", "git_checkout", "git_stash"),
-        keywords=frozenset({"git", "commit", "commits", "branche", "branch"}),
+        keywords=frozenset({"git", "commit", "commits", "branche", "branch",
+                            "depot", "dépôt", "staged", "diff"}),
     ),
     "filesystem": ToolGroup(
         covers="Fichiers locaux du disque : retrouver un fichier par son nom ou un motif, "
@@ -196,14 +228,19 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
         keywords=frozenset({"drive", "gdoc", "gdocs"}),
     ),
     "slack": ToolGroup(
-        covers="Slack : poster un message dans un canal, un salon ou une conversation "
-               "privée, prévenir l'équipe, lire ce qui se dit dans un canal, chercher "
-               "dans les messages, voir ses mentions, lister les canaux et retrouver une "
-               "personne.",
+        covers="Slack : envoyer, poster ou publier un message, un récap ou un compte "
+               "rendu dans un salon, un canal, un channel ou une conversation privée, "
+               "prévenir l'équipe, lire ce qui se dit dans un salon, chercher dans les "
+               "messages, voir ses mentions, lister les salons et retrouver une personne.",
         tools=("slack_find_user", "slack_list_channels", "slack_read_channel",
                "slack_get_mentions", "slack_list_dms", "slack_send_message",
                "slack_search_messages"),
-        keywords=frozenset({"slack"}),
+        # « salon », « canal » et « channel » ne désignent rien d'autre dans ce
+        # produit. La description contenait déjà le mot « salon » et le groupe
+        # sortait quand même hors du top 5 : l'embedder dilue un terme rare dans
+        # une phrase courte et banale, la correspondance exacte ne le rate jamais.
+        keywords=frozenset({"slack", "salon", "salons", "canal", "canaux",
+                            "channel", "channels"}),
     ),
     "jira": ToolGroup(
         covers="Jira : tickets, issues, sprints, epics et projets. Voir les tickets qui "
@@ -264,10 +301,19 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
         keywords=frozenset({"mermaid", "diagramme", "schema", "schéma", "organigramme", "flowchart"}),
     ),
     "memory": ToolGroup(
-        covers="Mémoire persistante du projet : retenir un fait pour les prochaines "
-               "sessions, noter une information non évidente, mettre à jour AXON.md.",
+        # Document court et générique : il se logeait près du centroïde de
+        # l'espace, donc proche de tout. Il sortait au rang 1 sur « quels sont mes
+        # fichiers modifiés » comme sur « envoie le récap dans le salon », deux
+        # requêtes qui ne le concernent en rien. On restreint aux intentions de
+        # mémoire EXPLICITES et on dit ce qu'il ne fait pas.
+        covers="Se souvenir explicitement de quelque chose pour les prochaines sessions : "
+               "mémorise ceci, retiens cette préférence, note-le dans ta mémoire, "
+               "qu'est-ce que tu sais de moi, rappelle-toi de ce que je t'ai dit, "
+               "mettre à jour AXON.md. Uniquement la mémoire de l'assistant : ne "
+               "cherche rien, n'envoie rien, ne lit aucun fichier, ne consulte ni le "
+               "dépôt, ni les messages, ni le web.",
         tools=("axon_note",),
-        keywords=frozenset({"axon.md"}),
+        keywords=frozenset({"axon.md", "memorise", "mémorise", "souviens", "retiens"}),
     ),
     "study": ToolGroup(
         covers="Fiches de révision et exercices : produire depuis un cours ou un PDF une "
@@ -454,7 +500,10 @@ class ToolRetriever:
             groups.append(_MONEY_GROUP)
 
         selected: set[str] = set(_PINNED_TOOLS)
-        for group in groups:
+        for rang, group in enumerate(groups, start=1):
+            seuil = TOOL_GROUPS[group].requires_top_rank
+            if seuil is not None and rang > seuil:
+                continue
             selected.update(self._tools_of(group, query))
 
         # Le specialist gère lui-même les fichiers et git : les lui laisser évite
