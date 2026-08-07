@@ -39,9 +39,11 @@ def test_un_historique_vide_dit_comment_commencer():
 
     assert lignes == []
     assert "vide" in texte
-    # Les DEUX phases sont nommées : capturer des décisions sans jamais capturer
-    # de clôture est exactement l'état dans lequel le produit se trouvait.
-    assert "decision" in texte and "closing" in texte
+    # La commande proposée est celle qui ne demande AUCUNE phase : c'est le choix
+    # manuel de la phase qui avait produit 113 décisions et zéro clôture.
+    assert "collect_cli" in texte
+    assert "--phase" not in texte
+    assert "coup d'envoi" in texte
 
 
 def test_le_sport_est_lu_sur_l_identite_de_l_evenement():
@@ -113,3 +115,52 @@ def test_le_rendu_signale_qu_aucune_cloture_n_a_jamais_ete_prise():
 
     assert "Aucune clôture" in texte
     assert "AVANT le coup d'envoi" in texte
+
+
+# ══ Vue opérationnelle : la CLV moyenne et le seuil requis ══════════════════
+def test_la_vue_expose_la_clv_moyenne_et_le_seuil():
+    """Suivre l'accumulation demande de voir où on en est ET où il faut aller."""
+    lignes = collect([
+        _obs("event:tennis:tour:2026:a", ObservationPhase.DECISION, 2.0),
+        _obs("event:tennis:tour:2026:a", ObservationPhase.CLOSING, 1.8, decalage=60),
+    ], min_events=30)
+
+    ligne = _ligne(lignes, "tennis")
+    assert ligne["requises"] == 30
+    assert ligne["mean_clv"] is not None
+    assert ligne["borne_basse"] is not None
+
+
+def test_une_clv_absente_ne_s_ecrit_jamais_zero():
+    """Écrire 0 ferait passer une absence de mesure pour une CLV nulle — et une
+    CLV nulle est une information, pas un vide."""
+    lignes = collect([_obs("event:tennis:tour:2026:a", ObservationPhase.DECISION, 2.0)],
+                     min_events=30)
+    texte = "\n".join(render(lignes, min_events=30))
+
+    assert _ligne(lignes, "tennis")["mean_clv"] is None
+    assert "0.00 %" not in texte
+
+
+def test_le_seuil_est_annonce_comme_versionne():
+    """Un plancher de policy doit se lire comme tel, pas comme une vérité
+    statistique — et son fichier doit être nommé."""
+    texte = "\n".join(render(
+        collect([_obs("event:tennis:tour:2026:a", ObservationPhase.DECISION, 2.0)],
+                min_events=30), min_events=30))
+
+    assert "model_maturity_policy.json" in texte
+
+
+def test_le_seuil_provient_reellement_de_la_policy_versionnee():
+    """Il n'a pas été inventé pour ce lot : il vit dans un fichier versionné,
+    avec sa justification et son checksum."""
+    import json
+    import pathlib
+
+    fichier = (pathlib.Path(__file__).resolve().parent.parent
+               / "configs" / "betting_engine" / "model_maturity_policy.json")
+    policy = json.loads(fichier.read_text(encoding="utf-8"))
+
+    assert policy["criteria"]["min_clv_events"] == 30
+    assert "plancher conservateur" in policy["notes"]

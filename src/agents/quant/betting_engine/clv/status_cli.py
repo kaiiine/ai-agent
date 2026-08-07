@@ -65,32 +65,51 @@ def collect(observations, *, min_events: int) -> list[dict]:
             "evenements": len({o.event_id for o in lot}),
             "paires": lecture.n_complete_pairs,
             "independants": lecture.n_events,
+            "requises": min_events,
+            # La CLV MOYENNE est lue telle que `clv_readiness` la rend — jamais
+            # recalculée ici. `None` tant qu'aucune paire n'existe : écrire 0
+            # ferait passer une absence de mesure pour une CLV nulle.
+            "mean_clv": lecture.mean_clv,
+            "borne_basse": lecture.clv_lower_bound,
             "statut": lecture.status,
             "manque": manque,
         })
     return lignes
 
 
+def _clv(valeur) -> str:
+    """Une CLV s'écrit en pourcent signé. Une absence s'écrit « — »."""
+    if valeur is None:
+        return "—"
+    return f"{float(valeur) * 100:+.2f} %"
+
+
 def render(lignes: list[dict], *, min_events: int) -> list[str]:
     if not lignes:
         return ["Historique de cotes vide — aucune observation collectée.",
                 "",
-                "Lancer une collecte :",
-                "  python -m src.agents.quant.betting_engine.clv.cli --live tennis --phase decision",
-                "  python -m src.agents.quant.betting_engine.clv.cli --live tennis --phase closing"]
+                "Lancer une collecte (la phase se déduit du coup d'envoi) :",
+                "  python -m src.agents.quant.betting_engine.clv.collect_cli",
+                "",
+                "En continu : voir ops/systemd/README.md"]
 
-    entete = (f"{'sport':16} {'décisions':>9} {'clôtures':>9} {'rencontres':>11} "
-              f"{'paires':>7} {'indép.':>7} {'statut':>19}  il manque")
+    entete = (f"{'sport':14} {'déc.':>6} {'clôt.':>6} {'renc.':>6} {'paires':>7} "
+              f"{'indép.':>7} {'requis':>7} {'CLV moy.':>10} {'borne basse':>12} "
+              f"{'statut':>19}  il manque")
     sortie = [entete, "-" * len(entete)]
     for ligne in lignes:
         sortie.append(
-            f"{ligne['sport']:16} {ligne['decisions']:>9} {ligne['clotures']:>9} "
-            f"{ligne['evenements']:>11} {ligne['paires']:>7} {ligne['independants']:>7} "
-            f"{ligne['statut']:>19}  {ligne['manque']}")
+            f"{ligne['sport']:14} {ligne['decisions']:>6} {ligne['clotures']:>6} "
+            f"{ligne['evenements']:>6} {ligne['paires']:>7} {ligne['independants']:>7} "
+            f"{ligne['requises']:>7} {_clv(ligne['mean_clv']):>10} "
+            f"{_clv(ligne['borne_basse']):>12} {ligne['statut']:>19}  {ligne['manque']}")
     sortie += [
         "",
         f"Seuil de maturité : {min_events} rencontres indépendantes ET une borne "
         "de confiance inférieure strictement positive.",
+        "Seuil VERSIONNÉ dans configs/betting_engine/model_maturity_policy.json "
+        "(plancher conservateur, non dérivé des données — à recalibrer quand la "
+        "collecte réelle aura de quoi le faire).",
         "« indép. » est l'échantillon EFFECTIF : plusieurs sélections d'un même "
         "match bougent ensemble et ne comptent que pour une.",
     ]
