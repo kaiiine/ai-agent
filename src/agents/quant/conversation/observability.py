@@ -300,8 +300,25 @@ def collect_readiness(sports: Sequence[str]) -> tuple[ModelReadiness, ...]:
     embarqué ne bougent pas entre deux tours de conversation ; recalculer la même
     validation à chaque question payait plusieurs secondes pour un résultat
     identique au caractère près. C'est la même mesure, pas une approximation.
+
+    L'historique de cotes, LUI, grandit — la collecte tourne en tâche de fond. Son
+    empreinte entre donc dans la clé de mémorisation : sans elle, un processus de
+    longue durée afficherait indéfiniment la progression CLV du premier tour, et
+    l'utilisateur croirait la collecte arrêtée.
     """
-    return _readiness_memorisee(tuple(sorted(set(sports))))
+    return _readiness_memorisee(tuple(sorted(set(sports))), _empreinte_historique())
+
+
+def _empreinte_historique() -> tuple:
+    """Taille et date de l'historique de cotes — assez pour détecter qu'il a
+    grandi, sans le relire ni le parser."""
+    from src.agents.quant.betting_engine.clv.store import JsonlOddsHistoryStore
+    try:
+        chemin = JsonlOddsHistoryStore().path
+        etat = chemin.stat()
+        return (etat.st_size, int(etat.st_mtime))
+    except Exception:   # noqa: BLE001 — pas d'historique : rien à invalider
+        return ()
 
 
 @functools.lru_cache(maxsize=1)
@@ -315,7 +332,8 @@ def _seuil_clv() -> int | None:
 
 
 @functools.lru_cache(maxsize=32)
-def _readiness_memorisee(sports: tuple[str, ...]) -> tuple[ModelReadiness, ...]:
+def _readiness_memorisee(sports: tuple[str, ...],
+                         _empreinte: tuple = ()) -> tuple[ModelReadiness, ...]:
     from src.agents.quant.betting_engine.maturity import Verdict
     from src.agents.quant.betting_engine.readiness_cli import _ASSESSORS
 
@@ -326,7 +344,12 @@ def _readiness_memorisee(sports: tuple[str, ...]) -> tuple[ModelReadiness, ...]:
             if evaluateur is None:
                 continue
             try:
-                evaluation = evaluateur()
+                # Les paires RÉELLEMENT collectées pour ce modèle. Sans elles,
+                # l'historique se remplirait sans que le critère bouge jamais.
+                from src.agents.quant.betting_engine.readiness_cli import (
+                    observations_collectees,
+                )
+                evaluation = evaluateur(observations_collectees(cle))
             except Exception:   # noqa: BLE001 — l'observabilité ne casse jamais un run
                 continue
             decision = evaluation.decision

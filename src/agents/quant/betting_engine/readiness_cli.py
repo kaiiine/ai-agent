@@ -22,39 +22,58 @@ from .maturity import Verdict, load_maturity_policy
 
 # Compétitions ayant un dataset réel embarqué -> readiness mesurable par walk-forward.
 # Football (Dixon-Coles 1X2) + basket NBA (Elo moneyline, famille statistique PROPRE).
-def _assess_nba(_odds=()):
+def _assess_nba(odds=()):
     from .sports.basketball.moneyline import assess_nba
-    return assess_nba()
+    return assess_nba(odds_observations=odds)
 
 
-def _assess_mlb(_odds=()):
+def _assess_mlb(odds=()):
     from .sports.baseball.moneyline import assess_mlb
-    return assess_mlb()
+    return assess_mlb(odds_observations=odds)
 
 
-def _assess_nfl(_odds=()):
+def _assess_nfl(odds=()):
     from .sports.american_football.moneyline import assess_nfl
-    return assess_nfl()
+    return assess_nfl(odds_observations=odds)
 
 
-def _assess_volley(_odds=()):
+def _assess_volley(odds=()):
     from .sports.volleyball.moneyline import assess_volleyball
-    return assess_volleyball()
+    return assess_volleyball(odds_observations=odds)
 
 
-def _assess_nhl(_odds=()):
+def _assess_nhl(odds=()):
     from .sports.hockey.regulation import assess_nhl
-    return assess_nhl()
+    return assess_nhl(odds_observations=odds)
 
 
-def _assess_atp(_odds=()):
+def _assess_atp(odds=()):
     from .sports.tennis.elo_model import assess_tennis
-    return assess_tennis("atp")
+    return assess_tennis("atp", odds_observations=odds)
 
 
-def _assess_wta(_odds=()):
+def _assess_wta(odds=()):
     from .sports.tennis.elo_model import assess_tennis
-    return assess_tennis("wta")
+    return assess_tennis("wta", odds_observations=odds)
+
+
+def observations_collectees(cle: str) -> list:
+    """Les paires de cotes RÉELLEMENT collectées pour ce modèle.
+
+    Les enveloppes acceptaient déjà un argument `odds_observations` et le
+    jetaient : l'historique pouvait se remplir indéfiniment sans que
+    `positive_clv` bouge d'un pouce. Le lire ici referme la boucle entre la
+    collecte et la mesure.
+
+    Une lecture ratée ne fait pas tomber le rapport : sans historique, la CLV
+    reste simplement non mesurable — ce qu'elle est.
+    """
+    try:
+        from .clv.routing import observations_pour
+        from .clv.store import JsonlOddsHistoryStore
+        return observations_pour(cle, JsonlOddsHistoryStore().all())
+    except Exception:   # noqa: BLE001
+        return []
 
 
 _ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a,
@@ -181,7 +200,8 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     from .dataset_recency import for_model
 
-    for line in render(_ASSESSORS[args.competition](), for_model(args.competition),
+    evaluation = _ASSESSORS[args.competition](observations_collectees(args.competition))
+    for line in render(evaluation, for_model(args.competition),
                        cle=args.competition):
         print(line)
     return 0

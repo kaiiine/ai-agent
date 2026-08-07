@@ -50,9 +50,12 @@ def load_mlb_games(path: Path = _FIXTURE) -> tuple[list[PairwiseGame], str]:
     return games, dataset_fingerprint(raw)
 
 
-def assess_mlb(path: Path = _FIXTURE) -> PairwiseAssessment:
+def assess_mlb(path: Path = _FIXTURE, *, odds_observations=()) -> PairwiseAssessment:
     games, _fp = load_mlb_games(path)
     # Freshness live CÂBLÉE (live_model -> evaluate_live_event -> Gateway.data_freshness,
     # prouvé par test_pairwise_live) -> capacité MEASURABLE. La CLV reste NOT_YET_MEASURABLE.
+    # `odds_observations` alimente la CLV RÉELLE. Le paramètre manquait : la
+    # collecte pouvait remplir l'historique sans que le critère bouge jamais.
     return assess_pairwise_elo(games, MLB_PARAMS, MODEL_NAME, MODEL_VERSION,
+                              odds_observations=odds_observations,
                               live_freshness_status=live_freshness_capability(MLB_LEAGUE_ID))

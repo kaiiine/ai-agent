@@ -1,0 +1,20 @@
+# Cadence de la collecte.
+#
+# Cinq minutes se marient avec la fenêtre de clôture de trente minutes : toute
+# rencontre est vue au moins cinq fois pendant cette fenêtre, donc aucune n'est
+# ratée même si une passe échoue.
+#
+# `Persistent=true` rattrape la passe manquée après une veille ou un
+# redémarrage — sans quoi une nuit d'extinction laisserait un trou dans
+# l'historique sans que rien ne le signale.
+[Unit]
+Description=AXON — cadence la collecte CLV
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

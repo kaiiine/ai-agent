@@ -37,6 +37,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 
+from src.agents.quant.betting_engine.clv import clv_readiness
 from src.agents.quant.betting_engine.live_coverage import live_freshness_capability
 from .competition import COMPETITION_IDS
 from src.agents.quant.betting_engine.maturity import (
@@ -181,7 +182,7 @@ class TennisAssessment:
     metrics: dict
 
 
-def assess_tennis(tour: str) -> TennisAssessment:
+def assess_tennis(tour: str, *, odds_observations=()) -> TennisAssessment:
     params = ATP_PARAMS if tour.lower() == "atp" else WTA_PARAMS
     ds = load_tennis_data(tour)
     run = run_tennis_walk_forward(ds.matches, params)
@@ -201,13 +202,21 @@ def assess_tennis(tour: str) -> TennisAssessment:
     year_briers = [sum(v) / len(v) for v in by_year.values()]
     fold_spread = (max(year_briers) - min(year_briers)) if len(year_briers) >= 2 else None
 
+    _clv = clv_readiness(
+        list(odds_observations),
+        confidence=load_maturity_policy().criteria.get("clv_confidence_level", 0.95))
     observations = MaturityObservations(
         n_evaluated=n, n_temporal_folds=len(by_year), calibration_error=ece,
         model_brier=round(model_brier, 6), best_baseline_brier=round(best_baseline, 6),
         data_coverage=round(n / run.n_total, 4) if run.n_total else None,
         mean_data_quality=1.0,
         fold_brier_spread=round(fold_spread, 4) if fold_spread is not None else None,
-        clv_status="NOT_YET_MEASURABLE", clv_mean=None,
+        # La CLV est MESURÉE sur les paires réellement collectées. Elle valait
+        # « NOT_YET_MEASURABLE » en littéral : le critère ne pouvait pas bouger,
+        # quelle que soit la quantité de données accumulée — exactement le défaut
+        # que portait aussi la capacité de fraîcheur.
+        clv_status=_clv.status, clv_mean=_clv.mean_clv,
+        clv_n_events=_clv.n_events, clv_lower_bound=_clv.clv_lower_bound,
         live_freshness_status=live_freshness_capability(
             COMPETITION_IDS.get(tour.lower(), f"competition:tennis:{tour.lower()}:tour")))
     decision = evaluate_maturity(

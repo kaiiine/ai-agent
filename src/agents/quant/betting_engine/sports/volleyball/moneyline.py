@@ -52,8 +52,11 @@ def load_volleyball_games(path: Path = _FIXTURE) -> tuple[list[PairwiseGame], st
     return games, dataset_fingerprint(raw)
 
 
-def assess_volleyball(path: Path = _FIXTURE) -> PairwiseAssessment:
+def assess_volleyball(path: Path = _FIXTURE, *, odds_observations=()) -> PairwiseAssessment:
     games, _fp = load_volleyball_games(path)
     # Freshness live CÂBLÉE (test_pairwise_live) -> MEASURABLE. CLV reste NOT_YET_MEASURABLE.
+    # `odds_observations` alimente la CLV RÉELLE. Le paramètre manquait : la
+    # collecte pouvait remplir l'historique sans que le critère bouge jamais.
     return assess_pairwise_elo(games, VOLLEY_PARAMS, MODEL_NAME, MODEL_VERSION,
+                              odds_observations=odds_observations,
                               live_freshness_status=live_freshness_capability(VOLLEY_LEAGUE_ID))

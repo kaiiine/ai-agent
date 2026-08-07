@@ -1,0 +1,19 @@
+# Collecte CLV — une passe. Le service ne boucle pas : c'est le timer qui cadence.
+#
+# Une passe est IDEMPOTENTE : elle n'écrit que ce qui manque. La relancer plus
+# souvent que nécessaire ne coûte qu'un scan ; la lancer trop rarement fait rater
+# des clôtures, qui ne se rattrapent pas — une fois le match commencé, la ligne
+# de clôture n'existe plus.
+[Unit]
+Description=AXON — collecte CLV (décision/clôture selon le coup d'envoi)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Documents/projets-perso/ai-agent
+ExecStart=%h/Documents/projets-perso/ai-agent/venv/bin/python -m src.agents.quant.betting_engine.clv.collect_cli
+# Une panne de réseau ne doit pas éteindre la collecte : le timer réessaiera.
+Restart=no
+StandardOutput=journal
+StandardError=journal
