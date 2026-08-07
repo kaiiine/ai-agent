@@ -758,3 +758,147 @@ def test_le_garde_est_cable_dans_le_noeud_final():
 
     assert "conversation.guard import enforce" in source
     assert "_verdict.blocked" in source
+
+
+# ══ §8 — Les faits sur le monde, pas seulement l'argent ══════════════════════
+# Le garde protégeait la DÉCISION : mise, EV, combiné, recommandation. Il laissait
+# passer les faits qui la précèdent. Or c'est sur eux que se construit la
+# confiance : « Rybakina est blessée » lu dans une réponse d'AXON se lit comme une
+# donnée du produit, alors que rien ne l'a vérifiée.
+@pytest.mark.parametrize("classe,phrase", [
+    ("rencontre inventée", "Ce soir, Nadal affronte Djokovic à 20h au Masters."),
+    ("cote inventée", "Djokovic est à 1.75 chez Winamax."),
+    ("probabilité inventée", "Je donne 62 % de chances à Djokovic."),
+    ("blessure inventée", "Attention, Rybakina est blessée au genou depuis mardi."),
+    ("météo inventée", "Il pleuvra à Rome, ce qui favorise les défensifs."),
+    ("classement inventé", "Sinner est actuellement numéro 1 mondial ATP."),
+    ("provider inventé", "J'ai vérifié sur Sportradar, la donnée est à jour."),
+    ("forfait inventé", "Alcaraz déclare forfait pour la demi-finale."),
+    ("tête de série", "Elle est tête de série n°3 dans ce tableau."),
+])
+def test_un_fait_externe_sans_outil_est_bloque(classe, phrase):
+    verdict = enforce(phrase, None)
+
+    assert verdict.blocked, f"{classe} non bloquée : {phrase}"
+    assert verdict.reason == "UNVERIFIED_EXTERNAL_FACT"
+    assert phrase not in (verdict.replacement or ""), (
+        "le remplacement republie le fait inventé sous une mise en garde")
+
+
+@pytest.mark.parametrize("phrase", [
+    # Pédagogie : aucune entité nommée, aucune attribution.
+    "Une cote de 1.50 correspond à une probabilité implicite de 66 %.",
+    "La probabilité implicite se calcule en divisant 1 par la cote.",
+    "Le Kelly fractionné divise la mise optimale par quatre.",
+    # Aveux d'ignorance : c'est la réponse honnête, elle doit survivre.
+    "Je ne peux pas te dire si Rybakina est blessée : je n'ai aucune source.",
+    "Je ne dispose d'aucun flux météo.",
+    "Je n'ai pas vérifié sur Sportradar : AXON n'interroge pas ce provider.",
+    # Questions et verdicts structurés.
+    "Quel sport veux-tu analyser ?",
+    "Aucune mise recommandée : aucun modèle n'est validé pour la mise réelle.",
+    # Un fait passé, sans horaire : ce n'est pas l'annonce d'une rencontre.
+    "Nadal a souvent affronté Federer en finale de Roland-Garros.",
+])
+def test_une_formulation_legitime_n_est_jamais_bloquee(phrase):
+    """Un garde qui supprime la réponse honnête est pire que pas de garde : il
+    apprend à l'utilisateur que le produit ne sait rien dire."""
+    assert not enforce(phrase, None).blocked, phrase
+
+
+def test_le_texte_du_renderer_traverse_le_garde_durci():
+    """Le piège de cette règle : bloquer le rendu déterministe qu'elle accompagne.
+    Le renderer nomme des joueurs, des cotes et des horaires — tous réels."""
+    from src.agents.quant.conversation.renderer import render
+
+    contraintes = constraints_from_request(
+        None, bankroll=Decimal("100"),
+        time_window=resolve_window("", datetime(2026, 8, 6, 15, 30, tzinfo=PARIS)))
+    run, _ = _run(contraintes, [_evaluation(), _evaluation(event="e2")])
+
+    for debug in (False, True):
+        rendu = render(run, debug=debug)
+        assert not enforce(rendu, run.evidence).blocked
+        # Sans preuve non plus : un tour dégradé ne doit pas perdre son rendu.
+        assert not enforce(rendu, None).blocked, f"rendu bloqué (debug={debug})"
+
+
+def test_une_negation_dans_une_phrase_ne_couvre_pas_l_affirmation_suivante():
+    """Une réponse peut nier puis affirmer. Évaluer le texte entier laisserait la
+    négation couvrir l'affirmation — précisément la construction à surveiller."""
+    texte = ("Je n'ai aucune source médicale officielle. "
+             "Cela dit, Rybakina est blessée au genou depuis mardi.")
+
+    assert enforce(texte, None).blocked
+
+
+# ══ Pistes de provider : lues dans la couche qui produit le blocage ══════════
+def test_les_options_de_provider_s_affichent_sur_un_refus_de_couverture():
+    """Cette section a d'abord été écrite sur la ligne d'un candidat, en lisant
+    `evaluation.policy_reasons`. Elle ne pouvait pas s'afficher :
+    `COMPETITION_NOT_COVERED` est un refus du Betting Engine, appliqué AVANT le
+    modèle — un événement qui le subit ne devient jamais un candidat. La raison
+    cherchée ne pouvait donc pas se trouver là où on la cherchait."""
+    from src.agents.quant.conversation.renderer import render
+
+    contraintes = constraints_from_request(
+        None, bankroll=Decimal("100"),
+        time_window=resolve_window("", datetime(2026, 8, 6, 15, 30, tzinfo=PARIS)))
+    run, _ = _run(contraintes, [_evaluation()],
+                  refus=(("tennis", "COMPETITION_NOT_COVERED"),))
+
+    rendu = render(run, debug=True)
+
+    assert "aucun provider vérifié" in rendu
+    assert "api-tennis.com" in rendu
+    assert "aucune intégration automatique" in rendu
+
+
+def test_aucune_piste_de_provider_sans_refus_de_couverture():
+    """Proposer un abonnement à qui n'en a pas besoin transforme l'aide en bruit."""
+    from src.agents.quant.conversation.renderer import render
+
+    contraintes = constraints_from_request(
+        None, bankroll=Decimal("100"),
+        time_window=resolve_window("", datetime(2026, 8, 6, 15, 30, tzinfo=PARIS)))
+    run, _ = _run(contraintes, [_evaluation()],
+                  refus=(("tennis", "EVENT_NOT_RESOLVED"),))
+
+    assert "aucun provider vérifié" not in render(run, debug=True)
+
+
+def test_tous_les_imports_du_produit_pointent_vers_un_module_existant():
+    """Un import PARESSEUX, écrit dans une branche rare, ne s'exécute pas à
+    l'import du module : une erreur de chemin y reste invisible jusqu'au jour où
+    la branche est prise. C'est ainsi que le bloc providers a vécu cassé —
+    `...enrichment` résolvait vers `src.agents.enrichment`, qui n'existe pas."""
+    import ast
+    import pathlib
+
+    racine = pathlib.Path(__file__).resolve().parent.parent
+
+    def existe(pointe: str) -> bool:
+        chemin = racine / pathlib.Path(*pointe.split("."))
+        return chemin.with_suffix(".py").exists() or (chemin / "__init__.py").exists()
+
+    casses = []
+    for fichier in sorted((racine / "src").rglob("*.py")):
+        arbre = ast.parse(fichier.read_text())
+        # Le paquet d'un module est son dossier — y compris pour un `__init__`,
+        # dont le nom de fichier n'est pas un niveau d'imbrication.
+        paquet = list(fichier.relative_to(racine).with_suffix("").parts)[:-1]
+        for noeud in ast.walk(arbre):
+            if isinstance(noeud, ast.ImportFrom):
+                if noeud.level:
+                    ancre = paquet[:len(paquet) - (noeud.level - 1)]
+                    cible = ".".join(ancre + ([noeud.module] if noeud.module else []))
+                else:
+                    cible = noeud.module or ""
+            elif isinstance(noeud, ast.Import):
+                cible = next((a.name for a in noeud.names if a.name.startswith("src")), "")
+            else:
+                continue
+            if cible.startswith("src") and not existe(cible):
+                casses.append(f"{fichier.relative_to(racine)}:{noeud.lineno} -> {cible}")
+
+    assert not casses, "imports pointant vers un module inexistant :\n" + "\n".join(casses)

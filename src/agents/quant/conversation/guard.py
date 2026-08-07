@@ -81,6 +81,118 @@ _RECOMMANDE = re.compile(
     r"|\b(?:pari|ticket|combin[ée]|s[ée]lection)\s+à\s+jouer\b"
     r"|\bticket\s+(?:conseillé|recommandé)\b)")
 
+# ── Faits sur le monde, hors argent ───────────────────────────────────────────
+# Les règles ci-dessus protègent la DÉCISION : mise, EV, combiné, recommandation.
+# Elles laissaient passer les faits qui la précèdent — un match, une cote, une
+# blessure, la météo, un classement, un provider consulté. Or c'est sur eux que
+# se construit la confiance : « Rybakina est blessée » lu dans une réponse d'AXON
+# se lit comme une donnée du produit, alors que rien ne l'a vérifié.
+#
+# Chaque motif exige une assertion CONCRÈTE — un sujet nommé, une heure, un
+# nombre. Une phrase d'explication générale n'en contient aucun et passe.
+
+#: « X est blessé », « forfait de Y ». Le participe seul ne suffit pas : il faut
+#: un verbe d'état ou une tournure qui ATTRIBUE l'indisponibilité.
+_BLESSURE = re.compile(
+    r"(?i)("
+    r"\b(?:est|sont|serait|seraient|reste|restent)\s+(?:blessée?s?|forfaits?|"
+    r"indisponibles?|absente?s?|suspendue?s?|incertaine?s?)\b"
+    r"|\bs'est\s+blessée?\b"
+    r"|\b(?:blessure|forfait|indisponibilité)\s+(?:de|d'|du|de\s+la)\s*[A-ZÉÈÀ]"
+    r"|\bdéclare[rz]?\s+forfait\b"
+    r")")
+
+#: Météo annoncée pour une rencontre.
+_METEO = re.compile(
+    r"(?i)("
+    r"\bil\s+(?:va\s+)?(?:pleut|pleuvra|pleuvoir|neige|neigera)\b"
+    r"|\b(?:pluie|averses?|vent|chaleur)\s+(?:est|sont)?\s*(?:annoncée?s?|prévue?s?|attendue?s?)"
+    r"|\bmétéo\s+(?:annonce|prévoit|indique)"
+    r"|\b(?:température|vent)\s+(?:de|à)\s*\d+"
+    r")")
+
+#: Classement mondial ou position au tableau.
+_CLASSEMENT = re.compile(
+    r"(?i)("
+    r"\bnum[ée]ro\s+\d+\s+(?:mondial|atp|wta|fifa)"
+    r"|\b\d+(?:er|re|e|ème|eme)\s+(?:mondial|au\s+classement)"
+    r"|\bclassée?\s+\d+(?:er|re|e|ème|eme)?\b"
+    r"|\b(?:atp|wta|fifa)\s*(?:n[°o]|#)\s*\d+"
+    r"|\bt[êe]te\s+de\s+s[ée]rie\s+n?[°o]?\s*\d+"
+    r")")
+
+#: Consultation d'une source externe nommée. Le produit n'interroge que Winamax
+#: et, en informatif seul, la couche d'enrichissement — jamais ces flux-là.
+_SOURCE_EXTERNE = re.compile(
+    r"(?i)("
+    r"\b(?:j'ai|je\s+viens\s+de)\s+(?:vérifié?|consulté?|regardé?|trouvé?|lu)\b"
+    r"[^.\n]{0,30}?\b(?:sportradar|opta|flashscore|sofascore|tennis[\s-]*abstract|"
+    r"api[\s-]*tennis|goalserve|enetpulse|utr|espn|l'?[ée]quipe|bet365|oddsportal)\b"
+    r"|\b(?:d'après|selon)\s+(?:sportradar|opta|flashscore|sofascore|espn|bet365)\b"
+    r")")
+
+#: Une rencontre annoncée AVEC son horaire : c'est la forme d'un match inventé.
+#: « Nadal a souvent affronté Federer » n'a pas d'horaire et passe.
+_FIXTURE = re.compile(
+    r"(?i)(?=[^.\n]*\b(?:affronte(?:ra)?|joue\s+contre|rencontre|reçoit|"
+    r"se\s+déplace\s+(?:à|chez)|opposée?\s+à|face\s+à|contre)\b)"
+    r"[^.\n]*\b(?:\d{1,2}\s*h(?:\d{2})?\b|à\s+\d{1,2}[:h]\d{2}|ce\s+soir|"
+    r"cet\s+après[- ]midi|demain|aujourd'hui|ce\s+matin)\b")
+
+#: Une probabilité ATTRIBUÉE à un compétiteur, par opposition à l'illustration
+#: d'une règle (« une cote de 1.50 correspond à 66 % » n'attribue rien).
+_PROBA_ATTRIBUEE = re.compile(
+    r"(?i)("
+    r"\b(?:je\s+(?:donne|estime|table\s+sur)|j'estime)\b[^.\n]{0,40}?\d+(?:[.,]\d+)?\s*%"
+    r"|\d+(?:[.,]\d+)?\s*%\s+de\s+(?:chances|probabilité)"
+    r"|\b(?:ses|leurs)\s+chances\s+(?:sont|s'élèvent)\b[^.\n]{0,20}?\d+(?:[.,]\d+)?\s*%"
+    r")")
+
+#: Une cote ATTRIBUÉE à un bookmaker nommé — donc présentée comme relevée, pas
+#: comme un exemple de calcul.
+_COTE_ATTRIBUEE = re.compile(
+    r"(?i)("
+    r"\b(?:winamax|betclic|unibet|pmu|bwin|parions\s*sport|zebet)\b[^.\n]{0,40}?\d+[.,]\d{1,3}"
+    r"|\d+[.,]\d{1,3}[^.\n]{0,25}?\b(?:chez|sur)\s+(?:winamax|betclic|unibet|pmu|bwin|zebet)\b"
+    r")")
+
+_FAITS_EXTERNES = (
+    ("blessure", _BLESSURE), ("météo", _METEO), ("classement", _CLASSEMENT),
+    ("source externe", _SOURCE_EXTERNE), ("rencontre", _FIXTURE),
+    ("probabilité", _PROBA_ATTRIBUEE), ("cote", _COTE_ATTRIBUEE),
+)
+
+#: Une phrase qui NIE, interroge ou se déclare incapable n'affirme rien. Sans ce
+#: filtre, « je ne peux pas te dire si elle est blessée » serait bloqué — et le
+#: garde supprimerait la seule réponse honnête, exactement ce qu'il doit protéger.
+_NON_ASSERTIF = re.compile(
+    r"(?i)("
+    r"\bn['e]\s*(?:\w+\s+){0,3}?(?:pas|plus|jamais|aucune?)\b"
+    r"|\b(?:aucune?|nulle)\s+(?:donnée|information|source|cote|mesure|garantie|idée)"
+    r"|\bje\s+ne\s+(?:sais|peux|dispose|dois)"
+    r"|\bimpossible\s+de\b|\bsans\s+(?:donnée|source|vérification)"
+    r"|\bn'?ai\s+pas\b|\bpas\s+(?:de|d')\s*(?:donnée|information|accès|source)"
+    r"|\bsi\s+tu\s+veux\b|\?\s*$"
+    r")")
+
+
+def _faits_sans_source(text: str) -> list[str]:
+    """Les faits concrets affirmés, phrase par phrase.
+
+    Le découpage compte : une réponse peut nier dans une phrase et affirmer dans
+    la suivante. Évaluer le texte entier laisserait la négation couvrir
+    l'affirmation, ce qui est précisément la construction à surveiller.
+    """
+    trouves: list[str] = []
+    for phrase in re.split(r"(?<=[.!?])\s+|\n+", text):
+        if not phrase.strip() or _NON_ASSERTIF.search(phrase):
+            continue
+        for nom, motif in _FAITS_EXTERNES:
+            if motif.search(phrase) and nom not in trouves:
+                trouves.append(nom)
+    return trouves
+
+
 #: §17 — vocabulaire qui ne peut décrire aucun pari.
 _TROMPEUR = re.compile(
     r"(?i)\b("
@@ -163,6 +275,12 @@ def enforce(
             return GuardVerdict(False, _sans_preuve(signaux), "NO_STRUCTURED_EVIDENCE")
         if signaux["provenance"] and not prouve:
             return GuardVerdict(False, _sans_preuve(signaux), "FABRICATED_TOOL_CLAIM")
+        # Les faits externes ne dépendent PAS de `has_structured_output` : aucun
+        # outil hors `betting_recommend` n'en produit, et celui-là fournit une
+        # preuve dès qu'il aboutit. Un tour sans preuve n'a donc rien constaté.
+        faits = _faits_sans_source(text)
+        if faits:
+            return GuardVerdict(False, _faits_non_verifies(faits), "UNVERIFIED_EXTERNAL_FACT")
         return _OK
 
     if signaux["trompeur"]:
@@ -188,6 +306,25 @@ def _sans_preuve(signaux: dict[str, bool]) -> str:
         "scan, d'aucun modèle et d'aucune cote réelle.\n\n"
         "Aucune sélection, aucune cote, aucun horaire et aucune mise ne peuvent être "
         "affichés dans cet état. Relance la demande pour déclencher un scan réel."
+    )
+
+
+def _faits_non_verifies(faits: list[str]) -> str:
+    """Nomme ce qui a été affirmé, sans le répéter.
+
+    Reprendre la phrase d'origine la republierait sous une mise en garde, et une
+    blessure inventée reste lisible même précédée d'un avertissement.
+    """
+    return (
+        "**DATA_UNAVAILABLE** — réponse bloquée : aucun outil n'a été appelé "
+        "pendant ce tour.\n\n"
+        f"La rédaction affirmait des faits ({', '.join(faits)}) qu'aucune source "
+        "n'a fournis. AXON ne dispose d'aucun flux de blessures, de météo, de "
+        "classements ni de calendrier hors du scan bookmaker : ce qui n'a pas été "
+        "scanné pendant ce tour n'a pas été constaté.\n\n"
+        "Relance la demande pour déclencher un scan réel. Le contexte externe, "
+        "quand il existe, apparaît sous « Contexte externe » avec sa source et "
+        "reste informatif : il n'entre dans aucun calcul."
     )
 
 

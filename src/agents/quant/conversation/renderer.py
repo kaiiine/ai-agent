@@ -283,37 +283,61 @@ def _render_candidat(evaluation: Any, obs: Any = None, fenetre: Any = None) -> l
         f"- Raisons complètes : {', '.join(evaluation.policy_reasons) or NON_APPLICABLE}",
         f"- Provenance : `{c.event_id}` · `{c.market_id}` · "
         f"observé {_valeur(observed_at, lambda v: render_kickoff(v))}",
-    ] + _render_internet(obs, c, evaluation)
+    ] + _render_internet(obs, c)
 
 
-def _render_internet(obs: Any, candidate: Any, evaluation: Any) -> list[str]:
-    """Faits externes et pistes de provider — clairement séparés des chiffres.
+def _render_internet(obs: Any, candidate: Any) -> list[str]:
+    """Faits externes — clairement séparés des chiffres.
 
     Ils sont présentés APRÈS les probabilités et sous un intitulé distinct :
     accolés aux nombres, ils se liraient comme une justification de la mesure,
     alors qu'ils n'y participent en rien.
     """
-    lignes: list[str] = []
-
     features = obs.features_for(candidate) if obs is not None else ()
-    if features:
-        lignes += ["- **Contexte externe** — informatif, n'entre dans aucun calcul :"]
-        for f in features:
-            marque = {"OFFICIAL": "✓", "REPUTABLE": "·"}.get(f.confidence, "⚠")
-            lignes.append(f"  - {marque} {f.value[:160]} — [{f.source[:40]}]({f.url})")
+    if not features:
+        return []
 
-    # Le blocage « aucun provider » est le seul qu'un abonnement puisse lever :
-    # montrer les options fait gagner un temps réel à qui veut le corriger.
-    if "PROVIDER_COVERAGE_MISSING" in (evaluation.policy_reasons or ()):
-        from ...enrichment.providers import providers_for
+    lignes = ["- **Contexte externe** — informatif, n'entre dans aucun calcul :"]
+    for f in features:
+        marque = {"OFFICIAL": "✓", "REPUTABLE": "·"}.get(f.confidence, "⚠")
+        lignes.append(f"  - {marque} {f.value[:160]} — [{f.source[:40]}]({f.url})")
+    return lignes
 
-        options = providers_for(candidate.sport)
-        if options:
-            lignes += ["- **Providers candidats** (aucune intégration automatique) :"]
-            for o in options[:5]:
-                lignes.append(f"  - {o.name} — **{o.access}**"
-                              + (f" · {o.price_hint}" if o.price_hint else "")
-                              + f" · {', '.join(o.covers[:4])}")
+
+#: Refus MOTEUR signifiant « aucun provider vérifié ne couvre cette compétition ».
+#: C'est le seul blocage qu'un abonnement puisse lever, et il se produit AVANT
+#: le modèle — donc jamais sur un candidat, toujours sur un événement écarté.
+_REFUS_SANS_PROVIDER = "COMPETITION_NOT_COVERED"
+
+
+def _render_providers(obs: Any) -> list[str]:
+    """Pistes d'abonnement, pour les sports réellement bloqués faute de provider.
+
+    Cette section a d'abord été écrite sur la ligne d'un candidat, en lisant
+    `evaluation.policy_reasons`. Elle ne pouvait pas s'afficher : `COMPETITION_NOT_COVERED`
+    est un refus du Betting Engine, appliqué AVANT le modèle. Un événement qui le
+    subit ne devient jamais un candidat, donc la raison recherchée ne pouvait pas
+    se trouver là où on la cherchait. La leçon est de lire le blocage dans la
+    couche qui l'a produit — ici les traces du scan, qui portent le sport.
+    """
+    if obs is None:
+        return []
+
+    from ..enrichment.providers import providers_for
+
+    sports = sorted({t.sport for t in obs.traces if t.status == _REFUS_SANS_PROVIDER})
+    lignes: list[str] = []
+    for sport in sports:
+        options = providers_for(sport)
+        if not options:
+            continue
+        lignes += ["", f"*{sport} — aucun provider vérifié ne couvre ces compétitions.*",
+                   "Options sondées (aucune intégration automatique : un provider "
+                   "payant engage de l'argent, un gratuit engage une licence) :"]
+        for o in options[:5]:
+            lignes.append(f"- {o.name} — **{o.access}**"
+                          + (f" · {o.price_hint}" if o.price_hint else "")
+                          + f" · {', '.join(o.covers[:4])}")
     return lignes
 
 
@@ -334,7 +358,7 @@ def _render_bloqueurs(obs: Any, response: Any) -> list[str]:
         for code, n in sorted(compte.items(), key=lambda kv: (-kv[1], kv[0])):
             lignes.append(f"{code:44} {n:>5}")
         lignes.append("```")
-    return lignes
+    return lignes + _render_providers(obs)
 
 
 # ── Readiness des modèles présents ────────────────────────────────────────────
