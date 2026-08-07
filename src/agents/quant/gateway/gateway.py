@@ -121,13 +121,23 @@ def _sport_of(competition_canonical_id: str) -> str | None:
 
 
 def data_freshness(
-    league_canonical_id: str, season: str | None = None, data_type: str = "RESULTS"
+    league_canonical_id: str, season: str | None = None, data_type: str = "RESULTS",
+    resolver: IdentityResolver | None = None,
 ) -> DataFreshness | None:
     """Fraîcheur de la donnée qui SERAIT servie pour cette compétition/saison.
 
     Réutilise le MÊME fetch que `recent_form`/`standings_strength` (la Gateway
     calcule `freshness_score` sur l'enveloppe) ; expose ses métadonnées sans les
-    recalculer. `None` si aucune donnée disponible (jamais une fraîcheur fabriquée)."""
+    recalculer. `None` si aucune donnée disponible (jamais une fraîcheur fabriquée).
+
+    `resolver` est INJECTABLE parce que le référentiel d'identités de ce module
+    ne contient que des équipes de football. Un provider peut répondre
+    parfaitement pour le hockey et voir chacune de ses rencontres écartée faute
+    d'identité résolue : l'enveloppe sort vide, et le manque se lit « aucune
+    donnée » alors que c'est le référentiel qui manquait. L'appelant qui connaît
+    les sept sports passe le sien ; les entrées football historiques gardent le
+    défaut. La Gateway n'importe pas pour autant la couche qui l'appelle.
+    """
     season = season or current_season()
     # Le sport vient de l'identifiant de compétition, jamais d'un défaut : coder
     # « football » en dur faisait chercher des données de football pour une
@@ -140,7 +150,8 @@ def data_freshness(
     try:
         envelope = fetch_league_data(
             sport=sport, data_type=data_type,
-            league_canonical_id=league_canonical_id, season=season, resolver=_resolver,
+            league_canonical_id=league_canonical_id, season=season,
+            resolver=resolver or _resolver,
         )
     except (NoDataAvailableError, UnsupportedSportError):
         return None

@@ -25,31 +25,33 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 _FIXTURES = Path(__file__).resolve().parents[5] / "tests" / "fixtures"
-#: Statuts api-sports qui désignent une rencontre TERMINÉE et jouée jusqu'au
-#: bout. `AOT`/`AP` (prolongation, tirs au but) en font partie ; un abandon ou un
-#: report, non — on ne devine pas un résultat.
-_TERMINES = frozenset({"FT", "AOT", "AP", "AET", "Game Finished",
-                       "After Over Time", "Finished", "Final/OT"})
+# Les accesseurs de forme brute vivent dans la couche basse : la Gateway les
+# utilise pour normaliser, l'acquisition pour écrire ses fixtures. Une seule
+# définition — chaque particularité qu'ils encodent a coûté des rencontres
+# perdues avant d'être vue.
+from src.agents.quant.gateway.providers.api_sports_shape import (  # noqa: E402
+    TERMINES as _TERMINES,
+    aplatir as _plat,
+    equipes as _equipes,
+    instant as _instant,
+    scores as _scores,
+    statut as _statut,
+)
 
 
-@dataclass(frozen=True)
-class SportEndpoint:
-    """Ce qui distingue réellement les six produits."""
+#: Les six produits sont décrits UNE fois, côté Gateway
+#: (`gateway/providers/api_sports_provider.PRODUITS`). Ce module les lisait dans
+#: sa propre table : la même connaissance à deux endroits, donc deux endroits à
+#: corriger le jour où un hôte change. La Gateway est la couche basse — c'est
+#: elle qui porte la table, et l'acquisition la consulte.
+#:
+#: Les clés canoniques du produit utilisent `american_football` ; l'API et les
+#: scripts d'ingestion existants écrivent `american-football`. Les deux sont
+#: acceptées ici pour ne pas casser une commande déjà écrite.
+def _produit(sport: str):
+    from src.agents.quant.gateway.providers.api_sports_provider import PRODUITS
 
-    hote: str
-    endpoint: str = "games"
-    #: `2023-2024` chez le basket, `2023` ailleurs.
-    saison_composee: bool = False
-
-
-ENDPOINTS: dict[str, SportEndpoint] = {
-    "basketball": SportEndpoint("v1.basketball.api-sports.io", saison_composee=True),
-    "baseball": SportEndpoint("v1.baseball.api-sports.io"),
-    "american-football": SportEndpoint("v1.american-football.api-sports.io"),
-    "hockey": SportEndpoint("v1.hockey.api-sports.io"),
-    "volleyball": SportEndpoint("v1.volleyball.api-sports.io"),
-    "football": SportEndpoint("v3.football.api-sports.io", endpoint="fixtures"),
-}
+    return PRODUITS[sport.replace("-", "_")]
 
 
 def _cle() -> str:
@@ -63,9 +65,9 @@ def fetch_games(sport: str, league_id: int, season: str, *, timeout: float = 30.
     """Rencontres brutes d'une ligue-saison. Aucune transformation ici."""
     import requests
 
-    spec = ENDPOINTS[sport]
+    spec = _produit(sport)
     reponse = requests.get(
-        f"https://{spec.hote}/{spec.endpoint}",
+        f"{spec.hote}/{spec.endpoint}",
         headers={"x-apisports-key": _cle()},
         params={"league": league_id, "season": season},
         timeout=timeout,
@@ -79,61 +81,6 @@ def fetch_games(sport: str, league_id: int, season: str, *, timeout: float = 30.
 
 
 # ── Normalisation vers les formes déjà consommées ─────────────────────────────
-def _plat(jeu: dict) -> dict:
-    """Le produit american-football imbrique id, date et statut sous `game` ;
-    les autres les exposent à plat. On aplanit une fois, ici, plutôt que de
-    dupliquer la condition dans chaque accesseur."""
-    interne = jeu.get("game")
-    return {**jeu, **interne} if isinstance(interne, dict) else jeu
-
-
-def _statut(jeu: dict) -> str:
-    statut = _plat(jeu).get("status") or {}
-    if not isinstance(statut, dict):
-        return str(statut)
-    # `Final/OT` arrive avec `short=None` : le libellé long est alors la seule
-    # information disponible, et l'ignorer écartait 13 rencontres réelles.
-    return statut.get("short") or statut.get("long") or ""
-
-
-def _instant(jeu: dict) -> str | None:
-    date = _plat(jeu).get("date")
-    if isinstance(date, dict):
-        horodatage = date.get("timestamp")
-        if horodatage:
-            return datetime.fromtimestamp(int(horodatage), tz=timezone.utc).isoformat()
-        jour, heure = date.get("date"), date.get("time") or "00:00"
-        return f"{jour}T{heure}:00+00:00" if jour else None
-    if isinstance(date, str) and date:
-        return date
-    horodatage = _plat(jeu).get("timestamp")
-    if horodatage:
-        return datetime.fromtimestamp(int(horodatage), tz=timezone.utc).isoformat()
-    return None
-
-
-def _total(cote: Any) -> int | None:
-    """Le score total, quel que soit l'endroit où le produit le range."""
-    if isinstance(cote, (int, float)):
-        return int(cote)
-    if isinstance(cote, dict):
-        for champ in ("total", "points", "score"):
-            valeur = cote.get(champ)
-            if isinstance(valeur, (int, float)):
-                return int(valeur)
-    return None
-
-
-def _equipes(jeu: dict) -> tuple[dict, dict]:
-    equipes = jeu.get("teams") or {}
-    return equipes.get("home") or {}, equipes.get("away") or {}
-
-
-def _scores(jeu: dict) -> tuple[int | None, int | None]:
-    scores = jeu.get("scores") or {}
-    return _total(scores.get("home")), _total(scores.get("away"))
-
-
 def normalise_pairwise(jeux: Iterable[dict], *, cles_courtes: bool) -> list[dict]:
     """Forme `{id, date, home*, away*, score}` des fixtures pairwise existantes.
 

@@ -69,3 +69,48 @@
   competition_type: league
   tier: 1
   status: active
+
+# ── Sports à deux équipes servis par api-sports ──────────────────────────────
+# Les identifiants canoniques sont ceux qu'utilisent DÉJÀ les modèles du betting
+# engine (NBA_LEAGUE_ID, MLB_LEAGUE_ID…). Les inventer autrement aurait produit
+# deux identités pour la même compétition, dont une seule résolvable.
+
+- canonical_id: "competition:basketball:usa:nba"
+  sport: basketball
+  name: "NBA"
+  country_code: US
+  competition_type: league
+  tier: 1
+  status: active
+
+- canonical_id: "competition:baseball:usa:mlb"
+  sport: baseball
+  name: "MLB"
+  country_code: US
+  competition_type: league
+  tier: 1
+  status: active
+
+- canonical_id: "competition:american_football:usa:nfl"
+  sport: american_football
+  name: "NFL"
+  country_code: US
+  competition_type: league
+  tier: 1
+  status: active
+
+- canonical_id: "competition:hockey:usa:nhl"
+  sport: hockey
+  name: "NHL"
+  country_code: US
+  competition_type: league
+  tier: 1
+  status: active
+
+- canonical_id: "competition:volleyball:ita:serie_a1"
+  sport: volleyball
+  name: "SuperLega (Serie A1)"
+  country_code: IT
+  competition_type: league
+  tier: 1
+  status: active

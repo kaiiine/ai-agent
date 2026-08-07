@@ -78,14 +78,21 @@ def _cache_set(key: str, value: dict | list) -> None:
         conn.close()
 
 
-def _api_get(endpoint: str, params: dict) -> list:
-    cache_key = f"{endpoint}:{json.dumps(params, sort_keys=True)}"
+def _api_get(endpoint: str, params: dict, base_url: str = API_URL) -> list:
+    """Appel api-sports mis en cache.
+
+    `base_url` est paramétrable parce que les six produits api-sports sont six
+    HÔTES distincts derrière la MÊME clé. La clé de cache le porte : sans lui,
+    `games:{"league":1,...}` du baseball et du football américain se répondraient
+    l'un pour l'autre.
+    """
+    cache_key = f"{base_url}|{endpoint}:{json.dumps(params, sort_keys=True)}"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached
 
     resp = requests.get(
-        f"{API_URL}/{endpoint}",
+        f"{base_url}/{endpoint}",
         params=params,
         headers={"x-apisports-key": _api_key()},
         timeout=TIMEOUT,

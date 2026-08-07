@@ -248,36 +248,69 @@ def test_la_maturite_reste_derivee_mecaniquement():
 
 
 # ══ La capacité de fraîcheur est MESURÉE, jamais déclarée ═══════════════════
-def test_la_capacite_de_fraicheur_suit_la_chaine_de_providers():
+#: Une compétition par sport modélisé, avec l'identifiant canonique que les
+#: modèles utilisent réellement.
+_COMPETITIONS_PAR_SPORT = (
+    ("competition:football:fra:ligue1", "football"),
+    ("competition:basketball:usa:nba", "basketball"),
+    ("competition:baseball:usa:mlb", "baseball"),
+    ("competition:american_football:usa:nfl", "american_football"),
+    ("competition:hockey:usa:nhl", "hockey"),
+    ("competition:volleyball:ita:serie_a1", "volleyball"),
+    ("competition:tennis:atp:tour", "tennis"),
+)
+def test_la_capacite_de_fraicheur_suit_ce_que_la_chaine_sait_servir():
     """`measurable_live_freshness` est un critère REQUIS vers SUPPORTED.
 
-    Il était ÉCRIT en littéral dans chaque évaluateur : `FRESHNESS_MEASURABLE`
-    pour douze modèles, `FRESHNESS_NOT_MEASURABLE` pour deux. Sondé,
-    `gateway.data_freshness()` rendait `None` pour le basket, le baseball, le
-    football américain, le hockey et le volley — la Gateway n'a de chaîne de
-    providers que pour le football. Cinq modèles déclaraient donc PASS sur un
-    critère que leur chemin de décision ne peut pas honorer, et n'attendaient
-    plus que la CLV pour être dits SUPPORTED — c'est-à-dire misables.
+    Il était ÉCRIT en littéral dans chaque évaluateur : cinq modèles déclaraient
+    PASS sur un critère que leur chemin de décision ne peut pas honorer, et
+    n'attendaient plus que la CLV pour être dits SUPPORTED — c'est-à-dire misables.
+
+    Deux formulations plus permissives ont été essayées et rejetées, chacune
+    recréant le faux PASS :
+
+    - la présence du sport dans `FALLBACK_ORDER` : brancher les cinq produits
+      api-sports y aurait fait entrer cinq sports dont le plan gratuit refuse
+      justement la saison en cours ;
+    - la couverture au registre : le dataset tennis embarqué y figure en FULL
+      pour la saison en cours, et il est bien réel — mais il n'est pas un
+      provider de la Gateway, et la chaîne ne peut rien horodater avec lui.
+
+    La question exacte est : la chaîne saurait-elle SERVIR cette donnée
+    aujourd'hui ?
     """
     from src.agents.quant.betting_engine.live_coverage import live_freshness_capability
     from src.agents.quant.betting_engine.maturity import (
         FRESHNESS_MEASURABLE,
         FRESHNESS_NOT_MEASURABLE,
     )
-    from src.agents.quant.gateway.core.provider_registry import FALLBACK_ORDER
+    from src.agents.quant.gateway.core.fallback_chain import capable_providers
+    from src.agents.quant.gateway.gateway import current_season
 
-    for competition, sport in [
-        ("competition:football:fra:ligue1", "football"),
-        ("competition:basketball:usa:nba", "basketball"),
-        ("competition:baseball:usa:mlb", "baseball"),
-        ("competition:american_football:usa:nfl", "american_football"),
-        ("competition:hockey:usa:nhl", "hockey"),
-        ("competition:volleyball:ita:serie_a1", "volleyball"),
-        ("competition:tennis:atp:tour", "tennis"),
-    ]:
-        attendu = (FRESHNESS_MEASURABLE if sport in FALLBACK_ORDER
-                   else FRESHNESS_NOT_MEASURABLE)
+    for competition, sport in _COMPETITIONS_PAR_SPORT:
+        servants = capable_providers(sport, competition, current_season(), "RESULTS")
+        attendu = FRESHNESS_MEASURABLE if servants else FRESHNESS_NOT_MEASURABLE
         assert live_freshness_capability(competition) == attendu, sport
+
+
+def test_un_dataset_embarque_ne_vaut_pas_une_fraicheur_mesurable():
+    """Le cas qui a fait tomber la version précédente. Le corpus tennis est
+    couvert FULL à la saison en cours par empreinte de fichier — c'est vrai, et
+    ça ne rend pas la fraîcheur mesurable pour autant : aucun provider de la
+    Gateway ne sert ce sport, donc rien n'horodate la donnée au point de
+    décision. Les deux grandeurs restent distinctes (récence de corpus vs
+    fraîcheur live), et c'est exactement le partage à ne pas perdre."""
+    from src.agents.quant.betting_engine.live_coverage import live_freshness_capability
+    from src.agents.quant.betting_engine.maturity import FRESHNESS_NOT_MEASURABLE
+    from src.agents.quant.gateway.gateway import current_season
+    from src.agents.quant.gateway.registries.provider_coverage_registry import usable_providers
+
+    tour = "competition:tennis:atp:tour"
+
+    # Une source EST déclarée pour la saison en cours…
+    assert usable_providers(tour, current_season(), "RESULTS")
+    # …et la fraîcheur live reste pourtant non mesurable.
+    assert live_freshness_capability(tour) == FRESHNESS_NOT_MEASURABLE
 
 
 def test_aucun_evaluateur_ne_code_en_dur_sa_capacite_de_fraicheur():
@@ -317,3 +350,145 @@ def test_les_modeles_sans_provider_portent_le_bloqueur_de_fraicheur():
     assert critere.required
     assert critere.verdict is not Verdict.PASS
     assert decision.status == "EXPERIMENTAL"
+
+
+# ══ La Gateway reflète les capacités RÉELLES du provider ════════════════════
+def test_le_provider_declare_les_six_produits_api_sports():
+    """`supported_sports` valait `["football"]`. Sondée, la MÊME clé répond
+    HTTP 200 sur les six produits, chacun avec son quota propre : la limite était
+    dans le code, pas dans le credential. Le module d'acquisition l'avait déjà
+    constaté de son côté — la même limitation vivait à deux endroits et n'avait
+    été levée qu'à un seul."""
+    from src.agents.quant.gateway.providers.api_sports_provider import ApiSportsProvider
+
+    provider = ApiSportsProvider()
+
+    assert set(provider.supported_sports) == {
+        "football", "basketball", "baseball", "american_football",
+        "hockey", "volleyball"}
+    for sport in provider.supported_sports:
+        assert provider.capabilities(sport).fixtures, sport
+    # Le classement n'a été sondé qu'en football : ne pas l'annoncer ailleurs.
+    assert provider.capabilities("football").standings
+    assert not provider.capabilities("hockey").standings
+    # Un sport inconnu ne lève pas, il ne promet rien.
+    assert not provider.capabilities("curling").fixtures
+
+
+def test_la_saison_est_traduite_au_format_du_produit():
+    """Le basket refuse `2024` et veut `2024-2025`. Sans cette conversion, une
+    demande légitime revient vide — et une réponse vide se lit « pas de données »
+    alors que c'est la question qui était mal posée."""
+    from src.agents.quant.gateway.providers.api_sports_provider import saison_provider
+
+    assert saison_provider("basketball", "2024") == "2024-2025"
+    assert saison_provider("basketball", "2024-2025") == "2024-2025"
+    assert saison_provider("hockey", "2024") == "2024"
+    assert saison_provider("football", "2024") == "2024"
+
+
+def test_le_plan_gratuit_borne_les_six_produits_a_la_meme_saison():
+    """La borne réelle n'est pas le sport, c'est la SAISON. Mesuré le 2026-08-07 :
+    2024 répond pour les six produits, 2025+ renvoie HTTP 200, zéro rencontre et
+    « Free plans do not have access to this season ». Un refus de plan ressemble à
+    une absence de données — d'où l'intérêt de le borner explicitement."""
+    from src.agents.quant.gateway.providers.api_sports_provider import ApiSportsProvider
+
+    provider = ApiSportsProvider()
+    for sport in provider.supported_sports:
+        assert provider.is_available(sport, "2024"), sport
+        assert not provider.is_available(sport, "2025"), sport
+    # Le format composé du basket ne doit pas faire rater la borne.
+    assert provider.is_available("basketball", "2024-2025")
+    assert not provider.is_available("basketball", "2025-2026")
+
+
+def test_chaque_sport_du_moteur_a_son_module_gateway():
+    """Un modèle enregistré côté moteur sans module côté Gateway ne peut jamais
+    obtenir de fraîcheur : le sport est « non installé » et l'échec se lit
+    « aucune donnée »."""
+    from src.agents.quant.betting_engine.sports.registry import SPORT_MODULES as MOTEUR
+    from src.agents.quant.gateway.sports.registry import SPORT_MODULES as PASSERELLE
+
+    # Le tennis n'a pas de provider Gateway (dataset embarqué) — il est le seul.
+    manquants = set(MOTEUR) - set(PASSERELLE) - {"tennis"}
+
+    assert not manquants, f"sports sans module Gateway : {sorted(manquants)}"
+
+
+def test_les_espaces_d_identites_sont_distincts_par_produit():
+    """api-sports numérote ses équipes séparément par produit : l'équipe 132 du
+    basket n'a rien à voir avec l'équipe 132 du hockey. Les confondre
+    rattacherait des rencontres à la mauvaise franchise, en silence."""
+    from src.agents.quant.betting_engine.sports.registry import all_known_entities
+    from src.agents.quant.gateway.sports.pairwise.normalizer import NAMESPACES
+
+    assert len(set(NAMESPACES.values())) == len(NAMESPACES)
+
+    declares = {ns for entite in all_known_entities()
+                for ns in getattr(entite, "identities", {})}
+    for sport, namespace in NAMESPACES.items():
+        assert namespace in declares, f"{sport} : espace {namespace} absent du référentiel"
+
+
+def test_le_normalizer_lit_les_formes_reelles_des_cinq_produits():
+    """Chaque particularité encodée ici a coûté des rencontres perdues avant
+    d'être vue : le produit american-football imbrique tout sous `game`,
+    `Final/OT` arrive avec `short=None`, le basket range son score sous
+    `{"total": …}`. Les payloads ci-dessous reproduisent ces formes."""
+    from src.agents.quant.gateway.core.identity_resolver import (
+        CanonicalEntity,
+        IdentityResolver,
+    )
+    from src.agents.quant.gateway.core.provider_protocol import RawProviderResponse
+    from src.agents.quant.gateway.sports.pairwise.normalizer import (
+        ApiSportsPairwiseNormalizer,
+    )
+
+    resolveur = IdentityResolver([
+        CanonicalEntity("team:basketball:usa:a", "A", [], {"api_basketball": "1"}),
+        CanonicalEntity("team:basketball:usa:b", "B", [], {"api_basketball": "2"}),
+        CanonicalEntity("team:american_football:nfl:a", "A", [], {"api_american_football": "1"}),
+        CanonicalEntity("team:american_football:nfl:b", "B", [], {"api_american_football": "2"}),
+    ])
+    equipes = {"home": {"id": 1}, "away": {"id": 2}}
+
+    # Basket : score imbriqué sous `total`, date ISO à plat.
+    basket = [{"id": 9, "date": "2024-03-01T20:00:00+00:00",
+               "status": {"short": "FT"}, "teams": equipes,
+               "scores": {"home": {"total": 110}, "away": {"total": 98}}}]
+    # Football américain : tout sous `game`, statut long uniquement.
+    nfl = [{"game": {"id": 7, "date": {"timestamp": 1709323200},
+                     "status": {"short": None, "long": "Final/OT"}},
+            "teams": equipes, "scores": {"home": {"total": 24}, "away": {"total": 20}}}]
+
+    for sport, brut, attendu in (("basketball", basket, 110), ("american_football", nfl, 24)):
+        charge = ApiSportsPairwiseNormalizer(sport).normalize_fixtures(
+            RawProviderResponse(payload={"fixtures": brut}, provider="api_sports",
+                                fetched_at=_DECISION, request_metadata={}),
+            resolveur, "competition:x:y:z", "2024")
+        assert len(charge.matches) == 1, sport
+        match = charge.matches[0]
+        assert match.status == "FINISHED" and match.goals_home == attendu, sport
+        assert match.kickoff is not None
+
+
+def test_une_equipe_inconnue_est_ecartee_jamais_devinee():
+    """Un rattachement par proximité de nom rattacherait une rencontre à la
+    mauvaise franchise, en silence."""
+    from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
+    from src.agents.quant.gateway.core.provider_protocol import RawProviderResponse
+    from src.agents.quant.gateway.sports.pairwise.normalizer import (
+        ApiSportsPairwiseNormalizer,
+    )
+
+    charge = ApiSportsPairwiseNormalizer("hockey").normalize_fixtures(
+        RawProviderResponse(
+            payload={"fixtures": [{"id": 1, "date": "2024-03-01T20:00:00+00:00",
+                                   "status": {"short": "FT"},
+                                   "teams": {"home": {"id": 999}, "away": {"id": 998}},
+                                   "scores": {"home": 3, "away": 2}}]},
+            provider="api_sports", fetched_at=_DECISION, request_metadata={}),
+        IdentityResolver([]), "competition:hockey:usa:nhl", "2024")
+
+    assert charge.matches == []

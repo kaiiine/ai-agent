@@ -17,6 +17,8 @@ Invariants durs :
 
 from __future__ import annotations
 
+import functools
+
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from enum import Enum
@@ -122,6 +124,35 @@ def _season_of(dt: datetime) -> str:
     return str(dt.year if dt.month >= 7 else dt.year - 1)
 
 
+@functools.lru_cache(maxsize=1)
+def _referentiel_multisport():
+    """Le référentiel des SEPT sports, construit une fois.
+
+    Import tardif : `sports.registry` charge les sept modules sportifs, et ce
+    module est lui-même dans leur chaîne d'import.
+    """
+    from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
+
+    from .sports.registry import all_known_entities
+
+    return IdentityResolver(all_known_entities())
+
+
+def _appeler_freshness(sports_gateway, competition_id: str, season: str):
+    """Interroge la fraîcheur en fournissant le référentiel complet.
+
+    Une gateway de test peut exposer une signature réduite — le `hasattr` en
+    amont accepte tout objet portant `data_freshness`. On retombe donc sur
+    l'appel simple plutôt que d'imposer un paramètre à des doublures qui n'ont
+    aucune raison de le connaître.
+    """
+    try:
+        return sports_gateway.data_freshness(
+            competition_id, season, resolver=_referentiel_multisport())
+    except TypeError:
+        return sports_gateway.data_freshness(competition_id, season)
+
+
 def evaluate_live_event(
     raw_event: RawBookmakerEvent,
     *,
@@ -212,7 +243,12 @@ def evaluate_live_event(
                           f"données trop anciennes ({staleness} > {staleness_tolerance})",
                           canonical_event=event, feature_set=features)
     elif hasattr(sports_gateway, "data_freshness"):
-        info = sports_gateway.data_freshness(mapping.competition_id, season)
+        # Le référentiel des SEPT sports est passé explicitement : celui de la
+        # Gateway ne contient que des équipes de football, si bien qu'un provider
+        # répondant parfaitement pour le hockey voyait chacune de ses rencontres
+        # écartée faute d'identité, et rendait une enveloppe vide. Le manque se
+        # lisait « aucune donnée » là où c'était le référentiel qui manquait.
+        info = _appeler_freshness(sports_gateway, mapping.competition_id, season)
         if info is None or info.effective_time is None:
             # Aucun horodatage exploitable : NON MESURABLE, et rien de fabriqué.
             freshness_notes.append(_FRESHNESS_DEGRADED)

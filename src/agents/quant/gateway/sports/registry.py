@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from src.agents.quant.gateway.sports.football.module import FootballModule
+from src.agents.quant.gateway.sports.pairwise.module import PAIRWISE_MODULES
 
 
 class UnsupportedSportError(Exception):
@@ -67,9 +68,13 @@ class SportModule(Protocol):
         ...
 
 
-# Registre statique, peuplé sport par sport. Football installé (C1).
+# Registre statique. Le football a son module dédié (schéma buts + calculateurs
+# dérivés) ; les cinq sports à deux équipes servis par api-sports partagent un
+# module générique — leur seule différence, l'espace d'identités du produit, vit
+# dans le normalizer.
 SPORT_MODULES: dict[str, SportModule] = {
     "football": FootballModule(),
+    **PAIRWISE_MODULES,
 }
 
 

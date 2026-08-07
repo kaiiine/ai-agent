@@ -43,4 +43,11 @@ REGISTRY: dict[str, ProviderEntry] = {
 # uniquement si un tier payant lève cette limite.
 FALLBACK_ORDER: dict[str, list[str]] = {
     "football": ["football_data_org", "api_sports"],
+    # Les cinq autres produits api-sports n'ont pas d'alternative : la même clé
+    # les sert tous, et aucun second fournisseur n'a été sondé pour eux.
+    "basketball": ["api_sports"],
+    "baseball": ["api_sports"],
+    "american_football": ["api_sports"],
+    "hockey": ["api_sports"],
+    "volleyball": ["api_sports"],
 }

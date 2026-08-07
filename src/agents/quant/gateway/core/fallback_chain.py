@@ -72,20 +72,27 @@ def _capability_for(data_type: str) -> str:
     return "standings" if data_type == "STANDINGS" else "fixtures"
 
 
-def _eligible_providers(sport: str, competition_id: str, season: str, data_type: str) -> list[str]:
-    """Candidats §8.1, ordonnés §8.2.
+def capable_providers(sport: str, competition_id: str, season: str, data_type: str) -> list[str]:
+    """Qui POURRAIT servir cette donnée — élimination §8.1, hors quota.
 
-    §8.1 (élimination) : couverture FULL/PARTIAL vérifiée (GW-FR-005) · compétition
-    active · le SportModule déclare un normalizer pour ce provider · capability du
-    provider · quota.
-    §8.2 (départage) : FULL avant PARTIAL · data_quality décroissant · priorité
-    déclarée (FALLBACK_ORDER) · query_cost croissant.
+    Le quota est un état de processus : l'inclure rendrait la réponse dépendante
+    du nombre d'appels déjà passés. Or cette question est aussi posée hors
+    exécution, par le rapport de maturité, qui doit rester déterministe.
+
+    Une couverture inscrite au registre ne suffit pas. Le dataset tennis embarqué
+    y figure en FULL pour la saison en cours, et il est bien réel — mais il n'est
+    pas un provider de la Gateway et aucun module sportif ne déclare de normalizer
+    pour lui. Le lire comme « une source existe » ferait annoncer une fraîcheur
+    que la chaîne ne sait pas produire.
     """
     competition = get_competition(competition_id)
     if competition is None or competition.status != "active":
         return []
 
-    module_normalizers = get_sport_module(sport).normalizers()
+    try:
+        module_normalizers = get_sport_module(sport).normalizers()
+    except Exception:      # sport non installé : aucun candidat, jamais une erreur
+        return []
     capability_attr = _capability_for(data_type)
 
     candidates: list[str] = []
@@ -97,9 +104,19 @@ def _eligible_providers(sport: str, competition_id: str, season: str, data_type:
             continue
         if not getattr(entry.provider.capabilities(sport), capability_attr, False):
             continue
-        if not _has_quota(provider_name):
-            continue
         candidates.append(provider_name)
+    return candidates
+
+
+def _eligible_providers(sport: str, competition_id: str, season: str, data_type: str) -> list[str]:
+    """Candidats §8.1, ordonnés §8.2.
+
+    §8.1 (élimination) : `capable_providers` · quota.
+    §8.2 (départage) : FULL avant PARTIAL · data_quality décroissant · priorité
+    déclarée (FALLBACK_ORDER) · query_cost croissant.
+    """
+    candidates = [name for name in capable_providers(sport, competition_id, season, data_type)
+                  if _has_quota(name)]
 
     order = FALLBACK_ORDER.get(sport, [])
 

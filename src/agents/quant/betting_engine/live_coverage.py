@@ -53,17 +53,38 @@ def live_freshness_capability(competition_id: str) -> str:
     déclaraient PASS sur un critère que leur chemin de décision ne peut pas
     honorer, et n'attendaient plus que la CLV pour être dits SUPPORTED.
 
-    La capacité se lit maintenant là où elle existe : un sport dont aucun
-    provider ne sert la donnée ne peut pas horodater sa fraîcheur au point de
-    décision. Lecture LOCALE et déterministe — le rapport de readiness ne doit
-    dépendre d'aucun appel réseau.
+    La capacité se lit maintenant là où elle existe : la COUVERTURE RÉELLE d'un
+    provider pour cette compétition, à la SAISON EN COURS. C'est bien la saison
+    en cours qui compte — la fraîcheur se mesure au point de décision, c'est-à-dire
+    aujourd'hui. Un provider qui ne sert que des saisons passées alimente
+    l'entraînement, jamais l'horodatage d'une décision.
+
+    Deux versions trop permissives ont précédé celle-ci, et chacune aurait
+    recréé le faux PASS qu'elle prétendait corriger :
+
+    - lire la présence du sport dans `FALLBACK_ORDER` : brancher les cinq
+      produits api-sports y aurait fait entrer cinq sports dont le plan gratuit
+      refuse justement la saison en cours ;
+    - lire la couverture au registre : le dataset tennis embarqué y figure en
+      FULL pour la saison en cours, et il est bien réel — mais il n'est pas un
+      provider de la Gateway, et la chaîne ne peut donc rien horodater avec lui.
+
+    La question exacte est : la chaîne de fallback saurait-elle SERVIR cette
+    donnée aujourd'hui ? Elle est posée à la chaîne elle-même, qui porte déjà sa
+    règle d'éligibilité — plutôt que réécrite ici, où elle divergerait.
+
+    Lecture LOCALE et déterministe — le rapport de readiness ne doit dépendre
+    d'aucun appel réseau.
     """
     from src.agents.quant.betting_engine.maturity import (
         FRESHNESS_MEASURABLE,
         FRESHNESS_NOT_MEASURABLE,
     )
-    from src.agents.quant.gateway.core.provider_registry import FALLBACK_ORDER
+    from src.agents.quant.gateway.core.fallback_chain import capable_providers
+    from src.agents.quant.gateway.gateway import current_season
 
     sport = _sport_of(competition_id)
-    return (FRESHNESS_MEASURABLE if sport in FALLBACK_ORDER
-            else FRESHNESS_NOT_MEASURABLE)
+    if sport is None:
+        return FRESHNESS_NOT_MEASURABLE
+    servants = capable_providers(sport, competition_id, current_season(), "RESULTS")
+    return FRESHNESS_MEASURABLE if servants else FRESHNESS_NOT_MEASURABLE

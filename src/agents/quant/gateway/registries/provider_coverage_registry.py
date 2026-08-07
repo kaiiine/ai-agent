@@ -27,7 +27,7 @@ _VERIFICATION_METHODS = {"live_call", "provider_docs", "manual", "fixture_checks
 # ajoutée, retirée ou corrigée : c'est ce numéro qui déclenche la ré-application
 # sur une base déjà initialisée. Sans lui, une correction de couverture ne serait
 # jamais reprise sur les installations existantes.
-BASELINE_VERSION = 3
+BASELINE_VERSION = 4
 
 
 class CoverageStatus(str, Enum):
@@ -210,12 +210,25 @@ _FDO_DOMESTIQUES = (
 )
 
 
+#: (compétition canonique, identifiant de ligue api-sports, rencontres 2024
+#: réellement comptées à la sonde). Les identifiants de ligue sont ceux qui ont
+#: servi à l'acquisition historique — ce sont donc des valeurs éprouvées.
+_API_SPORTS_PAIRWISE = (
+    ("competition:basketball:usa:nba", "12", 1387),
+    ("competition:baseball:usa:mlb", "1", 2946),
+    ("competition:american_football:usa:nfl", "1", 335),
+    ("competition:hockey:usa:nhl", "57", 1503),
+    ("competition:volleyball:ita:serie_a1", "89", 213),
+)
+
+
 def known_coverage() -> list[ProviderCompetitionCoverage]:
     """Baseline de couverture — reflète des vérifications live_call réelles (voir
     coverage_verification pour re-vérifier). Honnête sur ce qui N'A PAS été
     vérifié : ces combos restent UNVERIFIED, donc inutilisables."""
     verified = datetime(2026, 7, 25, tzinfo=timezone.utc)
     verified_0805 = datetime(2026, 8, 5, tzinfo=timezone.utc)
+    verified_0807 = datetime(2026, 8, 7, tzinfo=timezone.utc)
     entries: list[ProviderCompetitionCoverage] = []
 
     def add(provider, comp, prov_id, season, data_types, status, method, notes=None,
@@ -268,6 +281,27 @@ def known_coverage() -> list[ProviderCompetitionCoverage]:
     add("api_sports", _L1, "61", "2024", ["FIXTURES", "RESULTS", "STANDINGS"], CoverageStatus.FULL, "live_call")
     add("api_sports", _L1, "61", "2025", ["FIXTURES", "RESULTS", "STANDINGS"],
         CoverageStatus.ABSENT, "live_call", notes="tier gratuit bloque 2025+")
+
+    # ── API-Sports, les cinq autres produits (sondés le 2026-08-07) ─────────────
+    # La MÊME clé répond HTTP 200 sur les six produits : `supported_sports` valait
+    # `["football"]` par décision de code, pas par limite du credential.
+    #
+    # La borne réelle est la SAISON, identique à celle du football : le plan
+    # gratuit sert 2022-2024 et refuse au-delà avec un message explicite (« Free
+    # plans do not have access to this season »). Un refus de plan renvoie
+    # HTTP 200 et zéro rencontre — il ressemble à une absence de données, d'où
+    # l'intérêt de l'inscrire comme ABSENT plutôt que de le laisser deviner.
+    for comp, prov_id, n_2024 in _API_SPORTS_PAIRWISE:
+        add("api_sports", comp, prov_id, "2024", ["FIXTURES", "RESULTS"],
+            CoverageStatus.FULL, "live_call",
+            notes=f"sondé 2026-08-07 : saison 2024 en HTTP 200, {n_2024} rencontres",
+            at=verified_0807)
+        for saison in ("2025", "2026"):
+            add("api_sports", comp, prov_id, saison, ["FIXTURES", "RESULTS"],
+                CoverageStatus.ABSENT, "live_call",
+                notes="sondé 2026-08-07 : HTTP 200, 0 rencontre — "
+                      "« Free plans do not have access to this season »",
+                at=verified_0807)
 
     return entries
 
