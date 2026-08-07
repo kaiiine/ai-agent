@@ -20,6 +20,7 @@ from threading import Lock
 from typing import Any, Callable, Sequence
 
 from .features import InternetFeature, make
+from .relevance import filter_relevant
 from .sources import confidence_for, official_domains, sort_by_authority
 
 #: Blocages pour lesquels une recherche externe a une chance d'expliquer quelque
@@ -191,9 +192,25 @@ def enrich_review_candidates(
     sortie: dict[str, tuple[InternetFeature, ...]] = {}
     for c, plans in par_evenement:
         features = _extraire(plans, brut, sport=c.sport, sujet=_libelle(c))
-        if features:
-            sortie[c.event_id] = features
+        # Nommer un participant ne suffit pas : « Borges in run to Phoenix
+        # Challenger last week » est vrai, officiel, et sans rapport avec le
+        # match de demain. La pertinence ÉVÉNEMENTIELLE est jugée ici, où l'on
+        # connaît le coup d'envoi et la compétition.
+        retenues, ecartees = filter_relevant(
+            features, kickoff=c.scheduled_at,
+            participants=_participants(c),
+            competition_label=_libelle_competition(c.competition_id))
+        if retenues:
+            sortie[c.event_id] = retenues
     return sortie
+
+
+def _participants(candidate: Any) -> list[str]:
+    """Noms canoniques des participants, pour reconnaître le sujet d'un fait."""
+    from ..conversation.renderer import _names
+
+    return [_names().get(pid, pid.rsplit(":", 1)[-1])
+            for pid in candidate.participant_ids]
 
 
 def _libelle_competition(competition_id: str) -> str:
