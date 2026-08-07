@@ -16,6 +16,11 @@ from decimal import Decimal
 ZERO = Decimal(0)
 ONE = Decimal(1)
 
+#: Granularité d'AFFICHAGE d'un montant en euros. Ne fixe aucune politique
+#: d'arrondi de décision : elle sert aux montants dérivés présentés à
+#: l'utilisateur, pour qu'ils aient une seule définition dans tout le produit.
+CENT = Decimal("0.01")
+
 
 def to_decimal(value, *, field: str = "montant") -> Decimal:
     """Convertit vers `Decimal` en refusant explicitement `float` (et `bool`)."""

@@ -902,3 +902,62 @@ def test_tous_les_imports_du_produit_pointent_vers_un_module_existant():
                 casses.append(f"{fichier.relative_to(racine)}:{noeud.lineno} -> {cible}")
 
     assert not casses, "imports pointant vers un module inexistant :\n" + "\n".join(casses)
+
+
+# ══ §7 — Le renderer PRÉSENTE, il ne calcule pas ════════════════════════════
+def test_le_renderer_ne_derive_aucun_montant_lui_meme():
+    """Tout chiffre affiché vient d'un objet du domaine.
+
+    Le renderer dérivait le retour brut et le profit net d'une ligne
+    (`stake × total_odds`). Deux montants en euros, définis dans la couche de
+    présentation : au premier arrondi divergent, l'utilisateur lit un gain que
+    l'Advisor n'a pas calculé. Ils vivent désormais sur `PortfolioLine`.
+
+    Le test tolère l'arithmétique de PRÉSENTATION — une conversion en pourcent,
+    un décompte d'éléments — et interdit celle qui porte sur des montants.
+    """
+    import ast
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parent.parent
+              / "src" / "agents" / "quant" / "conversation" / "renderer.py")
+    lignes = source.read_text().splitlines()
+    monetaires = {"stake", "total_odds", "odds", "bankroll", "expected_value",
+                  "worst_case_ev", "fair_probability", "probability_low",
+                  "edge_mean", "edge_low", "implied_probability"}
+
+    # Une concaténation de listes ou de f-strings n'est pas un calcul, même
+    # lorsqu'elle contient des montants : c'est de l'assemblage de texte.
+    assemblage = (ast.List, ast.ListComp, ast.JoinedStr, ast.Constant)
+
+    coupables = []
+    for noeud in ast.walk(ast.parse(source.read_text())):
+        if not isinstance(noeud, ast.BinOp):
+            continue
+        if not isinstance(noeud.op, (ast.Mult, ast.Div, ast.Sub, ast.Add, ast.Pow)):
+            continue
+        if isinstance(noeud.left, assemblage) or isinstance(noeud.right, assemblage):
+            continue
+        noms = {n.attr for cote in (noeud.left, noeud.right)
+                for n in ast.walk(cote) if isinstance(n, ast.Attribute)}
+        if noms & monetaires:
+            coupables.append(f"L{noeud.lineno}: {lignes[noeud.lineno - 1].strip()}")
+
+    assert not coupables, "le renderer recalcule un montant :\n" + "\n".join(coupables)
+
+
+def test_le_retour_brut_et_le_profit_net_ont_une_seule_definition():
+    """« Retour brut » et « profit net » sont deux nombres distincts : les
+    confondre présente une mise de 10 € à cote 1,5 comme un gain de 15 €."""
+    from src.agents.quant.advisor.domain.enums import LineType
+    from src.agents.quant.advisor.domain.portfolios import BetLeg, PortfolioLine
+
+    ligne = PortfolioLine(
+        "l1", LineType.SINGLE, "winamax",
+        (BetLeg("c1", "e1", "m1", "home", "winamax", Decimal("1.5")),),
+        Decimal("10"), Decimal("1.5"), Decimal("0.7"),
+        Decimal("0.05"), Decimal("0.01"), None)
+
+    assert ligne.gross_return == Decimal("15.00")
+    assert ligne.net_profit == Decimal("5.00")
+    assert ligne.gross_return - ligne.stake == ligne.net_profit

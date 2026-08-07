@@ -462,10 +462,9 @@ def _render_portefeuille(pf: Any, bankroll: Decimal | None) -> list[str]:
         genre = "COMBINÉ" if line.line_type is LineType.COMBO else "SIMPLE"
         legs = " + ".join(
             f"{leg.selection} @ {leg.odds} ({leg.bookmaker})" for leg in line.legs)
-        # Retour BRUT et profit NET sont deux nombres distincts : les confondre
-        # présente une mise de 10 € à cote 1,5 comme un gain de 15 €.
-        retour_brut = (line.stake * line.total_odds).quantize(_CENT)
-        profit_net = (retour_brut - line.stake).quantize(_CENT)
+        # Les deux montants sont LUS sur la ligne du domaine, pas dérivés ici :
+        # un chiffre affiché à l'utilisateur ne doit avoir qu'une définition.
+        retour_brut, profit_net = line.gross_return, line.net_profit
         lignes += [
             f"- **{genre}** — {legs}",
             f"  - cote totale {line.total_odds} · probabilité estimée "

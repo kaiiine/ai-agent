@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from .enums import LineType
-from .money import ONE, ZERO, require_decimal
+from .money import CENT, ONE, ZERO, require_decimal
 
 
 @dataclass(frozen=True)
@@ -58,6 +58,21 @@ class PortfolioLine:
         # Tous les legs d'un combo partagent le même bookmaker (ADV-FR-017).
         if len({leg.bookmaker for leg in self.legs}) != 1:
             raise ValueError("tous les legs d'une ligne partagent un seul bookmaker (ADV-FR-017)")
+
+    # Retour BRUT et profit NET sont deux nombres distincts : les confondre
+    # présente une mise de 10 € à cote 1,5 comme un gain de 15 €. Ils vivent ici
+    # et non dans le renderer, qui les dérivait lui-même — un montant affiché à
+    # l'utilisateur ne doit avoir qu'une seule définition, et elle appartient au
+    # domaine qui a décidé la mise.
+    @property
+    def gross_return(self) -> Decimal:
+        """Ce que le bookmaker verse si la ligne passe, mise comprise."""
+        return (self.stake * self.total_odds).quantize(CENT)
+
+    @property
+    def net_profit(self) -> Decimal:
+        """Le gain, mise déduite."""
+        return (self.gross_return - self.stake).quantize(CENT)
 
 
 @dataclass(frozen=True)
