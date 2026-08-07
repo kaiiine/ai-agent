@@ -53,8 +53,8 @@ _FRESHNESS_UNAVAILABLE = (
 )
 _FRESHNESS_DEGRADED = (
     "freshness_degraded: la gateway expose la fraîcheur mais la donnée servie n'a "
-    "pas d'horodatage fiable (repli sur fetched_at) ; staleness non mesurable — "
-    "aucune fraîcheur favorable inventée"
+    "pas d'horodatage fiable (repli sur fetched_at) ; la mesure est propagée avec "
+    "cette réserve — aucune fraîcheur favorable inventée"
 )
 def _model_schema(module: SportModule) -> MarketSchema:
     """Schéma de marché DÉCLARÉ par le modèle du sport (défaut football 1X2). C'est
@@ -213,9 +213,17 @@ def evaluate_live_event(
                           canonical_event=event, feature_set=features)
     elif hasattr(sports_gateway, "data_freshness"):
         info = sports_gateway.data_freshness(mapping.competition_id, season)
-        if info is None or info.degraded or info.effective_time is None:
-            freshness_notes.append(_FRESHNESS_DEGRADED)      # capacité présente, mesure non fiable
+        if info is None or info.effective_time is None:
+            # Aucun horodatage exploitable : NON MESURABLE, et rien de fabriqué.
+            freshness_notes.append(_FRESHNESS_DEGRADED)
         else:
+            # `degraded` dit que la BASE est plus faible (`fetched_at` au lieu de
+            # `published_time`), pas que la mesure est absente. Les confondre
+            # transformait une fraîcheur mesurée à 0,0001 — donc une donnée
+            # manifestement périmée — en « inconnue », c'est-à-dire en un doute
+            # plus favorable que la mesure elle-même.
+            if info.degraded:
+                freshness_notes.append(_FRESHNESS_DEGRADED)
             measured_freshness = info.freshness_score        # MESURÉ par la Gateway (0..1)
             staleness = decision_time - info.effective_time
             if staleness > staleness_tolerance:

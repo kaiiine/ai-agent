@@ -13,6 +13,7 @@ from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
 from src.agents.quant.gateway.core.identity_data import TEAMS
 from src.agents.quant.gateway.core.fallback_chain import fetch_league_data
 from src.agents.quant.gateway.core.errors import NoDataAvailableError
+from src.agents.quant.gateway.sports.registry import UnsupportedSportError
 from src.agents.quant.gateway.sports.football import derived
 
 # Le résolveur ne contient que des ÉQUIPES : les compétitions vivent dans
@@ -112,6 +113,13 @@ class DataFreshness:
     stale: bool
 
 
+def _sport_of(competition_canonical_id: str) -> str | None:
+    """`competition:baseball:usa:mlb` -> `baseball`. `None` si l'identifiant
+    n'a pas la forme canonique — on ne devine pas un sport."""
+    parties = (competition_canonical_id or "").split(":")
+    return parties[1] if len(parties) >= 2 and parties[0] == "competition" else None
+
+
 def data_freshness(
     league_canonical_id: str, season: str | None = None, data_type: str = "RESULTS"
 ) -> DataFreshness | None:
@@ -121,12 +129,20 @@ def data_freshness(
     calcule `freshness_score` sur l'enveloppe) ; expose ses métadonnées sans les
     recalculer. `None` si aucune donnée disponible (jamais une fraîcheur fabriquée)."""
     season = season or current_season()
+    # Le sport vient de l'identifiant de compétition, jamais d'un défaut : coder
+    # « football » en dur faisait chercher des données de football pour une
+    # compétition de baseball, obtenir NoDataAvailableError, et rendre `None`.
+    # La fraîcheur devenait alors « inconnue » pour un motif faux — la Gateway ne
+    # couvre tout simplement pas encore ce sport.
+    sport = _sport_of(league_canonical_id)
+    if sport is None:
+        return None
     try:
         envelope = fetch_league_data(
-            sport="football", data_type=data_type,
+            sport=sport, data_type=data_type,
             league_canonical_id=league_canonical_id, season=season, resolver=_resolver,
         )
-    except NoDataAvailableError:
+    except (NoDataAvailableError, UnsupportedSportError):
         return None
     effective = getattr(envelope, envelope.freshness_basis, None)
     return DataFreshness(
