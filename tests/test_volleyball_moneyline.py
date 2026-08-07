@@ -38,7 +38,13 @@ def test_experimental_despite_strong_skill():
     assert m["beats_baseline"] is True and o.model_brier < 0.42   # skill fort (volley prévisible)
     blockers = {c.name for c in d.criteria if c.required and c.verdict.value != "PASS"}
     assert "min_sample_size" not in blockers
-    assert blockers == {"max_calibration_error", "positive_clv"}
+    # `measurable_live_freshness` est un bloqueur RÉEL : la Gateway n'a de chaîne
+    # de providers que pour le football, donc aucune fraîcheur ne peut être
+    # horodatée au point de décision pour ce sport. Ce test affirmait le
+    # contraire — il verrouillait un PASS que le chemin de décision ne pouvait
+    # pas honorer, et qui ne tenait qu'à une constante écrite dans l'évaluateur.
+    assert blockers == {"max_calibration_error", "positive_clv",
+                        "measurable_live_freshness"}
 
 
 def test_no_future_leakage():

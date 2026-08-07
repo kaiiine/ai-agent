@@ -37,8 +37,9 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 
+from src.agents.quant.betting_engine.live_coverage import live_freshness_capability
+from .competition import COMPETITION_IDS
 from src.agents.quant.betting_engine.maturity import (
-    FRESHNESS_NOT_MEASURABLE,
     MaturityObservations,
     ModelSupportDecision,
     evaluate_maturity,
@@ -207,7 +208,8 @@ def assess_tennis(tour: str) -> TennisAssessment:
         mean_data_quality=1.0,
         fold_brier_spread=round(fold_spread, 4) if fold_spread is not None else None,
         clv_status="NOT_YET_MEASURABLE", clv_mean=None,
-        live_freshness_status=FRESHNESS_NOT_MEASURABLE)
+        live_freshness_status=live_freshness_capability(
+            COMPETITION_IDS.get(tour.lower(), f"competition:tennis:{tour.lower()}:tour")))
     decision = evaluate_maturity(
         model_name=f"tennis_{tour.lower()}_moneyline",
         model_version=f"tennis.{tour.lower()}.elo.v0",

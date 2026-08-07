@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from .calibration import metrics
 from .calibration.walk_forward import WalkForwardRun, build_metrics, run_walk_forward
 from .clv import OddsObservation, clv_readiness
+from .live_coverage import live_freshness_capability
 from .maturity import (
     FRESHNESS_MEASURABLE,
     FRESHNESS_NOT_MEASURABLE,
@@ -108,11 +109,11 @@ def assess_default_one_x_two(odds_observations: Sequence[OddsObservation] = ()) 
         matches=matches, model=OneXTwoModel(),
         league_id=FL1_LEAGUE_ID, season=FL1_SEASON,
         odds_observations=odds_observations,
-        # La fraîcheur live est désormais CÂBLÉE (Gateway.data_freshness ->
-        # evaluate_live_event, score mesuré propagé) et testée : le chemin de
-        # décision expose une fraîcheur mesurée -> capacité MEASURABLE. Distinct de
-        # la CLV, qui reste NOT_YET_MEASURABLE faute de DONNÉES collectées.
-        live_freshness_status=FRESHNESS_MEASURABLE,
+        # MESURÉE, jamais déclarée : la capacité se lit sur la chaîne de providers
+        # de la Gateway. Écrite en littéral, elle affirmait un PASS que cinq sports
+        # ne pouvaient pas honorer. Distincte de la CLV, qui reste
+        # NOT_YET_MEASURABLE faute de DONNÉES collectées.
+        live_freshness_status=live_freshness_capability(FL1_LEAGUE_ID),
     )
 
 
@@ -131,7 +132,7 @@ def _assess_competition(loader, league_id, season, odds_observations) -> Maturit
         matches=matches, model=OneXTwoModel(),
         league_id=league_id, season=season,
         odds_observations=odds_observations,
-        live_freshness_status=FRESHNESS_MEASURABLE,
+        live_freshness_status=live_freshness_capability(league_id),
     )
 
 

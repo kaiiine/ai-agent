@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.agents.quant.betting_engine.calibration.experiment_registry import dataset_fingerprint
-from src.agents.quant.betting_engine.maturity import FRESHNESS_MEASURABLE
+from src.agents.quant.betting_engine.live_coverage import live_freshness_capability
 from src.agents.quant.betting_engine.sports.threeway_davidson import (
     Davidson3Params,
     ThreeWayAssessment,
@@ -51,13 +51,16 @@ def load_nhl_regulation(path: Path = _FIXTURE) -> tuple[list[ThreeWayGame], str]
     return games, dataset_fingerprint(raw)
 
 
-def assess_nhl(path: Path = _FIXTURE, *, odds_observations=()) -> ThreeWayAssessment:
+def assess_nhl(path: Path = _FIXTURE, *, odds_observations=(),
+               live_freshness_status: str | None = None) -> ThreeWayAssessment:
     games, _fp = load_nhl_regulation(path)
-    # La fraîcheur live est CÂBLÉE (live_model -> evaluate_live_event -> Gateway.data_freshness,
-    # prouvé par test_hockey_live) : capacité MEASURABLE. Distinct de la CLV, qui reste
-    # NOT_YET_MEASURABLE tant qu'aucune paire décision/clôture réelle n'est collectée.
-    # `odds_observations` (vide en réel) permet de PROUVER la mécanique de promotion avec
-    # un échantillon CLV explicitement SYNTHÉTIQUE (test), sans jamais fabriquer de réel.
+    # La capacité de fraîcheur est MESURÉE sur la chaîne de providers, jamais
+    # déclarée : la Gateway ne sert aucune donnée de hockey, donc NOT_MEASURABLE.
+    # Elle reste injectable pour PROUVER la mécanique de promotion, au même titre
+    # que `odds_observations` — comme pour la CLV, l'injection est explicitement
+    # synthétique et n'apparaît jamais sur le chemin réel.
+    if live_freshness_status is None:
+        live_freshness_status = live_freshness_capability(NHL_LEAGUE_ID)
     return assess_threeway(games, NHL_PARAMS, MODEL_NAME, MODEL_VERSION,
                            odds_observations=odds_observations,
-                           live_freshness_status=FRESHNESS_MEASURABLE)
+                           live_freshness_status=live_freshness_status)

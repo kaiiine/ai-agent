@@ -29,6 +29,7 @@ from pathlib import Path
 
 from src.agents.quant.betting_engine.calibration.experiment_registry import dataset_fingerprint
 from src.agents.quant.betting_engine.clv import clv_readiness
+from src.agents.quant.betting_engine.live_coverage import live_freshness_capability
 from src.agents.quant.betting_engine.maturity import (
     FRESHNESS_MEASURABLE,
     MaturityObservations,
@@ -195,9 +196,14 @@ class BasketballAssessment:
 
 
 def assess_nba(path: Path = _FIXTURE, *, odds_observations=(),
-               live_freshness_status: str = FRESHNESS_MEASURABLE) -> BasketballAssessment:
+               live_freshness_status: str | None = None) -> BasketballAssessment:
     """Verdict de maturité MÉCANIQUE du modèle NBA moneyline (walk-forward réel).
     EXPERIMENTAL tant que les critères requis ne passent pas — jamais un faux SUPPORTED."""
+    # Mesurée, non déclarée : le défaut valait `FRESHNESS_MEASURABLE` alors que la
+    # Gateway ne sert aucune donnée de basket. Le paramètre reste injectable pour
+    # les tests, mais son absence appelle désormais la mesure.
+    if live_freshness_status is None:
+        live_freshness_status = live_freshness_capability(NBA_LEAGUE_ID)
     policy = load_maturity_policy()
     games, _fp = load_nba_games(path)
     run = run_elo_walk_forward(games)

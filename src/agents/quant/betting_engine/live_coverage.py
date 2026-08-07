@@ -38,3 +38,32 @@ def evaluation_coverage_check(competition_id: str, season: str, data_type: str) 
     if _sport_of(competition_id) in VALIDATED_MODELS:
         return [EMBEDDED_DATASET]
     return []
+
+
+def live_freshness_capability(competition_id: str) -> str:
+    """La fraîcheur live est-elle MESURABLE pour cette compétition ?
+
+    Ce statut était ÉCRIT dans chaque évaluateur de maturité — `FRESHNESS_MEASURABLE`
+    en littéral pour douze modèles, `FRESHNESS_NOT_MEASURABLE` pour deux. Un critère
+    REQUIS vers SUPPORTED tenait donc à une constante, pas à une mesure.
+
+    Sondé, l'écart était réel : `gateway.data_freshness()` rend `None` pour le
+    basket, le baseball, le football américain, le hockey et le volley — la
+    Gateway n'a de chaîne de providers que pour le football. Cinq modèles
+    déclaraient PASS sur un critère que leur chemin de décision ne peut pas
+    honorer, et n'attendaient plus que la CLV pour être dits SUPPORTED.
+
+    La capacité se lit maintenant là où elle existe : un sport dont aucun
+    provider ne sert la donnée ne peut pas horodater sa fraîcheur au point de
+    décision. Lecture LOCALE et déterministe — le rapport de readiness ne doit
+    dépendre d'aucun appel réseau.
+    """
+    from src.agents.quant.betting_engine.maturity import (
+        FRESHNESS_MEASURABLE,
+        FRESHNESS_NOT_MEASURABLE,
+    )
+    from src.agents.quant.gateway.core.provider_registry import FALLBACK_ORDER
+
+    sport = _sport_of(competition_id)
+    return (FRESHNESS_MEASURABLE if sport in FALLBACK_ORDER
+            else FRESHNESS_NOT_MEASURABLE)

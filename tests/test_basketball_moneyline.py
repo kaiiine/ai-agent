@@ -74,10 +74,14 @@ def test_assessment_is_experimental_and_beats_baseline():
     assert o.n_evaluated > 1000 and o.n_temporal_folds >= 3
     assert m["beats_baseline"] is True                   # Brier modèle < baseline (skill réel)
     assert o.model_brier < o.best_baseline_brier
-    # Freshness live désormais CÂBLÉE + mesurée (test_basketball_live) -> plus un blocker.
-    # Bloqué honnêtement par la CLV réelle (non collectée) + gates calibration/coverage.
+    # `measurable_live_freshness` est un bloqueur RÉEL : la Gateway n'a de chaîne
+    # de providers que pour le football, donc aucune fraîcheur ne peut être
+    # horodatée au point de décision pour ce sport. Ce test affirmait le
+    # contraire — il verrouillait un PASS que le chemin de décision ne pouvait
+    # pas honorer, et qui ne tenait qu'à une constante écrite dans l'évaluateur.
     blockers = {c.name for c in d.criteria if c.required and c.verdict.value != "PASS"}
-    assert "positive_clv" in blockers and "measurable_live_freshness" not in blockers
+    assert "positive_clv" in blockers
+    assert "measurable_live_freshness" in blockers
 
 
 def test_assessment_is_deterministic():

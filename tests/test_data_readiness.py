@@ -245,3 +245,75 @@ def test_la_maturite_reste_derivee_mecaniquement():
                for cle in ("nhl", "atp", "fl1")}
 
     assert set(statuts.values()) == {"EXPERIMENTAL"}
+
+
+# ══ La capacité de fraîcheur est MESURÉE, jamais déclarée ═══════════════════
+def test_la_capacite_de_fraicheur_suit_la_chaine_de_providers():
+    """`measurable_live_freshness` est un critère REQUIS vers SUPPORTED.
+
+    Il était ÉCRIT en littéral dans chaque évaluateur : `FRESHNESS_MEASURABLE`
+    pour douze modèles, `FRESHNESS_NOT_MEASURABLE` pour deux. Sondé,
+    `gateway.data_freshness()` rendait `None` pour le basket, le baseball, le
+    football américain, le hockey et le volley — la Gateway n'a de chaîne de
+    providers que pour le football. Cinq modèles déclaraient donc PASS sur un
+    critère que leur chemin de décision ne peut pas honorer, et n'attendaient
+    plus que la CLV pour être dits SUPPORTED — c'est-à-dire misables.
+    """
+    from src.agents.quant.betting_engine.live_coverage import live_freshness_capability
+    from src.agents.quant.betting_engine.maturity import (
+        FRESHNESS_MEASURABLE,
+        FRESHNESS_NOT_MEASURABLE,
+    )
+    from src.agents.quant.gateway.core.provider_registry import FALLBACK_ORDER
+
+    for competition, sport in [
+        ("competition:football:fra:ligue1", "football"),
+        ("competition:basketball:usa:nba", "basketball"),
+        ("competition:baseball:usa:mlb", "baseball"),
+        ("competition:american_football:usa:nfl", "american_football"),
+        ("competition:hockey:usa:nhl", "hockey"),
+        ("competition:volleyball:ita:serie_a1", "volleyball"),
+        ("competition:tennis:atp:tour", "tennis"),
+    ]:
+        attendu = (FRESHNESS_MEASURABLE if sport in FALLBACK_ORDER
+                   else FRESHNESS_NOT_MEASURABLE)
+        assert live_freshness_capability(competition) == attendu, sport
+
+
+def test_aucun_evaluateur_ne_code_en_dur_sa_capacite_de_fraicheur():
+    """Un critère de maturité qui tient à une constante n'est pas un critère.
+
+    Écrire `FRESHNESS_MEASURABLE` dans un évaluateur revient à s'auto-délivrer le
+    PASS : le rapport de readiness affiche alors « freshness live exposée » sans
+    que rien ne l'ait vérifié.
+    """
+    import ast
+    import pathlib
+
+    racine = pathlib.Path(__file__).resolve().parent.parent / "src" / "agents" / "quant"
+    coupables = []
+    for fichier in sorted(racine.rglob("*.py")):
+        if fichier.name in ("maturity.py", "live_coverage.py"):
+            continue                      # la définition et la mesure elles-mêmes
+        for noeud in ast.walk(ast.parse(fichier.read_text())):
+            if not isinstance(noeud, ast.keyword) or noeud.arg != "live_freshness_status":
+                continue
+            if isinstance(noeud.value, ast.Name) and noeud.value.id.startswith("FRESHNESS_"):
+                coupables.append(f"{fichier.relative_to(racine)}:{noeud.value.lineno}")
+            elif isinstance(noeud.value, ast.Constant):
+                coupables.append(f"{fichier.relative_to(racine)}:{noeud.value.lineno}")
+
+    assert not coupables, ("capacité de fraîcheur codée en dur :\n" + "\n".join(coupables))
+
+
+def test_les_modeles_sans_provider_portent_le_bloqueur_de_fraicheur():
+    """Bout en bout : le verdict de maturité expose le manque, il ne l'absorbe pas."""
+    from src.agents.quant.betting_engine.maturity import Verdict
+    from src.agents.quant.betting_engine.sports.baseball.moneyline import assess_mlb
+
+    decision = assess_mlb().decision
+    critere = next(c for c in decision.criteria if c.name == "measurable_live_freshness")
+
+    assert critere.required
+    assert critere.verdict is not Verdict.PASS
+    assert decision.status == "EXPERIMENTAL"

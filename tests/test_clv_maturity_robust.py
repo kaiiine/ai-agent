@@ -121,9 +121,19 @@ def test_consistent_positive_edge_has_positive_lower_bound():
 # ── §7/§8 : gate de maturité de bout en bout via clv_readiness -> evaluate ────────
 def _decide_with(obs):
     """Injecte un échantillon CLV synthétique dans le VRAI modèle hockey et renvoie sa
-    décision de maturité (tous les autres critères déjà PASS, sauf CLV)."""
+    décision de maturité (tous les autres critères PASS, sauf CLV).
+
+    La capacité de fraîcheur est injectée elle aussi. Elle était auparavant
+    déclarée MEASURABLE dans l'évaluateur, ce qui donnait à ce test un critère
+    requis gratuitement ; elle est désormais MESURÉE, et le hockey n'a pas de
+    chaîne de providers. L'injection est explicitement synthétique, au même titre
+    que l'échantillon CLV : ce test porte sur la MÉCANIQUE de promotion, pas sur
+    l'état réel du modèle — que `test_data_readiness` vérifie de son côté.
+    """
+    from src.agents.quant.betting_engine.maturity import FRESHNESS_MEASURABLE
     from src.agents.quant.betting_engine.sports.hockey.regulation import assess_nhl
-    return assess_nhl(odds_observations=obs).decision
+    return assess_nhl(odds_observations=obs,
+                      live_freshness_status=FRESHNESS_MEASURABLE).decision
 
 
 def _clv_criterion(decision):

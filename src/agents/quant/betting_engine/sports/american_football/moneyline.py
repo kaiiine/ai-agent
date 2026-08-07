@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.agents.quant.betting_engine.calibration.experiment_registry import dataset_fingerprint
-from src.agents.quant.betting_engine.maturity import FRESHNESS_MEASURABLE
+from src.agents.quant.betting_engine.live_coverage import live_freshness_capability
 from src.agents.quant.betting_engine.sports.pairwise_elo import (
     EloParams,
     PairwiseAssessment,
@@ -59,4 +59,4 @@ def assess_nfl(path: Path = _FIXTURE) -> PairwiseAssessment:
     games, _fp = load_nfl_games(path)
     # Freshness live CÂBLÉE (test_pairwise_live) -> MEASURABLE. CLV reste NOT_YET_MEASURABLE.
     return assess_pairwise_elo(games, NFL_PARAMS, MODEL_NAME, MODEL_VERSION,
-                              live_freshness_status=FRESHNESS_MEASURABLE)
+                              live_freshness_status=live_freshness_capability(NFL_LEAGUE_ID))
