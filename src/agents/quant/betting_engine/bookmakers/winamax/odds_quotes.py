@@ -47,7 +47,7 @@ def _winner_odds(event) -> dict:
     }
 
 
-def fetch_odds_quotes(sport: str = "football", team: str = "", *, connector=None) -> list[OddsQuote]:
+def fetch_odds_quotes(sport: str, team: str = "", *, connector=None) -> list[OddsQuote]:
     """Cotes vainqueur canoniques d'un sport via l'UNIQUE connecteur PRELOADED_STATE.
     `team` filtre (sous-chaîne, insensible à la casse) sur l'un des deux participants."""
     if connector is None:

@@ -88,8 +88,10 @@ def _raw_event() -> RawBookmakerEvent:
 
 
 class _Connector:
-    def scan_catalog(self, sport="football"):
-        return [_raw_event()]
+    def scan_catalog(self, sport):
+        # Le batch scanne les SEPT sports enregistrés : ne rendre l'événement que
+        # pour le sien, sinon il est évalué sept fois.
+        return [e for e in [_raw_event()] if e.sport == sport]
 
 
 class _FreshGateway:

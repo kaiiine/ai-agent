@@ -96,7 +96,7 @@ def test_supported_events_keeps_resolved_ligue1_match():
         def scan_catalog(self, sport="football"):
             return replay(capture, now=_NOW)
 
-    kept = supported_events(_Conn())
+    kept = supported_events(_Conn(), "football")
     assert len(kept) == 1 and kept[0].bookmaker_event_id == "77001"
 
 

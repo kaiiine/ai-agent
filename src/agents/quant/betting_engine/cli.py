@@ -103,18 +103,13 @@ def main(argv: list[str] | None = None, *, connector=None, sports_gateway=None,
     if sports_gateway is None:
         from src.agents.quant.gateway import gateway as sports_gateway
 
-    # Le catalogue par défaut (`supported_events`) scanne le FOOTBALL seul. Le run
-    # live ne voyait donc jamais les six autres sports, et `multisport_events`
-    # existait sans appelant. Chaque `RawBookmakerEvent` porte son sport : le
-    # dispatch se fait en aval par `SPORT_MODULES`, sans aucun `if sport ==`.
-    from .bookmakers.winamax.catalogue import multisport_events
-    from .sports.registry import SPORT_MODULES
-    sports = sorted(SPORT_MODULES)
-
+    # Le catalogue par défaut couvre les sports ENREGISTRÉS. Chaque
+    # `RawBookmakerEvent` porte son sport : le dispatch se fait en aval par
+    # `SPORT_MODULES`, sans aucun `if sport ==`. Le CLI forçait autrefois ce
+    # comportement à la main, parce que le défaut était football-only.
     try:
         run = evaluate_live_batch(connector, sports_gateway=sports_gateway,
-                                  event_resolver=event_resolver,
-                                  catalogue=lambda c: multisport_events(c, sports))
+                                  event_resolver=event_resolver)
     except Exception as exc:   # noqa: BLE001 — scan total / erreur technique -> code 1
         print(f"échec du scan / erreur technique : {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

@@ -19,7 +19,7 @@ from ..protocol import RawBookmakerEvent
 from .competition_mapping import resolve_competition
 
 
-def all_events(connector, sport: str = "football") -> Sequence[RawBookmakerEvent]:
+def all_events(connector, sport: str) -> Sequence[RawBookmakerEvent]:
     """DÉCOUVERTE : tous les événements scannés, aucune compétition écartée. La
     résolution/évaluation en aval isole les non-supportés (jamais de perte au scan)."""
     return connector.scan_catalog(sport)
@@ -37,7 +37,7 @@ def multisport_events(connector, sports: Sequence[str]) -> Sequence[RawBookmaker
     return events
 
 
-def supported_events(connector, sport: str = "football") -> Sequence[RawBookmakerEvent]:
+def supported_events(connector, sport: str) -> Sequence[RawBookmakerEvent]:
     """Filtre ÉTROIT (compétitions RESOLVED uniquement). Propage toute erreur de scan.
     NB : écarte silencieusement les compétitions non mappées — préférer `all_events`
     pour la découverte multisport observable (le run n'est jamais réduit au silence)."""

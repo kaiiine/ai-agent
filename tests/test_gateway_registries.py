@@ -135,7 +135,7 @@ def test_verify_records_live_call_full(tmp_path, monkeypatch):
         ),
     )
     db = tmp_path / "cov.db"
-    entry = cv.verify("football_data_org", "competition:football:fra:ligue1", "FL1", "2025", "STANDINGS", db_path=db)
+    entry = cv.verify("football_data_org", "competition:football:fra:ligue1", "FL1", "2025", "STANDINGS", "football", db_path=db)
     assert entry.status == CoverageStatus.FULL
     assert entry.verification_method == "live_call"
     assert pcr.get_coverage("football_data_org", "competition:football:fra:ligue1", "2025", "STANDINGS", db_path=db).status == CoverageStatus.FULL
@@ -147,6 +147,6 @@ def test_verify_records_absent_when_season_unavailable(tmp_path, monkeypatch):
 
     provider = REGISTRY["api_sports"].provider
     monkeypatch.setattr(provider, "is_available", lambda sport, season: False)  # tier gratuit bloque 2025
-    entry = cv.verify("api_sports", "competition:football:fra:ligue1", "61", "2025", "STANDINGS", db_path=tmp_path / "c.db")
+    entry = cv.verify("api_sports", "competition:football:fra:ligue1", "61", "2025", "STANDINGS", "football", db_path=tmp_path / "c.db")
     assert entry.status == CoverageStatus.ABSENT
     assert entry.verification_method == "live_call"  # tenté en direct, constaté absent

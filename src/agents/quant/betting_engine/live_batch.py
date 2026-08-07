@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from .bookmakers.protocol import RawBookmakerEvent
-from .bookmakers.winamax.catalogue import supported_events
+from .bookmakers.winamax.catalogue import multisport_events
 from .live_evaluation import (
     LiveEvaluationResult,
     LiveEvaluationStatus,
@@ -46,18 +46,32 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _catalogue_multisport(connector) -> list[RawBookmakerEvent]:
+    """Les sports ENREGISTRÉS, lus au registre plutôt qu'écrits ici : ajouter un
+    module sportif suffit à le faire scanner."""
+    from .sports.registry import SPORT_MODULES
+
+    return list(multisport_events(connector, sorted(SPORT_MODULES)))
+
+
 def evaluate_live_batch(
     connector,
     *,
     sports_gateway,
     event_resolver,
-    catalogue: Callable = supported_events,
+    catalogue: Callable = _catalogue_multisport,
     evaluate: Callable = evaluate_live_event,
     now_fn: Callable[[], datetime] = _utcnow,
 ) -> LiveEvaluationBatch:
     """Cœur de domaine testable. `catalogue(connector)` peut lever (scan échoué)
     -> propagé à l'appelant (le CLI le mappe sur son code de sortie). Un échec
-    inattendu sur UN événement n'arrête pas le batch (résultat typé)."""
+    inattendu sur UN événement n'arrête pas le batch (résultat typé).
+
+    Le catalogue par défaut couvre les SEPT sports enregistrés. Il valait
+    `supported_events`, dont le sport valait lui-même « football » : un appelant
+    qui ne précisait rien croyait scanner le produit et scannait un sport. Le
+    défaut d'une fonction générique doit être générique, sinon il choisit à la
+    place de l'appelant sans que l'appel le montre."""
     events = catalogue(connector)                       # scan ; propage l'échec
     decision_time = now_fn()                            # capturé UNE fois, APRÈS le scan
 

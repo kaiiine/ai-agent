@@ -35,7 +35,7 @@ def verify(
     provider_competition_id: str,
     season: str,
     data_type: str,
-    sport: str = "football",
+    sport: str,
     db_path: Path | None = None,
 ) -> ProviderCompetitionCoverage:
     """Effectue l'appel réel et enregistre le résultat (live_call).

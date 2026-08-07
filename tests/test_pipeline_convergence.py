@@ -85,16 +85,31 @@ def test_les_deux_agregateurs_d_identite_donnent_le_meme_ensemble():
 
 
 def test_le_batch_scanne_tous_les_sports_enregistres():
-    """Le catalogue par défaut (`supported_events`) scanne le football seul :
-    `multisport_events` existait sans appelant, et six sports restaient invisibles
-    au run live alors que leurs modèles étaient prêts."""
-    import inspect
+    """Le catalogue par DÉFAUT couvre les sept sports enregistrés.
 
-    from src.agents.quant.betting_engine import cli
+    Il valait `supported_events`, dont le `sport` valait lui-même « football » :
+    six sports restaient invisibles au run live alors que leurs modèles étaient
+    prêts. Le CLI corrigeait le tir à la main — donc tout autre appelant héritait
+    du trou.
 
-    source = inspect.getsource(cli.main)
-    assert "multisport_events" in source
-    assert "sorted(SPORT_MODULES)" in source
+    Ce test observe le SCAN plutôt que le texte du CLI : une vérification par
+    `inspect.getsource` passe encore quand la logique déménage, et échoue quand
+    elle est seulement réécrite.
+    """
+    from src.agents.quant.betting_engine.live_batch import evaluate_live_batch
+    from src.agents.quant.betting_engine.sports.registry import SPORT_MODULES
+
+    demandes = []
+
+    class _Connecteur:
+        def scan_catalog(self, sport):
+            demandes.append(sport)
+            return []
+
+    evaluate_live_batch(_Connecteur(), sports_gateway=object(),
+                        event_resolver=object())
+
+    assert set(demandes) == set(SPORT_MODULES)
 
 
 def test_le_batch_resout_l_identite_des_sept_sports():
@@ -182,3 +197,34 @@ def test_aucune_entite_ne_traverse_les_frontieres_de_sport():
             assert entity.canonical_id.split(":")[1] == sport
         for entity in resolveur.all_entities(f"team:{sport}:"):
             assert entity.canonical_id.split(":")[1] == sport
+
+
+def test_aucune_fonction_du_scan_ne_prend_un_sport_par_defaut():
+    """Un défaut « football » ne se remarque pas à la lecture.
+
+    `scan_catalog`, `all_events`, `supported_events`, `fetch_odds_quotes` et
+    `verify` déclaraient toutes `sport="football"`. Un appelant générique en
+    apparence scannait donc un seul sport, et son silence ressemblait à un
+    catalogue vide plutôt qu'à une question mal posée. Rendre le paramètre
+    obligatoire transforme l'oubli en erreur d'appel — visible tout de suite.
+    """
+    import ast
+    import pathlib
+
+    racine = pathlib.Path(__file__).resolve().parent.parent / "src"
+    surveillees = {"scan_catalog", "all_events", "supported_events",
+                   "multisport_events", "fetch_odds_quotes", "verify"}
+    coupables = []
+    for fichier in sorted(racine.rglob("*.py")):
+        arbre = ast.parse(fichier.read_text())
+        for noeud in ast.walk(arbre):
+            if not isinstance(noeud, ast.FunctionDef) or noeud.name not in surveillees:
+                continue
+            args = noeud.args.args[-len(noeud.args.defaults):] if noeud.args.defaults else []
+            for arg, defaut in zip(args, noeud.args.defaults):
+                if arg.arg in ("sport", "sports") and isinstance(defaut, ast.Constant):
+                    coupables.append(
+                        f"{fichier.relative_to(racine)}:{noeud.lineno} "
+                        f"{noeud.name}({arg.arg}={defaut.value!r})")
+
+    assert not coupables, "sport avec valeur par défaut :\n" + "\n".join(coupables)

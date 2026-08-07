@@ -207,7 +207,7 @@ class WinamaxConnector:
 
     bookmaker = "winamax"
 
-    def scan_catalog(self, sport: str = "football") -> list[RawBookmakerEvent]:
+    def scan_catalog(self, sport: str) -> list[RawBookmakerEvent]:
         sport_id = SPORT_IDS.get(sport.lower())
         if sport_id is None:
             raise ValueError(f"Sport inconnu : {sport}. Choix : {sorted(SPORT_IDS)}")

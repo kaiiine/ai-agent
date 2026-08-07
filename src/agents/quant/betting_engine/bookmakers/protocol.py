@@ -113,8 +113,14 @@ class BookmakerConnector(Protocol):
 
     bookmaker: str
 
-    def scan_catalog(self, sport: str = "football") -> list[RawBookmakerEvent]:
-        """Scanne le catalogue du bookmaker et renvoie ses événements en slots."""
+    def scan_catalog(self, sport: str) -> list[RawBookmakerEvent]:
+        """Scanne le catalogue du bookmaker et renvoie ses événements en slots.
+
+        `sport` est OBLIGATOIRE. Il a longtemps valu « football » par défaut :
+        un appelant générique en apparence scannait alors le football sans le
+        dire, et le silence ressemblait à un résultat vide. Un défaut ne se
+        remarque pas à la lecture — une erreur d'appel, si.
+        """
         ...
 
     def market_mapping(self) -> dict:

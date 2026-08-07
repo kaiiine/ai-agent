@@ -51,10 +51,12 @@ class _FakeConnector:
     def __init__(self, events, raise_exc=None):
         self._events, self._raise = events, raise_exc
 
-    def scan_catalog(self, sport="football"):
+    def scan_catalog(self, sport):
         if self._raise:
             raise self._raise
-        return list(self._events)
+        # Le batch scanne les SEPT sports enregistrés : un connecteur qui ignore
+        # l'argument rendrait sept fois le même catalogue.
+        return [e for e in self._events if e.sport == sport]
 
 
 def _resolver():
@@ -103,7 +105,7 @@ def _refusal():
 def test_supported_events_filters_by_competition():
     conn = _FakeConnector([_event("A", tid="4"), _event("B", tid="999"), _event("C", tid="1")])
     # tid 4 = FL1 (resolver de test), 999 inconnu ; le vrai resolve_competition connaît 1=PL, 4=FL1.
-    kept = {e.bookmaker_event_id for e in supported_events(conn)}
+    kept = {e.bookmaker_event_id for e in supported_events(conn, "football")}
     assert "A" in kept and "C" in kept          # FL1 + PL
     assert "B" not in kept                       # tournoi inconnu écarté
 
