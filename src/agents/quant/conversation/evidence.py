@@ -140,15 +140,26 @@ def has_structured_output(messages: Sequence[Any]) -> bool:
     )
 
 
-#: Dimensions de périmètre, et les mots qui les désignent dans une question.
+#: Dimensions de périmètre, et les mots qui les désignent SANS AMBIGUÏTÉ.
+#:
+#: Le vocabulaire est délibérément étroit. Une première version acceptait
+#: « combien », « montant », « date » et « quand » : dans un tour de pari, elle
+#: supprimait alors « Combien de sélections veux-tu voir ? » et « À quelle date
+#: veux-tu le rapport ? », qui ne portent sur aucun périmètre déjà fixé.
+#:
+#: Les deux erreurs n'ont pas le même coût. Laisser passer une question inutile
+#: coûte une popup ; supprimer une question légitime prive l'utilisateur de la
+#: seule occasion de répondre. On n'attrape donc que ce qui ne désigne rien
+#: d'autre que le périmètre du scan.
 _DIMENSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("sports", ("sport", "sports", "discipline")),
     ("competitions", ("compétition", "competition", "compétitions", "competitions",
-                      "championnat", "ligue", "tournoi")),
+                      "championnat", "ligue", "tournoi", "circuit")),
     ("markets", ("marché", "marche", "marchés", "marches", "type de pari")),
-    ("time_window", ("période", "periode", "fenêtre", "fenetre", "quand",
-                     "aujourd'hui", "demain", "horaire", "date")),
-    ("bankroll", ("bankroll", "budget", "montant", "combien")),
+    ("time_window", ("période", "periode", "fenêtre", "fenetre", "créneau", "creneau",
+                     "plage horaire", "aujourd'hui", "aujourd hui", "demain",
+                     "ce soir")),
+    ("bankroll", ("bankroll", "budget")),
 )
 
 

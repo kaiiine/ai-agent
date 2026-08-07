@@ -320,6 +320,43 @@ def test_sans_scan_dans_le_tour_aucune_question_n_est_jugee():
         messages, [{"question": "Quel sport vous intéresse ?"}])
 
 
+@pytest.mark.parametrize("question", [
+    "Dans quel canal poster le message ?",
+    "Quelle branche veux-tu comparer ?",
+    "À quelle date planifier le rappel ?",
+    "Quel montant factures-tu ?",
+    "Combien de slides veux-tu ?",
+    "Quel sport pratiques-tu ?",
+])
+def test_le_garde_n_affecte_aucune_clarification_hors_betting(question):
+    """Le garde s'exécute sur TOUT `ask_clarification`, y compris Slack, git ou
+    l'agenda. Il doit y être un no-op : sans `betting_recommend` dans le tour,
+    aucune contrainte n'existe, donc aucune réponse n'est réputée connue. Même
+    « Quel sport pratiques-tu ? » doit passer."""
+    messages = [HumanMessage("poste un message sur le canal equipe")]
+
+    assert not redundant_scope_question(messages, [{"question": question}])
+
+
+@pytest.mark.parametrize("question", [
+    "Combien de sélections veux-tu voir ?",
+    "Quel montant de mise maximum ?",
+    "À quelle date veux-tu le rapport ?",
+    "Quand relancer le scan ?",
+    "Veux-tu que je note ça en mémoire ?",
+])
+def test_une_question_betting_hors_perimetre_reste_posable(question):
+    """Même dans un tour de pari, tout n'est pas une question de périmètre.
+
+    Une première version acceptait « combien », « montant » et « date » comme
+    marqueurs : elle supprimait alors ces questions-là, qui ne portent sur aucune
+    contrainte déjà fixée. Les deux erreurs n'ont pas le même coût — laisser
+    passer une question inutile coûte une popup, en supprimer une légitime prive
+    l'utilisateur de sa seule occasion de répondre."""
+    assert not redundant_scope_question(
+        _tour_avec_scan(_ETAT_COMPLET), [{"question": question}])
+
+
 def test_le_garde_de_clarification_est_cable_avant_le_garde_de_provenance():
     """Ordre voulu : on corrige d'abord la question inutile, puis on vérifie la
     provenance de la réponse produite. L'inverse validerait une question."""
