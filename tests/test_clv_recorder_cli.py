@@ -58,10 +58,12 @@ def test_cli_decision_then_closing_accumulates_measurable_clv(tmp_path):
     dec = _write_capture(tmp_path, 2.10, "dec.json")
     clo = _write_capture(tmp_path, 1.90, "clo.json")
 
+    # Coup d'envoi de la capture : 10:00 UTC. La clôture était prise à 17:30, soit
+    # sept heures et demie APRÈS — une cote de direct étiquetée « clôture ».
     record_odds_cli(["--capture", str(dec), "--phase", "decision", "--store", str(store_path),
-                     "--now", "2026-03-01T10:00:00+00:00"])
+                     "--now", "2026-02-28T10:00:00+00:00"])
     record_odds_cli(["--capture", str(clo), "--phase", "closing", "--store", str(store_path),
-                     "--now", "2026-03-01T17:30:00+00:00"])
+                     "--now", "2026-03-01T09:55:00+00:00"])
 
     readiness = clv_readiness(JsonlOddsHistoryStore(store_path).all())
     assert readiness.status == "MEASURABLE"

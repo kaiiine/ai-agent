@@ -34,6 +34,37 @@ class RecordSummary:
     observations_written: int
     events_recorded: int
     events_skipped: int
+    #: Événements écartés parce que le marché avait déjà commencé alors qu'on
+    #: enregistrait une CLÔTURE. Compté à part : ce n'est pas un défaut de
+    #: résolution, c'est une capture arrivée trop tard.
+    events_started: int = 0
+
+
+def closing_is_valid(raw_event, observed_at) -> bool:
+    """Cette observation peut-elle être une CLÔTURE ?
+
+    Une clôture est la DERNIÈRE cote observée avant l'ouverture du jeu. Après le
+    coup d'envoi, ce que le bookmaker affiche est une cote de direct : elle
+    intègre le score et n'a plus rien à voir avec la ligne de clôture. L'écrire
+    comme CLOSING ne produirait pas une mesure imprécise mais une mesure d'autre
+    chose — et une CLV calculée dessus paraîtrait excellente ou catastrophique
+    sans qu'aucune des deux ne veuille dire quoi que ce soit.
+
+    La phase était choisie par un drapeau de ligne de commande, sans aucun garde.
+    Un planificateur réglé une heure trop tard aurait rempli l'historique de
+    cotes de direct étiquetées « clôture », et rien ne l'aurait signalé : le
+    calcul de CLV, lui, apparie sans discuter deux observations bien formées.
+
+    Deux signaux, et le plus prudent gagne : l'horaire annoncé et le statut du
+    bookmaker. Un événement sans horaire connu est refusé — on ne peut pas
+    affirmer qu'il n'a pas commencé.
+    """
+    if str(getattr(raw_event, "status", "")).upper() == "LIVE":
+        return False
+    debut = getattr(raw_event, "start_time", None)
+    if debut is None or observed_at is None:
+        return False
+    return observed_at <= debut
 
 
 def _schema_for_sport(sport: str) -> MarketSchema | None:
@@ -75,8 +106,11 @@ def record_odds(
     Un événement non résolu / sans marché 1X2 / non canonicalisable est IGNORÉ (compté),
     jamais fabriqué. `observed_at` = l'instant d'observation réel de la cote
     (`OddsSnapshot.observed_at`, issu de `fetched_at`). La cote float du contrat BE est
-    convertie en `Decimal` via `str` (aucun artefact binaire)."""
-    written = recorded = skipped = 0
+    convertie en `Decimal` via `str` (aucun artefact binaire).
+
+    En phase CLOSING, un événement déjà commencé est écarté (cf.
+    `closing_is_valid`) : une cote de direct n'est pas une ligne de clôture."""
+    written = recorded = skipped = started = 0
     for raw_event in events:
         schema = _schema_for_sport(raw_event.sport)
         if schema is None:                       # sport non modélisé : rien à collecter (visible, pas fabriqué)
@@ -96,6 +130,14 @@ def record_odds(
             skipped += 1
             continue
         event = build_canonical_event(raw_event, mapping, role_resolver)
+        # Le garde s'applique APRÈS la canonicalisation : un événement déjà
+        # commencé reste compté comme tel, et non confondu avec un événement
+        # illisible. Les deux se corrigent différemment — l'un en avançant le
+        # planificateur, l'autre en complétant un référentiel.
+        if phase is ObservationPhase.CLOSING and canon.snapshots:
+            if not closing_is_valid(raw_event, canon.snapshots[0].observed_at):
+                started += 1
+                continue
         for snap in canon.snapshots:
             store.append(OddsObservation(
                 event_id=event.event_id,
@@ -111,7 +153,7 @@ def record_odds(
             ))
             written += 1
         recorded += 1
-    return RecordSummary(written, recorded, skipped)
+    return RecordSummary(written, recorded, skipped, started)
 
 
 def record_from_capture(

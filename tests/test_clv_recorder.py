@@ -78,8 +78,12 @@ def test_recording_a_scan_persists_canonical_observations(tmp_path):
 def test_decision_then_closing_makes_clv_measurable(tmp_path):
     store = JsonlOddsHistoryStore(tmp_path / "odds.jsonl")
     resolver = _resolver()
-    t_decision = datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc)
-    t_closing = datetime(2026, 3, 1, 17, 30, tzinfo=timezone.utc)   # près du coup d'envoi
+    # Le coup d'envoi de la fixture est à 10:00 UTC. La CLÔTURE doit le PRÉCÉDER :
+    # ce test enregistrait sa « clôture » à 17:30, soit sept heures et demie APRÈS
+    # le début du match. Ce qu'il appariait n'était pas une ligne de clôture mais
+    # une cote de direct, qui intègre le score — et la CLV en sortait mesurable.
+    t_decision = datetime(2026, 2, 28, 10, 0, tzinfo=timezone.utc)   # la veille
+    t_closing = datetime(2026, 3, 1, 9, 55, tzinfo=timezone.utc)     # 5 min avant
 
     # Avant toute collecte : CLV non mesurable.
     assert clv_readiness(store.all()).status == NOT_YET_MEASURABLE
@@ -123,7 +127,8 @@ def _nba_state(*, home_odds):
 def test_multisport_records_two_way_sport(tmp_path):
     # §2 : la collecte CLV n'est plus football-only — un sport 2-way (basket) est enregistré.
     store = JsonlOddsHistoryStore(tmp_path / "odds.jsonl")
-    t0 = datetime(2026, 3, 1, 10, tzinfo=timezone.utc)
+    # Coup d'envoi de la fixture : 10:00 UTC. La décision le précède, la clôture aussi.
+    t0 = datetime(2026, 2, 28, 10, tzinfo=timezone.utc)
     cap = synthetic_capture(_nba_state(home_odds=1.80), "basketball")
     summary = record_from_capture(cap, event_resolver=_nba_resolver(), store=store,
                                   phase=ObservationPhase.DECISION, now=t0)
@@ -133,7 +138,8 @@ def test_multisport_records_two_way_sport(tmp_path):
     # DECISION puis CLOSING -> CLV mesurable, comme le football.
     record_from_capture(synthetic_capture(_nba_state(home_odds=1.60), "basketball"),
                         event_resolver=_nba_resolver(), store=store,
-                        phase=ObservationPhase.CLOSING, now=t0 + timedelta(hours=6))
+                        phase=ObservationPhase.CLOSING,
+                        now=datetime(2026, 3, 1, 9, 55, tzinfo=timezone.utc))
     r = clv_readiness(store.all())
     assert r.status == MEASURABLE and r.n_complete_pairs == 2
 
@@ -148,3 +154,123 @@ def test_unresolved_events_are_skipped_never_fabricated(tmp_path):
                                   store=store, phase=ObservationPhase.DECISION, now=t0)
     assert summary.observations_written == 0 and summary.events_skipped == 1
     assert store.all() == []
+
+
+# ══ §10 — Une CLÔTURE ne peut pas être une cote de direct ═══════════════════
+# La phase était choisie par un drapeau de ligne de commande, sans aucun garde.
+# Un planificateur réglé une heure trop tard aurait rempli l'historique de cotes
+# de direct étiquetées « clôture », et rien ne l'aurait signalé : le calcul de
+# CLV apparie sans discuter deux observations bien formées. Les tests eux-mêmes
+# enregistraient leur clôture sept heures après le coup d'envoi.
+_COUP_ENVOI = datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc)
+
+
+def _etat(*, home_odds, statut="PREMATCH", debut=None):
+    etat = _fl1_state(home_odds=home_odds)
+    etat["matches"]["77001"]["status"] = statut
+    if debut is not None:
+        etat["matches"]["77001"]["matchStart"] = int(debut.timestamp())
+    return etat
+
+
+def _enregistrer_cloture(tmp_path, *, quand, statut="PREMATCH", debut=None):
+    store = JsonlOddsHistoryStore(tmp_path / "odds.jsonl")
+    resume = record_from_capture(
+        synthetic_capture(_etat(home_odds=1.90, statut=statut, debut=debut), "football"),
+        event_resolver=_resolver(), store=store,
+        phase=ObservationPhase.CLOSING, now=quand)
+    return resume, store
+
+
+def test_une_cloture_avant_le_coup_d_envoi_est_enregistree(tmp_path):
+    resume, store = _enregistrer_cloture(tmp_path, quand=_COUP_ENVOI - timedelta(minutes=5))
+
+    assert resume.events_recorded == 1 and resume.events_started == 0
+    assert len(store.all()) == 3
+
+
+def test_une_cloture_apres_le_coup_d_envoi_est_refusee(tmp_path):
+    """Le cas exact que le produit laissait passer."""
+    resume, store = _enregistrer_cloture(tmp_path, quand=_COUP_ENVOI + timedelta(hours=7))
+
+    assert resume.events_recorded == 0
+    assert resume.events_started == 1        # compté, jamais silencieux
+    assert store.all() == []
+
+
+def test_un_evenement_en_direct_est_refuse_meme_avant_l_horaire_annonce(tmp_path):
+    """Un match retardé démarre parfois avant que l'horaire annoncé soit corrigé.
+    Le statut du bookmaker prime : `LIVE` veut dire que le jeu a commencé."""
+    resume, _ = _enregistrer_cloture(
+        tmp_path, quand=_COUP_ENVOI - timedelta(minutes=5), statut="LIVE")
+
+    assert resume.events_recorded == 0 and resume.events_started == 1
+
+
+def test_un_evenement_sans_horaire_ne_peut_pas_cloturer(tmp_path):
+    """Sans horaire, rien ne permet d'affirmer que le match n'a pas commencé.
+    Le doute ne produit pas une observation — il produit un refus compté."""
+    store = JsonlOddsHistoryStore(tmp_path / "odds.jsonl")
+    etat = _fl1_state(home_odds=1.90)
+    etat["matches"]["77001"].pop("matchStart")
+    resume = record_from_capture(
+        synthetic_capture(etat, "football"), event_resolver=_resolver(), store=store,
+        phase=ObservationPhase.CLOSING, now=_COUP_ENVOI - timedelta(minutes=5))
+
+    assert resume.observations_written == 0
+    assert store.all() == []
+
+
+def test_un_match_reporte_plus_tard_reste_cloturable(tmp_path):
+    """Un report DÉPLACE le coup d'envoi ; il ne l'annule pas. La clôture reste
+    possible tant que le nouveau départ n'est pas atteint."""
+    reporte = _COUP_ENVOI + timedelta(days=1)
+    resume, store = _enregistrer_cloture(
+        tmp_path, quand=_COUP_ENVOI + timedelta(hours=2), debut=reporte)
+
+    assert resume.events_recorded == 1 and len(store.all()) == 3
+
+
+def test_la_phase_decision_n_est_pas_bornee_par_le_coup_d_envoi(tmp_path):
+    """Le garde ne vise QUE la clôture. Une décision est datée par l'utilisateur
+    qui l'a prise ; la contraindre ici reviendrait à réécrire son historique."""
+    store = JsonlOddsHistoryStore(tmp_path / "odds.jsonl")
+    resume = record_from_capture(
+        _capture(home_odds=2.10), event_resolver=_resolver(), store=store,
+        phase=ObservationPhase.DECISION, now=_COUP_ENVOI + timedelta(hours=7))
+
+    assert resume.events_recorded == 1
+
+
+def test_aucune_paire_n_est_fabriquee_quand_la_cloture_est_refusee(tmp_path):
+    """Bout en bout : une décision valide plus une clôture trop tardive ne
+    produisent PAS une CLV. C'est le résultat qui compte — une paire fabriquée
+    aurait fait avancer un critère de maturité sur une mesure fausse."""
+    store = JsonlOddsHistoryStore(tmp_path / "odds.jsonl")
+    record_from_capture(_capture(home_odds=2.10), event_resolver=_resolver(),
+                        store=store, phase=ObservationPhase.DECISION,
+                        now=_COUP_ENVOI - timedelta(days=1))
+    record_from_capture(_capture(home_odds=1.90), event_resolver=_resolver(),
+                        store=store, phase=ObservationPhase.CLOSING,
+                        now=_COUP_ENVOI + timedelta(hours=7))
+
+    assert clv_readiness(store.all()).status == NOT_YET_MEASURABLE
+
+
+def test_plusieurs_clotures_proches_du_coup_d_envoi_ne_gonflent_pas_l_echantillon(tmp_path):
+    """Un planificateur qui rescanne toutes les cinq minutes ne crée pas cinq
+    observations indépendantes : l'appariement retient UNE paire par marché."""
+    store = JsonlOddsHistoryStore(tmp_path / "odds.jsonl")
+    record_from_capture(_capture(home_odds=2.10), event_resolver=_resolver(),
+                        store=store, phase=ObservationPhase.DECISION,
+                        now=_COUP_ENVOI - timedelta(days=1))
+    for minutes in (20, 15, 10, 5):
+        record_from_capture(_capture(home_odds=1.90), event_resolver=_resolver(),
+                            store=store, phase=ObservationPhase.CLOSING,
+                            now=_COUP_ENVOI - timedelta(minutes=minutes))
+
+    lecture = clv_readiness(store.all())
+
+    assert lecture.status == MEASURABLE
+    assert lecture.n_complete_pairs == 3      # home/draw/away, une paire chacun
+    assert lecture.n_events == 1              # UNE rencontre, pas quatre
