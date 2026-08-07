@@ -238,3 +238,151 @@ def test_une_recherche_qui_echoue_ne_casse_pas_le_run():
     assert enrich_event(sport="tennis", sujet="X",
                         blockers=["INSUFFICIENT_FEATURES"],
                         recherche=recherche, cache=EnrichmentCache()) == ()
+
+
+# ══ §9 — L'enrichissement ne déplace AUCUN chiffre de décision ═══════════════
+def _run_enrichi(features_par_evenement=None):
+    """Le MÊME run, avec et sans enrichissement."""
+    from decimal import Decimal
+
+    from src.agents.quant.conversation.constraints import constraints_from_request
+    from src.agents.quant.conversation.window import PARIS, resolve_window
+    from tests.test_betting_conversation_safety import _evaluation, _run
+
+    maintenant = datetime(2026, 8, 6, 15, 30, tzinfo=PARIS)
+    contraintes = constraints_from_request(
+        None, bankroll=Decimal("20"), time_window=resolve_window("", maintenant))
+    evaluations = [_evaluation(freshness=None), _evaluation(event="e2", freshness=None)]
+
+    sans, _ = _run(contraintes, evaluations)
+    avec, _ = _run(contraintes, evaluations,
+                   enrich=lambda reponse, sports: features_par_evenement or {
+                       "e1": (make("INJURY", "forfait annoncé", source="ATP",
+                                   url="https://www.atptour.com/x",
+                                   confidence="OFFICIAL"),)})
+    return sans, avec
+
+
+def _chiffres(response):
+    """Tout ce qui décide de l'argent."""
+    return [
+        (e.candidate.event_id, e.candidate.selection, e.status.value,
+         str(e.candidate.fair_probability), str(e.candidate.probability_low),
+         str(e.candidate.expected_value_mean), str(e.candidate.expected_value_low),
+         str(e.candidate.edge_mean), str(e.candidate.edge_low),
+         str(e.candidate.bookmaker_odds), tuple(e.policy_reasons))
+        for e in response.review_candidates
+    ] + [
+        (p.portfolio_id, str(p.total_stake), str(p.unallocated_bankroll),
+         tuple((str(l.stake), str(l.total_odds), str(l.expected_value)) for l in p.lines))
+        for p in response.portfolios
+    ]
+
+
+def test_aucune_probabilite_ni_EV_ni_mise_ne_change_apres_enrichment():
+    """La preuve demandée : mêmes entrées, mêmes chiffres, avec ou sans Internet.
+    Probabilités, bornes basses, EV, edge, cotes, statuts, raisons, mises et
+    bankroll non allouée sont comparés champ à champ."""
+    sans, avec = _run_enrichi()
+
+    assert _chiffres(sans.response) == _chiffres(avec.response)
+    assert sans.response.outcome == avec.response.outcome
+    assert dict(sans.response.rejection_summary) == dict(avec.response.rejection_summary)
+
+
+def test_l_ordre_de_la_shortlist_ne_change_pas_apres_enrichment():
+    """Un candidat enrichi ne remonte pas dans le classement : le tri lit des
+    bornes du modèle, pas des faits web."""
+    from src.agents.quant.conversation.review_ranking import rank_review
+
+    sans, avec = _run_enrichi()
+    ordre = lambda r: [l.candidate.candidate_id
+                       for l in rank_review(r.response.review_candidates)]
+
+    assert ordre(sans) == ordre(avec)
+
+
+def test_les_features_vivent_hors_du_candidat():
+    """Structurellement : elles sont rangées dans l'observabilité, pas sur le
+    `CandidateBet` que l'Advisor lit. Elles ne PEUVENT donc pas le traverser."""
+    _, avec = _run_enrichi()
+    candidat = avec.response.review_candidates[0].candidate
+
+    assert not hasattr(candidat, "internet_features")
+    assert avec.observability.internet_features
+    assert avec.observability.features_for(candidat)
+
+
+def test_le_rendu_affiche_les_features_sous_un_intitule_distinct():
+    from src.agents.quant.conversation.renderer import render
+
+    _, avec = _run_enrichi()
+    rendu = render(avec)
+
+    assert "Contexte externe" in rendu
+    assert "n'entre dans aucun calcul" in rendu
+    assert "forfait annoncé" in rendu
+    assert "atptour.com" in rendu
+
+
+def test_sans_enrichissement_le_rendu_reste_complet():
+    """L'absence de réseau ne doit rien retirer d'essentiel."""
+    from src.agents.quant.conversation.renderer import render
+
+    sans, _ = _run_enrichi()
+    rendu = render(sans)
+
+    assert "Shortlist de revue" in rendu
+    assert "Contexte externe" not in rendu
+
+
+def test_seuls_les_candidats_de_revue_sont_enrichis():
+    """Ni les portefeuilles ni les rejetés : un BET a sa décision prise, un
+    REJECTED n'a pas à être expliqué par le web."""
+    import inspect
+
+    from src.agents.quant.enrichment import enrich as module
+
+    source = inspect.getsource(module.enrich_review_candidates)
+
+    assert "review_candidates" in source
+    assert "portfolios" not in source
+
+
+def test_le_nombre_d_evenements_enrichis_est_borne():
+    """Chaque rencontre coûte plusieurs requêtes : enrichir trente candidats
+    brûlerait le quota pour un utilisateur qui n'en lira que les premiers."""
+    from src.agents.quant.enrichment.enrich import MAX_EVENEMENTS_ENRICHIS
+
+    assert 1 <= MAX_EVENEMENTS_ENRICHIS <= 5
+
+
+# ══ Qualité d'extraction : une phrase qui parle du sujet, ou rien ════════════
+def test_le_texte_de_navigation_n_est_pas_promu_en_information():
+    """Tavily rend le texte brut de la page. Sur une page officielle WTA, cela
+    comprend le menu, le logo et le palmarès — sourcé, officiel, et sans rapport
+    avec la rencontre. L'afficher sous « contexte externe » donnerait l'apparence
+    d'une information là où il n'y a qu'une page."""
+    bruit = [{"url": "https://www.wtatennis.com/x", "title": "WTA",
+              "content": "WTA Logo Go back to the home page. Quick links. "
+                         "Past Winners. Show More. Doubles Draw 64."}]
+
+    assert enrich_event(sport="tennis", sujet="Samsonova L.",
+                        blockers=["INSUFFICIENT_FEATURES"],
+                        recherche=lambda q, d: bruit,
+                        cache=EnrichmentCache()) == ()
+
+
+def test_une_phrase_qui_nomme_le_sujet_est_retenue():
+    utile = [{"url": "https://www.wtatennis.com/x", "title": "WTA",
+              "content": "Menu. Home. Samsonova has withdrawn from the tournament "
+                         "with a right shoulder injury. Past winners."}]
+
+    features = enrich_event(sport="tennis", sujet="Samsonova L.",
+                            blockers=["INSUFFICIENT_FEATURES"],
+                            recherche=lambda q, d: utile,
+                            cache=EnrichmentCache())
+
+    assert features
+    assert "withdrawn" in features[0].value
+    assert "Past winners" not in features[0].value

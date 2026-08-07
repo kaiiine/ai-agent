@@ -259,7 +259,8 @@ def _traces(evaluations, refus=()):
     return tuple(traces)
 
 
-def _run(constraints, evaluations=(), scan=None, refus=(), scannes=40, readiness=None):
+def _run(constraints, evaluations=(), scan=None, refus=(), scannes=40, readiness=None,
+         enrich=None):
     from src.agents.quant.conversation.observability import ScanTelemetry
 
     vus: dict = {}
@@ -278,7 +279,7 @@ def _run(constraints, evaluations=(), scan=None, refus=(), scannes=40, readiness
 
     run = run_recommendation(constraints, now=_MAINTENANT,
                              scan=scan or scan_par_defaut, persist_audit=None,
-                             readiness=readiness)
+                             readiness=readiness, enrich=enrich)
     return run, vus
 
 

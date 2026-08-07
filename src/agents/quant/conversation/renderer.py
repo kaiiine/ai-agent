@@ -283,7 +283,38 @@ def _render_candidat(evaluation: Any, obs: Any = None, fenetre: Any = None) -> l
         f"- Raisons complètes : {', '.join(evaluation.policy_reasons) or NON_APPLICABLE}",
         f"- Provenance : `{c.event_id}` · `{c.market_id}` · "
         f"observé {_valeur(observed_at, lambda v: render_kickoff(v))}",
-    ]
+    ] + _render_internet(obs, c, evaluation)
+
+
+def _render_internet(obs: Any, candidate: Any, evaluation: Any) -> list[str]:
+    """Faits externes et pistes de provider — clairement séparés des chiffres.
+
+    Ils sont présentés APRÈS les probabilités et sous un intitulé distinct :
+    accolés aux nombres, ils se liraient comme une justification de la mesure,
+    alors qu'ils n'y participent en rien.
+    """
+    lignes: list[str] = []
+
+    features = obs.features_for(candidate) if obs is not None else ()
+    if features:
+        lignes += ["- **Contexte externe** — informatif, n'entre dans aucun calcul :"]
+        for f in features:
+            marque = {"OFFICIAL": "✓", "REPUTABLE": "·"}.get(f.confidence, "⚠")
+            lignes.append(f"  - {marque} {f.value[:160]} — [{f.source[:40]}]({f.url})")
+
+    # Le blocage « aucun provider » est le seul qu'un abonnement puisse lever :
+    # montrer les options fait gagner un temps réel à qui veut le corriger.
+    if "PROVIDER_COVERAGE_MISSING" in (evaluation.policy_reasons or ()):
+        from ...enrichment.providers import providers_for
+
+        options = providers_for(candidate.sport)
+        if options:
+            lignes += ["- **Providers candidats** (aucune intégration automatique) :"]
+            for o in options[:5]:
+                lignes.append(f"  - {o.name} — **{o.access}**"
+                              + (f" · {o.price_hint}" if o.price_hint else "")
+                              + f" · {', '.join(o.covers[:4])}")
+    return lignes
 
 
 # ── Matrice des bloqueurs, couche par couche ──────────────────────────────────

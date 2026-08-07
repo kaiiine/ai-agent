@@ -115,9 +115,17 @@ class RunObservability:
     #: jointure sur la clé du marché — une lecture, jamais un recalcul.
     adapted_by_key: Mapping[tuple[str, str, str], Any] = field(default_factory=dict)
 
+    #: `event_id` -> faits externes. Attaché à l'OBSERVABILITÉ et jamais au
+    #: candidat : une feature Internet ne doit pas pouvoir voyager dans un objet
+    #: que l'Advisor lit. La séparation est structurelle, pas conventionnelle.
+    internet_features: Mapping[str, tuple[Any, ...]] = field(default_factory=dict)
+
     def adapted_for(self, candidate: Any) -> Any | None:
         return self.adapted_by_key.get(
             (candidate.event_id, candidate.market_id, candidate.selection))
+
+    def features_for(self, candidate: Any) -> tuple[Any, ...]:
+        return self.internet_features.get(candidate.event_id, ())
 
     # ── Couverture, niveau par niveau ─────────────────────────────────────────
     @property

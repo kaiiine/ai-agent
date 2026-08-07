@@ -191,6 +191,7 @@ def run_recommendation(
     persist_audit: Callable | None = _default_audit,
     request_id: str | None = None,
     readiness: Callable[[Sequence[str]], tuple] | None = None,
+    enrich: Callable[[Any, Sequence[str]], dict] | None = None,
 ) -> RecommendationRun:
     from ..advisor.domain.enums import MaturityPolicy, RiskProfile
     from ..advisor.domain.requests import RecommendationRequest
@@ -284,6 +285,12 @@ def run_recommendation(
 
     response = result.recommendation
 
+    # Enrichissement Internet — APRÈS l'évaluation, et seulement pour la revue.
+    # L'ordre n'est pas cosmétique : appelé avant, il pourrait influencer ce qui
+    # est évalué ; appelé sur des BET, il coûterait du réseau pour des candidats
+    # dont la décision est déjà prise.
+    features = enrich(response, sports) if enrich is not None else {}
+
     # `PipelineRunResult.trace` était produit puis jeté. Il porte l'évaluation de
     # politique de CHAQUE candidat — y compris ceux qui ne ressortent nulle part
     # dans la réponse, et dont on ne pouvait donc pas dire pourquoi ils sont
@@ -297,6 +304,7 @@ def run_recommendation(
             tuple(sorted({t.sport for t in traces if t.evaluated}))),
         adapted_by_key={(e.event_id, e.market_id, e.selection): e
                         for e in batch.evaluations},
+        internet_features=features,
     )
 
     evidence = BettingResponseEvidence(

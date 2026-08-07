@@ -12,6 +12,7 @@ datés et sourcés, jamais un nombre qui entrerait dans un calcul.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
@@ -112,6 +113,76 @@ def should_enrich(blockers: Sequence[str]) -> bool:
     return any(b in DECLENCHEURS for b in blockers)
 
 
+#: Nombre de rencontres enrichies par run. Chaque rencontre coûte plusieurs
+#: requêtes ; enrichir trente candidats brûlerait le quota pour un utilisateur
+#: qui n'en lira que les premiers.
+MAX_EVENEMENTS_ENRICHIS = 3
+
+
+def enrich_review_candidates(
+    response: Any, sports: Sequence[str], *,
+    limite: int = MAX_EVENEMENTS_ENRICHIS, **kw,
+) -> dict[str, tuple[InternetFeature, ...]]:
+    """Enrichit les premiers candidats de REVUE — et eux seuls.
+
+    Ni les portefeuilles recommandés ni les rejetés : un BET a sa décision prise,
+    un REJECTED n'a pas à être expliqué par le web. Seule la revue bénéficie d'un
+    contexte externe, parce que c'est là que l'utilisateur cherche à comprendre.
+    """
+    from ..conversation.review_ranking import rank_review
+
+    candidats = list(getattr(response, "review_candidates", ()) or ())
+    if not candidats:
+        return {}
+
+    sortie: dict[str, tuple[InternetFeature, ...]] = {}
+    for ligne in rank_review(candidats)[:limite]:
+        c = ligne.candidate
+        blocages = tuple(ligne.evaluation.policy_reasons) + ("INSUFFICIENT_FEATURES",)
+        features = enrich_event(
+            sport=c.sport, sujet=_libelle(c), competition=c.competition_id,
+            blockers=blocages, **kw)
+        if features:
+            sortie[c.event_id] = features
+    return sortie
+
+
+def _extrait_pertinent(resultat: dict, sujet: str) -> str:
+    """Une phrase qui PARLE du sujet, ou rien.
+
+    Tavily rend le texte brut de la page. Sur une page officielle WTA, cela
+    comprend le menu, le logo et le palmarès du tournoi — sourcé, officiel, et
+    sans rapport avec la rencontre. Afficher ça sous « contexte externe » donne
+    l'apparence d'une information là où il n'y a qu'une page.
+
+    On ne garde donc qu'une phrase qui mentionne un nom du sujet. Ne rien
+    afficher est préférable à afficher du remplissage : l'utilisateur ne peut pas
+    distinguer un fait d'un fragment de navigation.
+    """
+    contenu = " ".join((resultat.get("content") or "").split())
+    if not contenu:
+        return ""
+
+    noms = [m for m in re.split(r"[–\-—/]|\bvs\b", sujet) for m in [m.strip()] if len(m) > 2]
+    cles = {mot.strip(".,").lower() for nom in noms for mot in nom.split()
+            if len(mot.strip(".,")) >= 3}
+    if not cles:
+        return ""
+
+    for phrase in re.split(r"(?<=[.!?])\s+", contenu):
+        minuscule = phrase.lower()
+        if any(cle in minuscule for cle in cles) and 30 <= len(phrase) <= 300:
+            return phrase.strip()
+    return ""
+
+
+def _libelle(candidate: Any) -> str:
+    """Nom lisible des participants, depuis le référentiel — jamais dérivé d'un
+    identifiant, qui donnerait « player:tennis:atp:ruud_c »."""
+    from ..conversation.renderer import participant_label
+    return participant_label(candidate.participant_ids)
+
+
 def _tavily_search(requete: str, domaines: Sequence[str]) -> list[dict]:   # pragma: no cover (réseau)
     from tavily import TavilyClient
 
@@ -159,11 +230,11 @@ def enrich_event(
             continue
         for r in resultats[:2]:
             url = r.get("url") or ""
-            extrait = (r.get("content") or r.get("title") or "").strip()
+            extrait = _extrait_pertinent(r, sujet)
             if not url or not extrait:
                 continue
             trouvees.append(make(
-                feature_type, extrait[:300], source=r.get("title") or url,
+                feature_type, extrait, source=r.get("title") or url,
                 url=url, confidence=confidence_for(url, sport), subject=sujet))
 
     resultat = tuple(sort_by_authority(trouvees))

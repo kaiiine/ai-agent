@@ -33,6 +33,16 @@ from .renderer import render
 from .window import resolve_window
 
 
+def _enrichir(response, sports):
+    """Faits externes pour la revue. Une panne d'enrichissement est sans
+    conséquence : la réponse structurée existe déjà quand on arrive ici."""
+    try:
+        from ..enrichment.enrich import enrich_review_candidates
+        return enrich_review_candidates(response, sports)
+    except Exception:   # noqa: BLE001
+        return {}
+
+
 @tool("betting_recommend")
 def betting_recommend(
     when: str = "",
@@ -106,7 +116,10 @@ def betting_recommend(
         # mesure le MODÈLE, pas le run, et n'entre donc que dans le rendu debug.
         run = run_recommendation(
             contraintes, now=maintenant,
-            readiness=collect_readiness if debug else None)
+            readiness=collect_readiness if debug else None,
+            # Enrichissement APRÈS l'évaluation, borné aux premiers candidats de
+            # revue. Son échec réseau ne coûte jamais la réponse structurée.
+            enrich=_enrichir)
     except Exception as exc:   # noqa: BLE001 — une panne ne doit rien faire inventer
         return json.dumps({
             "status": "TECHNICAL_FAILURE",
