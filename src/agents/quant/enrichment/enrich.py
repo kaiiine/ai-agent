@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Callable, Sequence
 
 from .features import InternetFeature, make
@@ -33,39 +35,46 @@ DECLENCHEURS = frozenset({
     "DATA_TOO_STALE",
 })
 
+#: Portée d'une requête. Elle décide de la clé de cache, et c'est tout l'enjeu :
+#: le tableau et la surface d'un tournoi sont les MÊMES pour ses trois rencontres.
+#: Cachés par sujet, ils étaient re-cherchés une fois par rencontre — trois appels
+#: réseau pour trois fois la même réponse.
+EVENEMENT = "EVENEMENT"
+COMPETITION = "COMPETITION"
+
 #: Requêtes CIBLÉES par sport. Jamais « actualités tennis » : une recherche
 #: générique rend des articles d'opinion, et c'est exactement ce qu'on ne veut
 #: pas voir remonter comme « information ».
-_REQUETES: dict[str, tuple[tuple[str, str], ...]] = {
+_REQUETES: dict[str, tuple[tuple[str, str, str], ...]] = {
     "tennis": (
-        ("INJURY", "{sujet} injury withdrawal official ATP WTA"),
-        ("WITHDRAWAL", "{sujet} withdraws retires walkover tournament"),
-        ("OFFICIAL_RANKING", "{sujet} official ATP WTA ranking current"),
-        ("DRAW", "{competition} draw order of play official"),
-        ("SURFACE", "{competition} surface court type official"),
+        ("INJURY", EVENEMENT, "{sujet} injury withdrawal official ATP WTA"),
+        ("WITHDRAWAL", EVENEMENT, "{sujet} withdraws retires walkover tournament"),
+        ("OFFICIAL_RANKING", EVENEMENT, "{sujet} official ATP WTA ranking current"),
+        ("DRAW", COMPETITION, "{competition} draw order of play official"),
+        ("SURFACE", COMPETITION, "{competition} surface court type official"),
     ),
     "football": (
-        ("LINEUP", "{sujet} official starting lineup team news"),
-        ("INJURY", "{sujet} injury list unavailable players official"),
-        ("SUSPENSION", "{sujet} suspended players official"),
-        ("WEATHER", "{competition} match weather forecast pitch conditions"),
+        ("LINEUP", EVENEMENT, "{sujet} official starting lineup team news"),
+        ("INJURY", EVENEMENT, "{sujet} injury list unavailable players official"),
+        ("SUSPENSION", EVENEMENT, "{sujet} suspended players official"),
+        ("WEATHER", COMPETITION, "{competition} match weather forecast pitch conditions"),
     ),
     "basketball": (
-        ("LINEUP", "{sujet} starting lineup official"),
-        ("INJURY", "{sujet} injury report official"),
-        ("REST_STATUS", "{sujet} load management rest back-to-back"),
+        ("LINEUP", EVENEMENT, "{sujet} starting lineup official"),
+        ("INJURY", EVENEMENT, "{sujet} injury report official"),
+        ("REST_STATUS", EVENEMENT, "{sujet} load management rest back-to-back"),
     ),
     "baseball": (
-        ("LINEUP", "{sujet} probable starting pitcher official"),
-        ("INJURY", "{sujet} injured list official"),
+        ("LINEUP", EVENEMENT, "{sujet} probable starting pitcher official"),
+        ("INJURY", EVENEMENT, "{sujet} injured list official"),
     ),
     "american_football": (
-        ("INJURY", "{sujet} official injury report status"),
-        ("LINEUP", "{sujet} inactives depth chart official"),
+        ("INJURY", EVENEMENT, "{sujet} official injury report status"),
+        ("LINEUP", EVENEMENT, "{sujet} inactives depth chart official"),
     ),
     "hockey": (
-        ("INJURY", "{sujet} injury report official"),
-        ("LINEUP", "{sujet} projected lineup goalie starter"),
+        ("INJURY", EVENEMENT, "{sujet} injury report official"),
+        ("LINEUP", EVENEMENT, "{sujet} projected lineup goalie starter"),
     ),
     # `volleyball` n'a volontairement aucune requête : je ne connais pas ses
     # sources officielles de compositions et de blessures assez pour écrire une
@@ -76,33 +85,43 @@ _REQUETES: dict[str, tuple[tuple[str, str], ...]] = {
 
 @dataclass
 class _Entree:
-    features: tuple[InternetFeature, ...]
+    resultats: tuple[dict, ...]
     expire_a: float
 
 
 class EnrichmentCache:
-    """Cache à durée de vie. Une blessure annoncée ne change pas toutes les
-    minutes ; réinterroger le web à chaque rendu brûlerait le quota sans rien
-    apprendre."""
+    """Cache à durée de vie, indexé par REQUÊTE et portant les résultats BRUTS.
+
+    Il a d'abord retenu des `InternetFeature` déjà extraites. C'était une erreur
+    de granularité : l'extraction filtre sur les noms de la rencontre, si bien
+    que deux rencontres du même tournoi ne pouvaient pas se partager le tableau
+    ou la surface — la valeur en cache appartenait à la première d'entre elles.
+    Les résultats bruts, eux, ne dépendent que de la requête ; chaque rencontre
+    en tire ensuite ce qui la concerne.
+    """
 
     def __init__(self, ttl_seconds: float = 3600.0) -> None:
         self._ttl = ttl_seconds
         self._entrees: dict[str, _Entree] = {}
+        self._verrou = Lock()
 
-    def get(self, cle: str) -> tuple[InternetFeature, ...] | None:
-        entree = self._entrees.get(cle)
-        if entree is None:
-            return None
-        if time.monotonic() > entree.expire_a:
-            del self._entrees[cle]
-            return None
-        return entree.features
+    def get(self, cle: str) -> tuple[dict, ...] | None:
+        with self._verrou:
+            entree = self._entrees.get(cle)
+            if entree is None:
+                return None
+            if time.monotonic() > entree.expire_a:
+                del self._entrees[cle]
+                return None
+            return entree.resultats
 
-    def set(self, cle: str, features: Sequence[InternetFeature]) -> None:
-        self._entrees[cle] = _Entree(tuple(features), time.monotonic() + self._ttl)
+    def set(self, cle: str, resultats: Sequence[dict]) -> None:
+        with self._verrou:
+            self._entrees[cle] = _Entree(tuple(resultats), time.monotonic() + self._ttl)
 
     def __len__(self) -> int:
-        return len(self._entrees)
+        with self._verrou:
+            return len(self._entrees)
 
 
 CACHE = EnrichmentCache()
@@ -117,6 +136,10 @@ def should_enrich(blockers: Sequence[str]) -> bool:
 #: requêtes ; enrichir trente candidats brûlerait le quota pour un utilisateur
 #: qui n'en lira que les premiers.
 MAX_EVENEMENTS_ENRICHIS = 3
+
+#: Requêtes menées de front. Borné : l'enrichissement est un service d'appoint et
+#: ne doit pas saturer le quota ni la bande passante d'un coup.
+_PARALLELISME = 8
 
 
 def enrich_review_candidates(
@@ -135,16 +158,118 @@ def enrich_review_candidates(
     if not candidats:
         return {}
 
-    sortie: dict[str, tuple[InternetFeature, ...]] = {}
-    for ligne in rank_review(candidats)[:limite]:
+    lignes = rank_review(candidats)[:limite]
+    if not lignes:
+        return {}
+
+    recherche = kw.get("recherche", _tavily_search)
+    cache = kw.get("cache") or CACHE
+
+    # UNE passe pour toutes les rencontres. Enrichir chacune dans son propre fil
+    # les faisait partir ensemble, avant qu'aucune n'ait rempli le cache : les
+    # requêtes de tournoi étaient émises deux fois. Rassembler les requêtes avant
+    # de les lancer supprime la course au lieu d'espérer la gagner.
+    travaux: dict[str, tuple[str, str]] = {}          # requête -> (sport, type)
+    par_evenement: list[tuple[Any, list[tuple[str, str]]]] = []
+    for ligne in lignes:
         c = ligne.candidate
         blocages = tuple(ligne.evaluation.policy_reasons) + ("INSUFFICIENT_FEATURES",)
-        features = enrich_event(
-            sport=c.sport, sujet=_libelle(c), competition=c.competition_id,
-            blockers=blocages, **kw)
+        if not should_enrich(blocages):
+            continue
+        plans = _plans(c.sport, _libelle(c), _libelle_competition(c.competition_id),
+                       kw.get("types"))
+        par_evenement.append((c, plans))
+        for feature_type, requete in plans:
+            travaux.setdefault(requete, (c.sport, feature_type))
+
+    brut = _chercher(travaux, recherche, cache)
+    sortie: dict[str, tuple[InternetFeature, ...]] = {}
+    for c, plans in par_evenement:
+        features = _extraire(plans, brut, sport=c.sport, sujet=_libelle(c))
         if features:
             sortie[c.event_id] = features
     return sortie
+
+
+def _libelle_competition(competition_id: str) -> str:
+    """« competition:tennis:wta:tour » -> « WTA tour ».
+
+    Sans cette traduction, la requête émise était littéralement
+    « competition:tennis:wta:tour draw order of play » : un identifiant interne
+    envoyé à un moteur de recherche. Elle rendait des pages sans rapport, qu'un
+    domaine officiel suffisait ensuite à faire passer pour de l'information.
+    """
+    parties = [p for p in (competition_id or "").split(":") if p]
+    if len(parties) < 2:
+        return competition_id or ""
+    interessantes = parties[2:] if parties[0] == "competition" else parties
+    mots = [m for p in interessantes for m in p.replace("_", " ").split()]
+    sigles = {"atp", "wta", "nba", "nhl", "nfl", "mlb", "itf", "uefa", "fifa"}
+    return " ".join(m.upper() if m.lower() in sigles else m for m in mots)
+
+
+def _plans(sport: str, sujet: str, competition: str,
+           types: Sequence[str] | None = None) -> list[tuple[str, str]]:
+    """(type de fait, requête formatée) pour un sujet — sans rien chercher."""
+    gabarits = _REQUETES.get(sport, ())
+    if types is not None:
+        gabarits = tuple(g for g in gabarits if g[0] in types)
+    return [(feature_type, gabarit.format(sujet=sujet, competition=competition or sujet))
+            for feature_type, _portee, gabarit in gabarits]
+
+
+def _chercher(travaux: dict[str, tuple[str, str]], recherche, cache) -> dict[str, list[dict]]:
+    """Résultats BRUTS par requête : cache d'abord, réseau en parallèle ensuite.
+
+    Les requêtes sont indépendantes ; les enchaîner faisait payer leur somme.
+    Cinq requêtes à ~2,4 s coûtaient 12 s pour UNE rencontre, sur un pipeline qui
+    en prend 3 au total.
+    """
+    brut: dict[str, list[dict]] = {}
+    manquantes = []
+    for requete, (sport, _type) in travaux.items():
+        en_cache = cache.get(requete)
+        if en_cache is not None:
+            brut[requete] = list(en_cache)
+        else:
+            manquantes.append((requete, sport))
+
+    if not manquantes:
+        return brut
+
+    def _une(travail):
+        requete, sport = travail
+        try:
+            return requete, recherche(requete, official_domains(sport))
+        except Exception:   # noqa: BLE001 — l'enrichissement ne casse jamais un run
+            return requete, []
+
+    with ThreadPoolExecutor(max_workers=min(_PARALLELISME, len(manquantes))) as pool:
+        for requete, resultats in pool.map(_une, manquantes):
+            brut[requete] = resultats or []
+            cache.set(requete, brut[requete])
+    return brut
+
+
+def _extraire(plans: list[tuple[str, str]], brut: dict[str, list[dict]], *,
+              sport: str, sujet: str) -> tuple[InternetFeature, ...]:
+    """Faits d'UNE rencontre, tirés de résultats qui peuvent être partagés.
+
+    L'extraction est par rencontre parce qu'elle filtre sur ses noms : la même
+    page de tournoi ne dit pas la même chose à deux affiches différentes.
+    Parcours dans l'ordre des plans — jamais dans l'ordre d'arrivée réseau.
+    """
+    trouvees: list[InternetFeature] = []
+    for feature_type, requete in plans:
+        for r in (brut.get(requete) or ())[:2]:
+            url = r.get("url") or ""
+            extrait = _extrait_pertinent(r, sujet)
+            if not url or not extrait:
+                continue
+            trouvees.append(make(
+                feature_type, extrait, source=r.get("title") or url,
+                url=url, confidence=confidence_for(url, sport), subject=sujet))
+    return tuple(sort_by_authority(trouvees))
 
 
 def _extrait_pertinent(resultat: dict, sujet: str) -> str:
@@ -208,35 +333,11 @@ def enrich_event(
     if not should_enrich(blockers):
         return ()
 
-    plans = _REQUETES.get(sport, ())
-    if types is not None:
-        plans = tuple(p for p in plans if p[0] in types)
+    plans = _plans(sport, sujet, competition, types)
     if not plans:
         return ()
 
     cache = cache if cache is not None else CACHE
-    cle = f"{sport}|{sujet}|{competition}|{','.join(t for t, _ in plans)}"
-    en_cache = cache.get(cle)
-    if en_cache is not None:
-        return en_cache
-
-    officiels = official_domains(sport)
-    trouvees: list[InternetFeature] = []
-    for feature_type, gabarit in plans:
-        requete = gabarit.format(sujet=sujet, competition=competition or sujet)
-        try:
-            resultats = recherche(requete, officiels)
-        except Exception:   # noqa: BLE001 — l'enrichissement ne casse jamais un run
-            continue
-        for r in resultats[:2]:
-            url = r.get("url") or ""
-            extrait = _extrait_pertinent(r, sujet)
-            if not url or not extrait:
-                continue
-            trouvees.append(make(
-                feature_type, extrait, source=r.get("title") or url,
-                url=url, confidence=confidence_for(url, sport), subject=sujet))
-
-    resultat = tuple(sort_by_authority(trouvees))
-    cache.set(cle, resultat)
-    return resultat
+    travaux = {requete: (sport, feature_type) for feature_type, requete in plans}
+    brut = _chercher(travaux, recherche, cache)
+    return _extraire(plans, brut, sport=sport, sujet=sujet)

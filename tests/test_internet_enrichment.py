@@ -211,7 +211,37 @@ def test_la_meme_recherche_n_est_pas_relancee():
 
     assert premier == second
     assert len(appels) == 5          # une passe, pas deux
-    assert len(cache) == 1
+    assert len(cache) == 5           # une entrée PAR REQUÊTE, pas par événement
+
+
+def test_deux_rencontres_du_meme_tournoi_partagent_le_tableau_et_la_surface():
+    """Le tableau et la surface appartiennent au TOURNOI, pas à la rencontre.
+
+    Cachés par sujet, ils étaient re-cherchés pour chacune de ses rencontres :
+    trois appels réseau rendaient trois fois la même page. C'est la portée de la
+    requête, et non l'événement qui la déclenche, qui doit décider de la clé.
+    """
+    appels = []
+
+    def recherche(requete, domaines):
+        appels.append(requete)
+        return _resultat()
+
+    cache = EnrichmentCache()
+    commun = dict(competition="ATP Montréal", blockers=["INSUFFICIENT_FEATURES"],
+                  recherche=recherche, cache=cache)
+    enrich_event(sport="tennis", sujet="Ruud C. – Shelton B.", **commun)
+    n_apres_premier = len(appels)
+    enrich_event(sport="tennis", sujet="Sinner J. – Alcaraz C.", **commun)
+
+    # 5 requêtes la première fois ; la seconde rencontre ne repaye que ses 3
+    # requêtes d'ÉVÉNEMENT — le tableau et la surface sont déjà connus.
+    assert n_apres_premier == 5
+    assert len(appels) - n_apres_premier == 3
+    # « draw » seul matcherait « withdraws » : on cible ce qui n'appartient qu'aux
+    # requêtes de tournoi.
+    assert not [r for r in appels[n_apres_premier:]
+                if "order of play" in r or "surface court" in r]
 
 
 def test_le_cache_expire():
@@ -386,3 +416,95 @@ def test_une_phrase_qui_nomme_le_sujet_est_retenue():
     assert features
     assert "withdrawn" in features[0].value
     assert "Past winners" not in features[0].value
+
+
+# ══ Coût réseau : ce qui est commun n'est cherché qu'une fois ════════════════
+def test_le_libelle_de_competition_n_est_jamais_un_identifiant_canonique():
+    """La requête émise était littéralement « competition:tennis:wta:tour draw
+    order of play » : un identifiant interne envoyé à un moteur de recherche.
+    Elle rendait des pages sans rapport, qu'un domaine officiel suffisait ensuite
+    à faire passer pour de l'information."""
+    from src.agents.quant.enrichment.enrich import _libelle_competition
+
+    assert _libelle_competition("competition:tennis:wta:tour") == "WTA tour"
+    assert _libelle_competition("competition:football:fra:ligue_1") == "fra ligue 1"
+    assert _libelle_competition("competition:basketball:usa:nba") == "usa NBA"
+    for identifiant in ("competition:tennis:atp:tour", "competition:football:eng:pl"):
+        assert ":" not in _libelle_competition(identifiant)
+
+
+def test_plusieurs_rencontres_du_meme_tournoi_ne_paient_le_tableau_qu_une_fois():
+    """Enrichir chaque rencontre dans son propre fil les faisait partir ensemble,
+    avant qu'aucune n'ait rempli le cache : les requêtes de tournoi étaient
+    émises deux fois. Rassembler les requêtes avant de les lancer supprime la
+    course au lieu d'espérer la gagner."""
+    from src.agents.quant.enrichment.enrich import enrich_review_candidates
+
+    appels = []
+
+    def recherche(requete, domaines):
+        appels.append(requete)
+        return []
+
+    sans, _ = _run_enrichi()
+    enrich_review_candidates(sans.response, ["tennis"],
+                             recherche=recherche, cache=EnrichmentCache())
+
+    assert appels, "aucune requête émise"
+    assert len(appels) == len(set(appels)), f"requêtes dupliquées : {appels}"
+    tournoi = [r for r in appels if "order of play" in r or "surface court" in r]
+    assert len(tournoi) == len(set(tournoi))
+
+
+def test_les_requetes_sont_menees_de_front():
+    """Cinq requêtes à ~2,4 s coûtaient 12 s pour UNE rencontre, sur un pipeline
+    qui en prend 3 au total. Le mur doit rester loin sous la somme."""
+    import threading
+    import time
+
+    simultanees, maximum, verrou = 0, 0, threading.Lock()
+
+    def recherche(requete, domaines):
+        nonlocal simultanees, maximum
+        with verrou:
+            simultanees += 1
+            maximum = max(maximum, simultanees)
+        time.sleep(0.05)
+        with verrou:
+            simultanees -= 1
+        return []
+
+    enrich_event(sport="tennis", sujet="Ruud C.", competition="ATP Montréal",
+                 blockers=["INSUFFICIENT_FEATURES"], recherche=recherche,
+                 cache=EnrichmentCache())
+
+    assert maximum >= 2, "les requêtes sont restées séquentielles"
+
+
+def test_l_ordre_du_rendu_ne_depend_pas_de_l_ordre_d_arrivee_reseau():
+    """Deux réponses identiques dans un ordre d'arrivée différent doivent rendre
+    la même liste : sinon le même run afficherait deux textes selon le réseau."""
+    import time
+
+    pages = {
+        "INJURY": {"url": "https://www.atptour.com/a", "title": "ATP",
+                   "content": "Ruud C. has withdrawn from the tournament with injury."},
+        "RANK": {"url": "https://www.wtatennis.com/b", "title": "WTA",
+                 "content": "Ruud C. is currently ranked inside the top ten players."},
+    }
+
+    def lente(requete, domaines):
+        if "injury" in requete:
+            time.sleep(0.15)                     # la première requête répond en dernier
+            return [pages["INJURY"]]
+        return [pages["RANK"]]
+
+    def rapide(requete, domaines):
+        return [pages["INJURY"]] if "injury" in requete else [pages["RANK"]]
+
+    args = dict(sport="tennis", sujet="Ruud C.", competition="ATP Montréal",
+                blockers=["INSUFFICIENT_FEATURES"])
+    a = enrich_event(**args, recherche=lente, cache=EnrichmentCache())
+    b = enrich_event(**args, recherche=rapide, cache=EnrichmentCache())
+
+    assert [(f.feature_type, f.value) for f in a] == [(f.feature_type, f.value) for f in b]
