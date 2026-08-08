@@ -70,6 +70,7 @@ def observations_collectees(cle: str) -> list:
     """
     try:
         from .clv.eligibility import eligible
+        from .clv.identity import historique_horaires
         from .clv.routing import observations_pour
         from .clv.store import JsonlOddsHistoryStore
         # Filtre d'ADMISSIBILITÉ, pas de correction : l'historique reste entier,
@@ -77,7 +78,12 @@ def observations_collectees(cle: str) -> list:
         # participent à la preuve. Sans lui, 45 décisions NHL prises 55 jours
         # avant leur coup d'envoi formeraient des paires mesurant deux mois de
         # dérive de marché.
-        return eligible(observations_pour(cle, JsonlOddsHistoryStore().all()))
+        historique = JsonlOddsHistoryStore().all()
+        # Le calendrier des horaires est construit sur l'historique COMPLET, avant
+        # le routage : juger une clôture demande le dernier coup d'envoi annoncé
+        # pour sa rencontre, et un sous-ensemble routé pourrait ne pas le porter.
+        return eligible(observations_pour(cle, historique),
+                        historique_horaires(historique))
     except Exception:   # noqa: BLE001
         return []
 

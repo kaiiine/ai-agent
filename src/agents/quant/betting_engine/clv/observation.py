@@ -15,6 +15,12 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 
+from .identity import (
+    scheduled_kickoff_as_observed,
+    stable_event_id,
+    stable_market_key,
+)
+
 
 class ObservationPhase(str, Enum):
     OPEN = "OPEN"                 # première cote observée (ouverture de marché)
@@ -51,5 +57,33 @@ class OddsObservation:
 
     @property
     def market_key(self) -> tuple[str, str, str, str]:
-        """Identité stable du marché pour apparier décision et clôture."""
+        """« Ai-je déjà écrit cette observation ? » — clé d'IDEMPOTENCE du collecteur.
+
+        Elle porte l'horaire, via `event_id`, et c'est indispensable : quand un
+        match est repoussé, le collecteur doit pouvoir capturer une NOUVELLE
+        clôture au voisinage du nouveau départ. Une clé insensible à l'horaire la
+        rejetterait comme un doublon déjà connu.
+
+        Pour rapprocher deux observations d'une même rencontre, c'est
+        `stable_market_key` qu'il faut — voir `identity.py`.
+        """
         return (self.event_id, self.market_type, self.selection, self.bookmaker)
+
+    @property
+    def scheduled_kickoff_as_observed(self) -> datetime | None:
+        """Coup d'envoi tel qu'ANNONCÉ à l'instant de cette observation.
+
+        Point-in-time : aucun report ultérieur ne la modifie, parce qu'elle est
+        lue sur l'identité écrite dans le store au moment de la capture.
+        """
+        return scheduled_kickoff_as_observed(self)
+
+    @property
+    def stable_event_id(self) -> str:
+        """Identité de la rencontre, insensible aux changements d'horaire."""
+        return stable_event_id(self)
+
+    @property
+    def stable_market_key(self) -> tuple[str, str, str, str]:
+        """« Même marché de la même rencontre » — clé d'APPARIEMENT de la CLV."""
+        return stable_market_key(self)

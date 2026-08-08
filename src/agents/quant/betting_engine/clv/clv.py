@@ -14,9 +14,12 @@ stockée ». Plusieurs lignes du MÊME match bougent ensemble (home/away/nul du 
 marché, plusieurs snapshots, plusieurs bookmakers) : les compter comme indépendantes
 gonflerait artificiellement l'échantillon. Définition retenue (V1, conservatrice) :
 
-  1. Pour chaque `market_key` (event, market, selection, bookmaker), on ne forme
-     qu'UNE paire : la DÉCISION la plus tardive STRICTEMENT antérieure à la première
-     clôture (les captures répétées d'un même marché sont fusionnées).
+  1. Pour chaque `stable_market_key` (rencontre STABLE, market, selection, bookmaker),
+     on ne forme qu'UNE paire : la DÉCISION la plus tardive STRICTEMENT antérieure à
+     la DERNIÈRE clôture (les captures répétées d'un même marché sont fusionnées).
+     L'identité de rencontre ignore l'horaire annoncé — un match repoussé reste le
+     même match, et sa décision doit pouvoir s'apparier avec sa vraie clôture
+     (cf. `identity.py`).
   2. L'ÉCHANTILLON EFFECTIF est le nombre d'ÉVÉNEMENTS indépendants (`n_events`) :
      toutes les paires d'un même événement sont agrégées en UNE valeur (moyenne
      intra-événement). C'est `n_events` — jamais le nombre brut de lignes ni de
@@ -53,7 +56,8 @@ _BOOTSTRAP_SEED = 20260801
 
 @dataclass(frozen=True)
 class ClvResult:
-    market_key: tuple[str, str, str, str]
+    #: Identité STABLE du marché — insensible aux reports d'horaire (identity.py).
+    stable_market_key: tuple[str, str, str, str]
     decision_odds: Decimal
     closing_odds: Decimal
     decision_time: datetime
@@ -74,20 +78,36 @@ class ClvReadiness:
 
 
 def _pair_for_market(obs_list: list[OddsObservation]) -> ClvResult | None:
-    """UNE paire par `market_key` (§4) : la DÉCISION la plus tardive strictement
-    antérieure à la première clôture. Fusionne les captures répétées d'un même marché
-    (un scheduler qui rescanne DECISION ne crée pas N observations « indépendantes »)."""
+    """UNE paire par `stable_market_key` (§4) : la DERNIÈRE clôture disponible, et
+    la DÉCISION la plus tardive strictement antérieure à elle.
+
+    Fusionne les captures répétées d'un même marché — un scheduler qui rescanne
+    DECISION ne crée pas N observations « indépendantes ».
+
+    POURQUOI LA DERNIÈRE CLÔTURE, ET NON LA PREMIÈRE. Une ligne de clôture est par
+    définition le DERNIER prix avant la fermeture du marché. Tant qu'un match
+    partait à l'heure, les clôtures d'un même marché tenaient dans une fenêtre de
+    trente minutes et le choix était indifférent. Il cesse de l'être dès qu'un
+    match est repoussé : les clôtures d'une même rencontre peuvent alors s'étaler
+    sur des heures, et retenir la première reviendrait à mesurer la dérive du
+    marché plutôt que la valeur de clôture.
+
+    Ce choix suffit à honorer la contrainte « clôture antérieure au coup d'envoi
+    final » sans que ce module connaisse le moindre horaire : quand l'appelant a
+    filtré par `eligibility`, toute clôture reçue est déjà prouvée dans la fenêtre
+    du dernier coup d'envoi connu.
+    """
     decisions = sorted((o for o in obs_list if o.phase is ObservationPhase.DECISION),
                        key=lambda o: o.observed_at)
     closings = sorted((o for o in obs_list if o.phase is ObservationPhase.CLOSING),
                       key=lambda o: o.observed_at)
     if not decisions or not closings:
         return None
-    earliest_closing = closings[0]
-    prior = [d for d in decisions if d.observed_at < earliest_closing.observed_at]
+    latest_closing = closings[-1]
+    prior = [d for d in decisions if d.observed_at < latest_closing.observed_at]
     if not prior:
         return None
-    return compute_clv(prior[-1], earliest_closing)
+    return compute_clv(prior[-1], latest_closing)
 
 
 def _bootstrap_lower_bound(values: list[float], confidence: float) -> float | None:
@@ -109,7 +129,7 @@ def _bootstrap_lower_bound(values: list[float], confidence: float) -> float | No
 
 
 def compute_clv(decision: OddsObservation, closing: OddsObservation) -> ClvResult:
-    if decision.market_key != closing.market_key:
+    if decision.stable_market_key != closing.stable_market_key:
         raise ValueError("CLV : décision et clôture doivent viser le même marché")
     if decision.phase is not ObservationPhase.DECISION:
         raise ValueError("CLV : la première observation doit être de phase DECISION")
@@ -122,7 +142,7 @@ def compute_clv(decision: OddsObservation, closing: OddsObservation) -> ClvResul
         )
     clv = decision.decimal_odds / closing.decimal_odds - Decimal("1")
     return ClvResult(
-        market_key=decision.market_key,
+        stable_market_key=decision.stable_market_key,
         decision_odds=decision.decimal_odds,
         closing_odds=closing.decimal_odds,
         decision_time=decision.observed_at,
@@ -144,18 +164,20 @@ def clv_readiness(
     (paramètre de méthode fourni par la politique de maturité). Aucune valeur fabriquée :
     absence de paire -> NOT_YET_MEASURABLE, mean_clv=None (jamais 0).
     """
+    # Appariement sur l'identité STABLE : une décision prise sous l'horaire de
+    # 18 h 00 et sa clôture prise sous 18 h 50 appartiennent à la même rencontre.
     by_market: dict[tuple, list[OddsObservation]] = defaultdict(list)
     for obs in observations:
-        by_market[obs.market_key].append(obs)
+        by_market[obs.stable_market_key].append(obs)
 
-    per_event: dict[str, list[Decimal]] = defaultdict(list)   # event_id -> CLV des paires
+    per_event: dict[str, list[Decimal]] = defaultdict(list)   # rencontre -> CLV des paires
     n_pairs = 0
     for market_key, obs_list in by_market.items():
         result = _pair_for_market(obs_list)
         if result is None:
             continue
         n_pairs += 1
-        per_event[market_key[0]].append(result.clv)           # market_key[0] == event_id
+        per_event[market_key[0]].append(result.clv)           # market_key[0] == rencontre stable
 
     if n_pairs == 0:
         return ClvReadiness(

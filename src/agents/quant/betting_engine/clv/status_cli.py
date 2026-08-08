@@ -20,7 +20,12 @@ from collections import defaultdict
 
 from ..maturity import load_maturity_policy
 from .clv import clv_readiness
-from .eligibility import eligible as admissibles, exclusions
+from .eligibility import (
+    CLOSING_OUTSIDE_FINAL_SCHEDULE_WINDOW,
+    LEGACY_DECISION_HORIZON,
+    eligible as admissibles,
+    exclusions,
+)
 from .observation import ObservationPhase
 from .store import JsonlOddsHistoryStore
 
@@ -73,6 +78,11 @@ def collect(observations, *, min_events: int) -> list[dict]:
             "paires": lecture.n_complete_pairs,
             "independants": lecture.n_events,
             "exclues": len(lot) - len(admis),
+            # Les deux motifs d'exclusion ne se corrigent pas de la même façon :
+            # le legacy s'efface avec le temps, la dérive d'horaire demande une
+            # capture plus proche du départ RÉEL. Les additionner les cacherait.
+            "legacy": motifs.get(LEGACY_DECISION_HORIZON, 0),
+            "derive_horaire": motifs.get(CLOSING_OUTSIDE_FINAL_SCHEDULE_WINDOW, 0),
             "motifs": motifs,
             "requises": min_events,
             # La CLV MOYENNE est lue telle que `clv_readiness` la rend — jamais
@@ -102,14 +112,15 @@ def render(lignes: list[dict], *, min_events: int) -> list[str]:
                 "",
                 "En continu : voir ops/systemd/README.md"]
 
-    entete = (f"{'sport':12} {'déc.':>5} {'clôt.':>5} {'paires':>7} {'admis':>6} "
-              f"{'exclues':>8} {'indép.':>7} {'requis':>7} {'CLV moy.':>10} "
-              f"{'borne basse':>12} {'statut':>19}  il manque")
+    entete = (f"{'sport':12} {'déc.':>5} {'clôt.':>5} {'brutes':>7} {'admises':>8} "
+              f"{'legacy':>7} {'dérive':>7} {'indép.':>7} {'requis':>7} "
+              f"{'CLV moy.':>10} {'borne basse':>12} {'statut':>19}  il manque")
     sortie = [entete, "-" * len(entete)]
     for ligne in lignes:
         sortie.append(
             f"{ligne['sport']:12} {ligne['decisions']:>5} {ligne['clotures']:>5} "
-            f"{ligne['paires_brutes']:>7} {ligne['paires']:>6} {ligne['exclues']:>8} "
+            f"{ligne['paires_brutes']:>7} {ligne['paires']:>8} "
+            f"{ligne['legacy']:>7} {ligne['derive_horaire']:>7} "
             f"{ligne['independants']:>7} {ligne['requises']:>7} "
             f"{_clv(ligne['mean_clv']):>10} {_clv(ligne['borne_basse']):>12} "
             f"{ligne['statut']:>19}  {ligne['manque']}")
@@ -135,7 +146,11 @@ def render(lignes: list[dict], *, min_events: int) -> list[str]:
         "(plancher conservateur, non dérivé des données — à recalibrer quand la "
         "collecte réelle aura de quoi le faire).",
         "« indép. » est l'échantillon EFFECTIF : plusieurs sélections d'un même "
-        "match bougent ensemble et ne comptent que pour une.",
+        "match bougent ensemble et ne comptent que pour une. Seul « indép. », "
+        "compté sur les paires ADMISES, gouverne le seuil.",
+        "« brutes » compte tout ce qui s'apparie ; « admises » ce qui a le droit "
+        "de prouver. « dérive » : cotes honnêtement relevées comme clôtures, puis "
+        "le match a été repoussé — elles restent au store, elles ne prouvent plus.",
     ]
     if all(ligne["clotures"] == 0 for ligne in lignes):
         sortie += [
