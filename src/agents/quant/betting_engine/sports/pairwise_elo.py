@@ -18,6 +18,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from src.agents.quant.betting_engine.clv import clv_readiness
+from src.agents.quant.betting_engine.calibration.calibrator import (
+    HistogramBinningCalibrator,
+)
 from src.agents.quant.betting_engine.maturity import (
     FRESHNESS_NOT_MEASURABLE,
     MaturityObservations,
@@ -97,16 +100,37 @@ class PairwiseEloRun:
     n_total: int
     n_evaluated: int
     exclusions: dict = field(default_factory=dict)
+    #: Prédictions AVANT calibration. Conservées pour l'audit et le replay : une
+    #: correction qu'on ne peut pas comparer à son absence n'est pas vérifiable,
+    #: et la probabilité brute reste le diagnostic du modèle lui-même.
+    raw_predictions: list[tuple[dict, str]] = field(default_factory=list)
+    #: Nombre de prédictions réellement corrigées (calibrateur ajusté).
+    n_calibrated: int = 0
 
 
-def run_pairwise_elo(games: list[PairwiseGame], params: EloParams) -> PairwiseEloRun:
+def run_pairwise_elo(games: list[PairwiseGame], params: EloParams, *,
+                     calibrate: bool = False) -> PairwiseEloRun:
     """Rejeu chronologique SANS FUITE : prédire depuis les notes antérieures, puis mettre
-    à jour. Démarrage à froid exclu (aucune probabilité fabriquée)."""
+    à jour. Démarrage à froid exclu (aucune probabilité fabriquée).
+
+    `calibrate` est OPT-IN, par modèle. Un calibrateur ne doit jamais apparaître
+    par effet de bord : il s'active pour un modèle dont le benchmark
+    point-in-time a montré qu'il améliore honnêtement les métriques, et pour
+    lui seul. Le volley, par exemple, l'a mesuré et REFUSÉ — son logloss s'y
+    dégradait.
+
+    Quand il est actif, le calibrateur est ajusté sur les seules prédictions
+    ANTÉRIEURES : la prédiction courante n'entre jamais dans l'ajustement qui la
+    corrige.
+    """
     ordered = sorted(games, key=lambda g: g.tipoff)
     ratings: dict[str, float] = {}
     played: Counter = Counter()
     prior: list[str] = []
     model_preds: list[tuple[dict, str]] = []
+    preds_brutes: list[tuple[dict, str]] = []
+    historique_calibration: list[tuple[dict, str]] = []
+    n_calibrees = 0
     baseline_preds: list[tuple[dict, str]] = []
     ids: list[str] = []
     months: list[str] = []
@@ -117,7 +141,17 @@ def run_pairwise_elo(games: list[PairwiseGame], params: EloParams) -> PairwiseEl
         ra = ratings.get(g.away_id, params.init_rating)
         if played[g.home_id] >= params.min_prior_games and played[g.away_id] >= params.min_prior_games:
             ph = p_home(rh, ra, params)
-            model_preds.append(({"home": ph, "away": 1.0 - ph}, g.outcome))
+            brutes = {"home": ph, "away": 1.0 - ph}
+            if calibrate:
+                calibrateur = HistogramBinningCalibrator.fit(historique_calibration)
+                retenues = calibrateur.apply(brutes)
+                if calibrateur.fitted:
+                    n_calibrees += 1
+                historique_calibration.append((brutes, g.outcome))
+            else:
+                retenues = brutes
+            preds_brutes.append((brutes, g.outcome))
+            model_preds.append((retenues, g.outcome))
             ids.append(g.game_id)
             months.append(g.tipoff.isoformat()[:7])
             if prior:
@@ -134,7 +168,8 @@ def run_pairwise_elo(games: list[PairwiseGame], params: EloParams) -> PairwiseEl
         prior.append(g.outcome)
 
     return PairwiseEloRun(model_preds, baseline_preds, tuple(ids), tuple(months),
-                          len(ordered), len(model_preds), dict(exclusions))
+                          len(ordered), len(model_preds), dict(exclusions),
+                          preds_brutes, n_calibrees)
 
 
 @dataclass(frozen=True)

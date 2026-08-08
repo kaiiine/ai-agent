@@ -26,11 +26,21 @@ DEFAULT_MIN_SAMPLES = 50                       # paires (issue, proba) minimales
 
 
 def _pooled_pairs(predictions: Sequence[Prediction]) -> list[tuple[float, float]]:
-    """(proba prédite, indicateur 0/1) mutualisés sur les 3 classes."""
+    """(proba prédite, indicateur 0/1) mutualisés sur les issues DE LA PRÉDICTION.
+
+    Les issues étaient lues dans une constante football — `home/draw/away`. La
+    primitive était donc générique de nom seulement : appliquée à un marché
+    2-way, elle échouait sur la clé `draw` absente, et rien dans sa signature ne
+    le laissait deviner.
+
+    L'espace d'issues est désormais celui que la prédiction DÉCLARE. Il vaut pour
+    2-way, 3-way et tout marché dont le contrat expose ses issues — sans qu'aucun
+    `if sport ==` n'apparaisse ici ni ailleurs.
+    """
     out: list[tuple[float, float]] = []
     for prob, outcome in predictions:
-        for c in CLASSES:
-            out.append((prob[c], 1.0 if c == outcome else 0.0))
+        for issue, probabilite in prob.items():
+            out.append((probabilite, 1.0 if issue == outcome else 0.0))
     return out
 
 
@@ -79,11 +89,15 @@ class HistogramBinningCalibrator:
         if not self.fitted:
             return dict(prob)
         mapped: dict[str, float] = {}
-        for c in CLASSES:
-            b = _bin_index(prob[c], self.n_bins)
+        # Les issues sont celles de la PRÉDICTION, jamais une constante football :
+        # un marché 2-way n'a pas de nul, et le lui imposer levait une KeyError.
+        for issue, probabilite in prob.items():
+            b = _bin_index(probabilite, self.n_bins)
             f = self.bin_freq[b]
-            mapped[c] = f if f is not None else prob[c]     # bin vide → brut, jamais fabriqué
+            mapped[issue] = f if f is not None else probabilite   # bin vide → brut
         total = sum(mapped.values())
         if total <= 0:
             return dict(prob)                                # dégénéré → identité
-        return {c: mapped[c] / total for c in CLASSES}
+        # Renormalisation : la somme des issues d'un marché vaut 1, quel que soit
+        # leur nombre. La calibration ne crée ni ne détruit de masse.
+        return {issue: valeur / total for issue, valeur in mapped.items()}
