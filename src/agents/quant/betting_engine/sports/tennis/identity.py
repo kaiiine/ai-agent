@@ -44,13 +44,28 @@ def _norm(s: str) -> str:
     return _strip_accents(s).lower().replace("-", " ").strip()
 
 
+# Un bloc d'initiales : « N. », « L.A. », « T. A. ». Le point est EXIGÉ dès qu'il y
+# a plus d'une lettre, sinon un patronyme court (« Li », « Wu ») passerait pour des
+# initiales et le nom de famille serait perdu.
+_INITIALES = re.compile(r"^(?:[A-Za-z]\.)+[A-Za-z]?$|^[A-Za-z]$")
+
+
 def dataset_key(name: str) -> tuple[str, str] | None:
-    """« Djokovic N. » / « Auger-Aliassime F. » -> (nom_famille, initiale)."""
-    m = re.match(r"^(.*?)\s+([A-Za-z])\.?(?:\s*[A-Za-z]\.?)*\s*$", name.strip())
-    if not m:
-        return None
-    surname = _norm(m.group(1))
-    return (surname, m.group(2).lower()) if surname else None
+    """« Djokovic N. » / « De Minaur A. » -> (nom_famille, initiale).
+
+    Le nom de famille court jusqu'au PREMIER bloc d'initiales, ce qui préserve les
+    patronymes composés. L'expression précédente terminait par
+    `(?:\\s*[A-Za-z]\\.?)*`, qui consomme n'importe quelle suite de lettres une par
+    une : « De Minaur A. » rendait `('de', 'm')` — le prénom devenait le nom, et
+    tous les joueurs à particule restaient introuvables.
+    """
+    jetons = name.strip().split()
+    for i, jeton in enumerate(jetons):
+        if i == 0 or not _INITIALES.match(jeton):
+            continue
+        surname = _norm(" ".join(jetons[:i]))
+        return (surname, jeton[0].lower()) if surname else None
+    return None
 
 
 def winamax_key(name: str) -> tuple[str, str] | None:
@@ -66,6 +81,25 @@ def winamax_key(name: str) -> tuple[str, str] | None:
 
 def slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", _norm(name)).strip("_")
+
+
+def cles_ambigues(noms) -> set:
+    """Clés qui recouvrent DEUX PERSONNES distinctes — les seules à refuser.
+
+    Plusieurs orthographes d'un même joueur (« Tirante T. A. » / « Tirante T.A. »,
+    « McNally C. » / « Mcnally C. ») partagent déjà un identifiant canonique : les
+    traiter comme ambiguës ferait perdre le joueur pour une différence de
+    ponctuation. Deux personnes réelles, elles, produisent des slugs distincts.
+
+    Cette règle était écrite DEUX FOIS — ici et dans la construction des alias —
+    et les deux copies décidaient d'argent. Une seule source désormais.
+    """
+    par_cle: dict = {}
+    for n in noms:
+        k = dataset_key(n)
+        if k:
+            par_cle.setdefault(k, set()).add(slugify(n))
+    return {k for k, slugs in par_cle.items() if len(slugs) > 1}
 
 
 def _load_aliases() -> dict:
@@ -87,11 +121,7 @@ def tennis_players(tour: str) -> tuple[list[CanonicalEntity], dict[str, str]]:
         names.add(m.p1_name)
         names.add(m.p2_name)
 
-    by_key: dict[tuple[str, str], set[str]] = {}
-    for n in names:
-        k = dataset_key(n)
-        if k:
-            by_key.setdefault(k, set()).add(n)
+    ambigues = cles_ambigues(names)
 
     alias_map = _load_aliases().get("aliases", {}).get(tour, {})   # {nom_dataset: [alias…]}
     entities: list[CanonicalEntity] = []
@@ -99,7 +129,7 @@ def tennis_players(tour: str) -> tuple[list[CanonicalEntity], dict[str, str]]:
     for name in sorted(names):
         k = dataset_key(name)
         cid = f"player:tennis:{tour}:{slugify(name)}"
-        ambiguous = bool(k) and len(by_key.get(k, ())) > 1
+        ambiguous = bool(k) and k in ambigues
         aliases = [] if ambiguous else list(alias_map.get(name, []))
         entities.append(CanonicalEntity(cid, name, aliases, {}))
         dataset_of[cid] = name
@@ -114,6 +144,7 @@ def build_alias_table(winamax_names, tour: str) -> dict[str, list[str]]:
     for m in ds.matches:
         names.add(m.p1_name)
         names.add(m.p2_name)
+    ambigues = cles_ambigues(names)
     by_key: dict[tuple[str, str], set[str]] = {}
     for n in names:
         k = dataset_key(n)
@@ -126,9 +157,16 @@ def build_alias_table(winamax_names, tour: str) -> dict[str, list[str]]:
         if not k:
             continue
         candidates = by_key.get(k)
-        if not candidates or len(candidates) > 1:   # inconnu ou AMBIGU -> aucun alias
+        if not candidates:
             continue
-        target = next(iter(candidates))
+        # Plusieurs ORTHOGRAPHES d'une même personne ne sont pas une ambiguïté :
+        # « Tirante T. A. » et « Tirante T.A. » désignent le même joueur et portent
+        # déjà le même identifiant canonique. Refuser là ferait perdre le joueur
+        # pour une différence de ponctuation. L'ambiguïté RÉELLE — deux personnes
+        # distinctes sous la même clé — reste refusée : leurs slugs diffèrent.
+        if k in ambigues:
+            continue
+        target = sorted(candidates)[0]              # déterministe entre variantes
         table.setdefault(target, [])
         if wx not in table[target]:
             table[target].append(wx)

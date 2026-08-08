@@ -90,17 +90,39 @@ def test_identity_bridge_keys_match_exactly():
 
 
 def test_ambiguous_key_gets_no_alias_never_misresolved():
-    # Deux joueurs partageant (nom, initiale) ne reçoivent AUCUN alias Winamax.
+    """Deux PERSONNES partageant (nom, initiale) ne reçoivent aucun alias Winamax.
+
+    L'ambiguïté se mesure sur les identités canoniques, pas sur le nombre
+    d'orthographes. « Tirante T. A. » et « Tirante T.A. » sont deux écritures d'un
+    seul joueur et portent le même `canonical_id` : les refuser ferait perdre le
+    joueur pour une différence de ponctuation, alors que le risque à écarter est
+    de rattacher DEUX personnes distinctes au même alias."""
     ents, _ = tennis_players("atp")
     by_key: dict = {}
     for e in ents:
         k = dataset_key(e.canonical_name)
         if k:
             by_key.setdefault(k, []).append(e)
-    ambiguous = [v for v in by_key.values() if len(v) > 1]
-    assert ambiguous, "le dataset doit contenir des clés homonymes (sinon test vide)"
-    for group in ambiguous:
+
+    ambigus = [v for v in by_key.values() if len({e.canonical_id for e in v}) > 1]
+    assert ambigus, "le dataset doit contenir de vraies homonymies (sinon test vide)"
+    for group in ambigus:
         assert all(not e.aliases for e in group)              # jamais rattaché au hasard
+
+
+def test_les_variantes_d_ecriture_gardent_leur_alias():
+    """Le pendant du test précédent : une seule personne écrite de deux façons doit
+    RESTER résolvable. C'est ce cas qui faisait perdre De Minaur, Van De Zandschulp
+    et Tirante — 6 joueurs du plateau live sur 32 événements."""
+    ents, _ = tennis_players("atp")
+    par_id: dict = {}
+    for e in ents:
+        par_id.setdefault(e.canonical_id, []).append(e)
+
+    fusionnes = [v for v in par_id.values() if len(v) > 1]
+    assert fusionnes, "aucune variante d'écriture : la canonicalisation ne fait rien"
+    assert any(any(e.aliases for e in group) for group in fusionnes), (
+        "toutes les variantes ont perdu leur alias — la fausse ambiguïté est de retour")
 
 
 # ── Chemin live générique ────────────────────────────────────────────────────────

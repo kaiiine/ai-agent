@@ -55,6 +55,9 @@
    "Darderi L.": [
     "Luciano Darderi"
    ],
+   "De Minaur A.": [
+    "Alex De Minaur"
+   ],
    "Diallo G.": [
     "Gabriel Diallo"
    ],
@@ -163,6 +166,9 @@
    "Musetti L.": [
     "Lorenzo Musetti"
    ],
+   "Nakashima B.": [
+    "Brandon Nakashima"
+   ],
    "Navone M.": [
     "Mariano Navone"
    ],
@@ -208,8 +214,14 @@
    "Tabilo A.": [
     "Alejandro Tabilo"
    ],
+   "Tiafoe F.": [
+    "Frances Tiafoe"
+   ],
    "Tien L.": [
     "Learner Tien"
+   ],
+   "Tirante T. A.": [
+    "Thiago Tirante"
    ],
    "Tirante T.A.": [
     "Thiago Tirante"
@@ -219,6 +231,9 @@
    ],
    "Vacherot V.": [
     "Valentin Vacherot"
+   ],
+   "Van De Zandschulp B.": [
+    "Botic Van De Zandschulp"
    ],
    "Vukic A.": [
     "Aleksandar Vukic"
@@ -366,6 +381,9 @@
    "Marino R.": [
     "Rebecca Marino"
    ],
+   "McNally C.": [
+    "Catherine McNally"
+   ],
    "Mertens E.": [
     "Elise Mertens"
    ],
@@ -398,6 +416,9 @@
    ],
    "Putintseva Y.": [
     "Yulia Putintseva"
+   ],
+   "Rakhimova K.": [
+    "Kamilla Rakhimova"
    ],
    "Ruzic A.": [
     "Antonia Ruzic"
@@ -477,7 +498,7 @@
   }
  },
  "method": "clé normalisée (nom_de_famille, initiale) — exacte, jamais fuzzy ; clés ambiguës et paires de double exclues",
- "n_live_names": 100,
- "refreshed_at": "2026-08-05T13:21:17.536130+00:00",
+ "n_live_names": 64,
+ "refreshed_at": "2026-08-06T10:25:21.131117+00:00",
  "source": "winamax PRELOADED_STATE (scan live)"
 }
