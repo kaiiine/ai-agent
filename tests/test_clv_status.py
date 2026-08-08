@@ -18,7 +18,15 @@ from src.agents.quant.betting_engine.clv.observation import (
 )
 from src.agents.quant.betting_engine.clv.status_cli import collect, render
 
-_T = datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc)
+_KICKOFF = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+_T = _KICKOFF - timedelta(hours=6)          # décision six heures avant, dans la policy
+
+
+def _ev(sport, competition="tour"):
+    """Identité RÉALISTE : elle porte le coup d'envoi, comme en production. Sans
+    lui, toute observation est jugée non datable et n'entre dans aucune preuve."""
+    return (f"event:{sport}:{competition}:{_KICKOFF:%Y-%m-%dT%H:%M:%S}Z"
+            f":home=a|away=b")
 
 
 def _obs(event_id, phase, cote, *, decalage=0, selection="home"):
@@ -50,8 +58,8 @@ def test_le_sport_est_lu_sur_l_identite_de_l_evenement():
     """L'identité d'événement porte déjà son sport ; le redemander ailleurs
     ouvrirait un second chemin de vérité."""
     lignes = collect([
-        _obs("event:tennis:tour:2026:a", ObservationPhase.DECISION, 2.0),
-        _obs("event:hockey:nhl:2026:b", ObservationPhase.DECISION, 1.8),
+        _obs(_ev("tennis"), ObservationPhase.DECISION, 2.0),
+        _obs(_ev("hockey", "nhl"), ObservationPhase.DECISION, 1.8),
     ], min_events=30)
 
     assert {l["sport"] for l in lignes} == {"tennis", "hockey", "TOTAL"}
@@ -60,7 +68,7 @@ def test_le_sport_est_lu_sur_l_identite_de_l_evenement():
 def test_des_decisions_sans_cloture_sont_nommees_comme_telles():
     """Le cas réel : 113 décisions collectées, zéro clôture. Dire seulement
     « non mesurable » enverrait relancer une collecte qui tourne déjà."""
-    lignes = collect([_obs("event:tennis:tour:2026:a", ObservationPhase.DECISION, 2.0)],
+    lignes = collect([_obs(_ev("tennis"), ObservationPhase.DECISION, 2.0)],
                      min_events=30)
 
     ligne = _ligne(lignes, "tennis")
@@ -70,8 +78,8 @@ def test_des_decisions_sans_cloture_sont_nommees_comme_telles():
 
 def test_une_paire_complete_affiche_le_reste_a_parcourir():
     lignes = collect([
-        _obs("event:tennis:tour:2026:a", ObservationPhase.DECISION, 2.0),
-        _obs("event:tennis:tour:2026:a", ObservationPhase.CLOSING, 1.8, decalage=60),
+        _obs(_ev("tennis"), ObservationPhase.DECISION, 2.0),
+        _obs(_ev("tennis"), ObservationPhase.CLOSING, 1.8, decalage=350),
     ], min_events=30)
 
     ligne = _ligne(lignes, "tennis")
@@ -84,10 +92,10 @@ def test_plusieurs_selections_d_un_meme_match_ne_comptent_que_pour_une():
     ensemble, les compter séparément gonflerait la progression affichée."""
     obs = []
     for selection in ("home", "away"):
-        obs.append(_obs("event:football:fra:2026:a", ObservationPhase.DECISION,
+        obs.append(_obs(_ev("football", "fra"), ObservationPhase.DECISION,
                         2.0, selection=selection))
-        obs.append(_obs("event:football:fra:2026:a", ObservationPhase.CLOSING,
-                        1.8, decalage=60, selection=selection))
+        obs.append(_obs(_ev("football", "fra"), ObservationPhase.CLOSING,
+                        1.8, decalage=350, selection=selection))
 
     ligne = _ligne(collect(obs, min_events=30), "football")
 
@@ -97,8 +105,8 @@ def test_plusieurs_selections_d_un_meme_match_ne_comptent_que_pour_une():
 
 def test_le_total_agrege_sans_masquer_les_sports():
     obs = [
-        _obs("event:tennis:tour:2026:a", ObservationPhase.DECISION, 2.0),
-        _obs("event:hockey:nhl:2026:b", ObservationPhase.DECISION, 1.8),
+        _obs(_ev("tennis"), ObservationPhase.DECISION, 2.0),
+        _obs(_ev("hockey", "nhl"), ObservationPhase.DECISION, 1.8),
     ]
     lignes = collect(obs, min_events=30)
 
@@ -109,7 +117,7 @@ def test_le_total_agrege_sans_masquer_les_sports():
 def test_le_rendu_signale_qu_aucune_cloture_n_a_jamais_ete_prise():
     """Le message qui compte : la collecte n'est pas cassée, elle est incomplète."""
     texte = "\n".join(render(
-        collect([_obs("event:tennis:tour:2026:a", ObservationPhase.DECISION, 2.0)],
+        collect([_obs(_ev("tennis"), ObservationPhase.DECISION, 2.0)],
                 min_events=30),
         min_events=30))
 
@@ -121,8 +129,8 @@ def test_le_rendu_signale_qu_aucune_cloture_n_a_jamais_ete_prise():
 def test_la_vue_expose_la_clv_moyenne_et_le_seuil():
     """Suivre l'accumulation demande de voir où on en est ET où il faut aller."""
     lignes = collect([
-        _obs("event:tennis:tour:2026:a", ObservationPhase.DECISION, 2.0),
-        _obs("event:tennis:tour:2026:a", ObservationPhase.CLOSING, 1.8, decalage=60),
+        _obs(_ev("tennis"), ObservationPhase.DECISION, 2.0),
+        _obs(_ev("tennis"), ObservationPhase.CLOSING, 1.8, decalage=350),
     ], min_events=30)
 
     ligne = _ligne(lignes, "tennis")
@@ -134,7 +142,7 @@ def test_la_vue_expose_la_clv_moyenne_et_le_seuil():
 def test_une_clv_absente_ne_s_ecrit_jamais_zero():
     """Écrire 0 ferait passer une absence de mesure pour une CLV nulle — et une
     CLV nulle est une information, pas un vide."""
-    lignes = collect([_obs("event:tennis:tour:2026:a", ObservationPhase.DECISION, 2.0)],
+    lignes = collect([_obs(_ev("tennis"), ObservationPhase.DECISION, 2.0)],
                      min_events=30)
     texte = "\n".join(render(lignes, min_events=30))
 
@@ -146,7 +154,7 @@ def test_le_seuil_est_annonce_comme_versionne():
     """Un plancher de policy doit se lire comme tel, pas comme une vérité
     statistique — et son fichier doit être nommé."""
     texte = "\n".join(render(
-        collect([_obs("event:tennis:tour:2026:a", ObservationPhase.DECISION, 2.0)],
+        collect([_obs(_ev("tennis"), ObservationPhase.DECISION, 2.0)],
                 min_events=30), min_events=30))
 
     assert "model_maturity_policy.json" in texte

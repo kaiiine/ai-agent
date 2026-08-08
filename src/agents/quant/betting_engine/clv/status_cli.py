@@ -20,6 +20,7 @@ from collections import defaultdict
 
 from ..maturity import load_maturity_policy
 from .clv import clv_readiness
+from .eligibility import eligible as admissibles, exclusions
 from .observation import ObservationPhase
 from .store import JsonlOddsHistoryStore
 
@@ -48,7 +49,12 @@ def collect(observations, *, min_events: int) -> list[dict]:
         lot = list(observations) if sport == "TOTAL" else par_sport[sport]
         decisions = [o for o in lot if o.phase is ObservationPhase.DECISION]
         clotures = [o for o in lot if o.phase is ObservationPhase.CLOSING]
-        lecture = clv_readiness(lot)
+        # La PREUVE porte sur les observations admissibles ; le brut reste montré
+        # à côté, sans quoi une exclusion ressemblerait à une perte de données.
+        admis = admissibles(lot)
+        brut = clv_readiness(lot)
+        lecture = clv_readiness(admis)
+        motifs = exclusions(lot)
         if not decisions:
             manque = _AUCUNE_DECISION
         elif not clotures:
@@ -63,8 +69,11 @@ def collect(observations, *, min_events: int) -> list[dict]:
             "decisions": len(decisions),
             "clotures": len(clotures),
             "evenements": len({o.event_id for o in lot}),
+            "paires_brutes": brut.n_complete_pairs,
             "paires": lecture.n_complete_pairs,
             "independants": lecture.n_events,
+            "exclues": len(lot) - len(admis),
+            "motifs": motifs,
             "requises": min_events,
             # La CLV MOYENNE est lue telle que `clv_readiness` la rend — jamais
             # recalculée ici. `None` tant qu'aucune paire n'existe : écrire 0
@@ -93,16 +102,31 @@ def render(lignes: list[dict], *, min_events: int) -> list[str]:
                 "",
                 "En continu : voir ops/systemd/README.md"]
 
-    entete = (f"{'sport':14} {'déc.':>6} {'clôt.':>6} {'renc.':>6} {'paires':>7} "
-              f"{'indép.':>7} {'requis':>7} {'CLV moy.':>10} {'borne basse':>12} "
-              f"{'statut':>19}  il manque")
+    entete = (f"{'sport':12} {'déc.':>5} {'clôt.':>5} {'paires':>7} {'admis':>6} "
+              f"{'exclues':>8} {'indép.':>7} {'requis':>7} {'CLV moy.':>10} "
+              f"{'borne basse':>12} {'statut':>19}  il manque")
     sortie = [entete, "-" * len(entete)]
     for ligne in lignes:
         sortie.append(
-            f"{ligne['sport']:14} {ligne['decisions']:>6} {ligne['clotures']:>6} "
-            f"{ligne['evenements']:>6} {ligne['paires']:>7} {ligne['independants']:>7} "
-            f"{ligne['requises']:>7} {_clv(ligne['mean_clv']):>10} "
-            f"{_clv(ligne['borne_basse']):>12} {ligne['statut']:>19}  {ligne['manque']}")
+            f"{ligne['sport']:12} {ligne['decisions']:>5} {ligne['clotures']:>5} "
+            f"{ligne['paires_brutes']:>7} {ligne['paires']:>6} {ligne['exclues']:>8} "
+            f"{ligne['independants']:>7} {ligne['requises']:>7} "
+            f"{_clv(ligne['mean_clv']):>10} {_clv(ligne['borne_basse']):>12} "
+            f"{ligne['statut']:>19}  {ligne['manque']}")
+    # La ligne TOTAL agrège déjà tous les sports : la sommer avec eux compterait
+    # chaque exclusion deux fois.
+    motifs_totaux: dict[str, int] = {}
+    for ligne in lignes:
+        if ligne["sport"] == "TOTAL":
+            continue
+        for motif, n in ligne["motifs"].items():
+            motifs_totaux[motif] = motifs_totaux.get(motif, 0) + n
+    if motifs_totaux:
+        sortie += ["", "Observations conservées mais NON admissibles à la preuve :"]
+        for motif, n in sorted(motifs_totaux.items(), key=lambda kv: -kv[1]):
+            sortie.append(f"  {n:>4}  {motif}")
+        sortie.append("  (l'historique reste entier ; seule la preuve de maturité "
+                      "est restreinte au protocole de collecte courant)")
     sortie += [
         "",
         f"Seuil de maturité : {min_events} rencontres indépendantes ET une borne "

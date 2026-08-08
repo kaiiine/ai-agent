@@ -69,9 +69,15 @@ def observations_collectees(cle: str) -> list:
     reste simplement non mesurable — ce qu'elle est.
     """
     try:
+        from .clv.eligibility import eligible
         from .clv.routing import observations_pour
         from .clv.store import JsonlOddsHistoryStore
-        return observations_pour(cle, JsonlOddsHistoryStore().all())
+        # Filtre d'ADMISSIBILITÉ, pas de correction : l'historique reste entier,
+        # seules les observations conformes au protocole de collecte courant
+        # participent à la preuve. Sans lui, 45 décisions NHL prises 55 jours
+        # avant leur coup d'envoi formeraient des paires mesurant deux mois de
+        # dérive de marché.
+        return eligible(observations_pour(cle, JsonlOddsHistoryStore().all()))
     except Exception:   # noqa: BLE001
         return []
 
