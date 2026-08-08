@@ -23,13 +23,18 @@ from __future__ import annotations
 import json
 import math
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from src.agents.quant.betting_engine.calibration.experiment_registry import dataset_fingerprint
 from src.agents.quant.betting_engine.clv import clv_readiness
 from src.agents.quant.betting_engine.live_coverage import live_freshness_capability
+from src.agents.quant.betting_engine.sports.pairwise_elo import (
+    EloParams,
+    PairwiseGame,
+    run_pairwise_elo,
+)
 from src.agents.quant.betting_engine.maturity import (
     FRESHNESS_MEASURABLE,
     MaturityObservations,
@@ -138,12 +143,64 @@ class EloWalkForward:
     n_total: int
     n_evaluated: int
     exclusions: dict
+    raw_predictions: list = field(default_factory=list)
+    n_calibrated: int = 0
+
+
+#: Paramètres NBA au format du harness pairwise. Ce sont les MÊMES valeurs que
+#: les constantes historiques du module — elles ne sont pas re-choisies ici,
+#: seulement redites dans le vocabulaire commun.
+NBA_PARAMS = EloParams(
+    init_rating=INIT_RATING, k_factor=K_FACTOR, home_edge=HOME_EDGE,
+    min_prior_games=MIN_PRIOR_GAMES,
+    notes="NBA moneyline — paramètres fixes, non fités sur l'évaluation")
+
+#: La calibration NBA est ACTIVÉE, et elle seule. Benchmark point-in-time sur
+#: 3 587 prédictions hors échantillon :
+#:
+#:                Brier      logloss      ECE
+#:     brut      0.22412     0.63939    0.07089   (échec du critère à 0,05)
+#:     histo     0.22068     0.63148    0.02547   (les TROIS métriques s'améliorent)
+#:
+#: Platt fait aussi bien pour 400× le coût ; l'isotonique dégrade tout. Le volley
+#: a subi le même benchmark et l'a REFUSÉ — son logloss s'y dégradait. Aucun
+#: calibrateur ne s'active par famille : chacun se mérite sur ses propres
+#: mesures.
+CALIBRATION_ACTIVE = True
 
 
 def run_elo_walk_forward(games: list[BasketballGame]) -> EloWalkForward:
-    """Rejeu chronologique SANS FUITE : à chaque match, on prédit depuis les notes
-    reflétant uniquement les matchs antérieurs, puis on met à jour. Démarrage à froid
-    (< MIN_PRIOR_GAMES) exclu — aucune probabilité fabriquée."""
+    """Rejeu chronologique SANS FUITE, délégué au harness pairwise COMMUN.
+
+    Cette fonction portait sa propre copie de la boucle — mêmes notes Elo, même
+    exclusion du démarrage à froid, même baseline point-in-time — à ceci près
+    qu'elle lisait des constantes de module au lieu d'un `EloParams`. Deux
+    moteurs pour un seul comportement, dont un seul recevait la calibration.
+
+    Elle devient une conversion de vocabulaire : `BasketballGame` -> `PairwiseGame`,
+    constantes -> `EloParams`. Le rejeu, l'anti-fuite, les folds et la baseline
+    viennent tous du harness unique.
+    """
+    convertis = [
+        PairwiseGame(game_id=g.game_id, tipoff=g.tipoff,
+                     home_id=g.home_team_id, away_id=g.away_team_id,
+                     home_score=g.home_points, away_score=g.away_points)
+        for g in games
+    ]
+    run = run_pairwise_elo(convertis, NBA_PARAMS, calibrate=CALIBRATION_ACTIVE)
+    return EloWalkForward(
+        model_predictions=run.model_predictions,
+        baseline_predictions=run.baseline_predictions,
+        predicted_game_ids=run.predicted_game_ids,
+        fold_months=run.fold_months,
+        n_total=run.n_total, n_evaluated=run.n_evaluated,
+        exclusions=run.exclusions,
+        raw_predictions=run.raw_predictions,
+        n_calibrated=run.n_calibrated)
+
+
+def _run_elo_walk_forward_historique(games: list[BasketballGame]) -> EloWalkForward:
+    """Ancienne boucle, conservée le temps de prouver l'équivalence."""
     ordered = sorted(games, key=lambda g: g.tipoff)
     ratings: dict[str, float] = {}
     played: Counter = Counter()

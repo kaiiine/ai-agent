@@ -89,3 +89,46 @@ def test_assessment_is_deterministic():
     assert a1.decision.status == a2.decision.status
     assert a1.observations.n_evaluated == a2.observations.n_evaluated
     assert a1.observations.model_brier == a2.observations.model_brier
+
+
+from src.agents.quant.betting_engine.sports.pairwise_elo import (
+    PairwiseGame,
+    run_pairwise_elo,
+)
+
+
+# ══ Un seul moteur walk-forward, partagé avec les autres sports ════════════
+def test_le_chemin_nba_delegue_au_harness_commun():
+    """Deux boucles pour un seul comportement, dont une seule pouvait recevoir la
+    calibration : c'est la divergence que ce lot supprime."""
+    import inspect
+
+    from src.agents.quant.betting_engine.sports.basketball import moneyline
+
+    source = inspect.getsource(moneyline.run_elo_walk_forward)
+
+    assert "run_pairwise_elo" in source
+
+
+def test_le_harness_commun_reproduit_l_ancienne_boucle_nba():
+    """Équivalence prouvée sur les données réelles : sans calibration, le
+    nouveau chemin rend exactement ce que rendait l'ancien."""
+    from src.agents.quant.betting_engine.sports.basketball.moneyline import (
+        NBA_PARAMS,
+        _run_elo_walk_forward_historique,
+        load_nba_games,
+    )
+
+    jeux = load_nba_games()[0]
+    ancien = _run_elo_walk_forward_historique(jeux)
+    convertis = [PairwiseGame(game_id=g.game_id, tipoff=g.tipoff,
+                              home_id=g.home_team_id, away_id=g.away_team_id,
+                              home_score=g.home_points, away_score=g.away_points)
+                 for g in jeux]
+    nouveau = run_pairwise_elo(convertis, NBA_PARAMS, calibrate=False)
+
+    assert nouveau.n_evaluated == ancien.n_evaluated
+    assert nouveau.predicted_game_ids == ancien.predicted_game_ids
+    assert nouveau.model_predictions == ancien.model_predictions
+    assert nouveau.baseline_predictions == ancien.baseline_predictions
+    assert nouveau.exclusions == ancien.exclusions
