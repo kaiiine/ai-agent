@@ -132,6 +132,24 @@ class OneXTwoModel:
             for selection in self._SELECTIONS
         }
 
+    def distribution(
+        self, event: CanonicalEvent, features: EventFeatureSet, point_in_time: datetime
+    ) -> list[list[float]]:
+        """La matrice de scores de CE match — la distribution générative, exposée.
+
+        Les marchés dérivés (Plus/Moins, double chance, score exact…) doivent
+        sortir de la MÊME matrice que le 1X2, sans quoi rien ne garantit que
+        P(home) et P(over 2.5) restent mutuellement cohérents. Ce point d'entrée
+        existe pour qu'il n'y ait jamais deux chemins vers la distribution.
+
+        Mêmes gardes que `predict` : point-in-time, readiness, fraîcheur des
+        features. Dériver un marché n'assouplit aucune vérification.
+        """
+        self._guard(event, features, point_in_time)
+        by_role = {p.role: p.canonical_id for p in event.participants}
+        return score_matrix(self._strengths(features, by_role["home"]),
+                            self._strengths(features, by_role["away"]), DEFAULT_RHO)
+
     def _guard(
         self, event: CanonicalEvent, features: EventFeatureSet, point_in_time: datetime
     ) -> None:
