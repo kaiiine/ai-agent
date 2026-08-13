@@ -205,6 +205,101 @@ def construire_registre(resolutions, canonical_de) -> ClubIdentityRegistry:
     return registre
 
 
+#: Rencontres partagées exigées pour qu'un rapprochement par calendrier tienne.
+#: Deux clubs qui affrontent le MÊME adversaire déjà identifié, le MÊME jour, dans
+#: la MÊME compétition, sont le même club — sauf coïncidence qu'aucune compétition
+#: ne produit. Trois occurrences écartent le hasard sans exiger un calendrier
+#: complet, qu'un club éliminé tôt n'aurait jamais.
+RENCONTRES_MIN = 3
+
+
+def _signature_calendrier(matches, identite_de, ancres: dict[str, str]) -> dict[str, set]:
+    """id provider BRUT -> {(jour, adversaire canonique, à domicile)}.
+
+    La clé reste l'identifiant brut du provider — c'est sous cette forme que
+    l'appelant interroge. Seul l'ADVERSAIRE passe par `identite_de`, pour être
+    cherché dans les ancres.
+
+    N'utilise QUE des adversaires déjà résolus : un calendrier rapproché de
+    proche en proche propagerait la première erreur à tout le graphe.
+    """
+    par_club: dict[str, set] = defaultdict(set)
+    for m in matches:
+        jour = m.kickoff.date()
+        for cote, autre, domicile in ((m.home_team_id, m.away_team_id, True),
+                                      (m.away_team_id, m.home_team_id, False)):
+            adversaire = ancres.get(identite_de(autre))
+            if adversaire is not None:
+                par_club[str(cote)].add((jour, adversaire, domicile))
+    return par_club
+
+
+def resoudre_par_calendrier(
+    restants, droite, *, matches_gauche, matches_droite, ancres: dict[str, str],
+    identite_gauche, identite_droite,
+) -> list[Resolution]:
+    """Deuxième passe : rapprocher par le CALENDRIER, jamais par le nom.
+
+    Les métadonnées échouent pour des raisons prosaïques — un stade rebaptisé
+    (`Anoeta` devenu `Reale Arena`), une année de fondation qui diffère d'un an
+    entre providers, un club monégasque classé « France » chez l'un et
+    « Monaco » chez l'autre. Le calendrier, lui, ne dépend d'aucune convention
+    d'écriture : il n'existe qu'une équipe qui a joué Real Madrid à domicile le
+    17 septembre en Ligue des Champions.
+
+    C'est une preuve d'IDENTITÉ, pas un nombre de colonnes concordantes — d'où
+    l'absence de seuil de signaux ici.
+    """
+    sig_g = _signature_calendrier(matches_gauche, identite_gauche, ancres)
+    sig_d = _signature_calendrier(matches_droite, identite_droite, ancres)
+
+    reclamations: dict[str, list[str]] = defaultdict(list)
+    meilleurs: dict[str, tuple[str, int]] = {}
+    for equipe in restants:
+        mien = sig_g.get(equipe.provider_id, set())
+        if len(mien) < RENCONTRES_MIN:
+            continue
+        scores = {pid: len(mien & sien) for pid, sien in sig_d.items()
+                  if len(mien & sien) >= RENCONTRES_MIN}
+        if len(scores) == 1:
+            pid, n = next(iter(scores.items()))
+            meilleurs[equipe.provider_id] = (pid, n)
+            reclamations[pid].append(equipe.provider_id)
+
+    par_id = {d.provider_id: d for d in droite}
+    resolutions: list[Resolution] = []
+    for equipe in restants:
+        mien = sig_g.get(equipe.provider_id, set())
+        if len(mien) < RENCONTRES_MIN:
+            resolutions.append(Resolution(
+                ResolutionStatus.UNRESOLVED, equipe,
+                detail=(f"{len(mien)} rencontre(s) contre un adversaire déjà "
+                        f"identifié — moins de {RENCONTRES_MIN}, insuffisant")))
+            continue
+        candidats = {pid: len(mien & sien) for pid, sien in sig_d.items()
+                     if len(mien & sien) >= RENCONTRES_MIN}
+        if len(candidats) > 1:
+            resolutions.append(Resolution(
+                ResolutionStatus.AMBIGUOUS, equipe, candidates=tuple(sorted(candidats)),
+                detail=f"{len(candidats)} calendriers concordants"))
+            continue
+        if not candidats:
+            resolutions.append(Resolution(
+                ResolutionStatus.UNRESOLVED, equipe,
+                detail="aucun calendrier partagé avec un club adverse"))
+            continue
+        pid, n = meilleurs[equipe.provider_id]
+        if len(reclamations[pid]) > 1:
+            resolutions.append(Resolution(
+                ResolutionStatus.AMBIGUOUS, equipe, candidates=(pid,),
+                detail=f"{len(reclamations[pid])} clubs revendiquent le même calendrier"))
+            continue
+        resolutions.append(Resolution(
+            ResolutionStatus.VERIFIED, equipe, par_id[pid], ("calendrier",),
+            detail=f"{n} rencontres partagées contre des adversaires déjà identifiés"))
+    return resolutions
+
+
 def resume(resolutions) -> dict:
     compte = defaultdict(int)
     for r in resolutions:

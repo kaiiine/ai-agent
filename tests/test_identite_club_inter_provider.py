@@ -231,3 +231,95 @@ def test_aucune_competition_domestique_n_a_disparu(canonical_id):
     from src.agents.quant.gateway.registries.competition_registry import COMPETITIONS
 
     assert canonical_id in COMPETITIONS
+
+
+# ── Rapprochement par CALENDRIER — la preuve qui ignore les noms ────────────
+# Les métadonnées échouent pour des raisons prosaïques : stade rebaptisé
+# (`Anoeta` devenu `Reale Arena`), fondation qui diffère d'un an entre providers,
+# club monégasque classé « France » chez l'un et « Monaco » chez l'autre.
+# Le calendrier ne dépend d'aucune convention d'écriture.
+
+from src.agents.quant.gateway.core.club_identity_resolution import (   # noqa: E402
+    RENCONTRES_MIN,
+    resoudre_par_calendrier,
+)
+
+
+class _Fixture:
+    def __init__(self, dom, ext, jour):
+        self.home_team_id, self.away_team_id = dom, ext
+        self.kickoff = datetime(2026, 9, jour, 19, tzinfo=timezone.utc)
+
+
+def _contexte(n=RENCONTRES_MIN):
+    """Un club inconnu de chaque côté, affrontant les MÊMES adversaires ancrés."""
+    gauche = [_Fixture("G", f"anc{i}", 10 + i) for i in range(n)]
+    droite = [_Fixture("D", f"a{i}", 10 + i) for i in range(n)]
+    ancres = {**{f"fdo:anc{i}": f"club#{i}" for i in range(n)},
+              **{f"aps:a{i}": f"club#{i}" for i in range(n)}}
+    inconnu = ProviderTeam("football_data_org", "G", "Peu importe", None, None, None, None)
+    cible = ProviderTeam("api_sports", "D", "Nom Différent", None, None, None, None)
+    return gauche, droite, ancres, inconnu, cible
+
+
+def _resoudre(gauche, droite, ancres, restants, cibles):
+    return resoudre_par_calendrier(
+        restants, cibles, matches_gauche=gauche, matches_droite=droite, ancres=ancres,
+        identite_gauche=lambda i: f"fdo:{i}", identite_droite=lambda i: f"aps:{i}")
+
+
+def test_des_adversaires_communs_prouvent_l_identite_sans_le_nom():
+    g, d, anc, inconnu, cible = _contexte()
+
+    resolution = _resoudre(g, d, anc, [inconnu], [cible])[0]
+
+    assert resolution.status is ResolutionStatus.VERIFIED
+    assert resolution.signals == ("calendrier",)
+    assert resolution.right.provider_id == "D"
+
+
+def test_trop_peu_de_rencontres_partagees_ne_prouve_rien():
+    """Une seule coïncidence de date et d'adversaire n'est pas une identité."""
+    g, d, anc, inconnu, cible = _contexte(n=RENCONTRES_MIN - 1)
+
+    assert _resoudre(g, d, anc, [inconnu], [cible])[0].status is ResolutionStatus.UNRESOLVED
+
+
+def test_seuls_les_adversaires_deja_ancres_comptent():
+    """Sans ancre, un rapprochement de proche en proche propagerait la première
+    erreur à tout le graphe."""
+    g, d, _anc, inconnu, cible = _contexte()
+
+    assert _resoudre(g, d, {}, [inconnu], [cible])[0].status is ResolutionStatus.UNRESOLVED
+
+
+def test_deux_calendriers_identiques_restent_AMBIGUOUS():
+    g, d, anc, inconnu, cible = _contexte()
+    jumeau = [_Fixture("D2", f"a{i}", 10 + i) for i in range(RENCONTRES_MIN)]
+    autre = ProviderTeam("api_sports", "D2", "Jumeau", None, None, None, None)
+
+    resolution = _resoudre(g, d + jumeau, anc, [inconnu], [cible, autre])[0]
+
+    assert resolution.status is ResolutionStatus.AMBIGUOUS
+
+
+def test_le_domicile_distingue_l_aller_du_retour():
+    """Rapprocher sans le rôle ferait correspondre un aller à un retour."""
+    g = [_Fixture("G", f"anc{i}", 10 + i) for i in range(RENCONTRES_MIN)]
+    d = [_Fixture(f"a{i}", "D", 10 + i) for i in range(RENCONTRES_MIN)]   # inversé
+    anc = {**{f"fdo:anc{i}": f"club#{i}" for i in range(RENCONTRES_MIN)},
+           **{f"aps:a{i}": f"club#{i}" for i in range(RENCONTRES_MIN)}}
+    inconnu = ProviderTeam("football_data_org", "G", "X", None, None, None, None)
+    cible = ProviderTeam("api_sports", "D", "Y", None, None, None, None)
+
+    assert _resoudre(g, d, anc, [inconnu], [cible])[0].status is ResolutionStatus.UNRESOLVED
+
+
+def test_le_rapprochement_par_calendrier_n_utilise_aucun_nom():
+    import inspect
+
+    from src.agents.quant.gateway.core import club_identity_resolution
+
+    source = inspect.getsource(club_identity_resolution.resoudre_par_calendrier)
+
+    assert "name" not in source and "nom_canonique" not in source
