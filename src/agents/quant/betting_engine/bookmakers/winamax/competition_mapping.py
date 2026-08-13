@@ -102,6 +102,34 @@ WINAMAX_COMPETITION_MAPPINGS: list[WinamaxCompetitionMapping] = [
     ),
 ]
 
+#: Compétitions dont le MODÈLE est prêt mais dont l'identifiant de tournoi
+#: Winamax reste inconnu. Elles n'ont pas d'entrée ci-dessus, et c'est voulu :
+#: un identifiant posé au jugé rattacherait les rencontres d'un AUTRE tournoi,
+#: silencieusement et avec l'apparence du bon fonctionnement.
+#:
+#: L'identifiant se résout depuis un payload de catalogue RÉEL — au premier scan
+#: où le tournoi apparaît. Cette liste existe pour que l'attente soit lisible
+#: plutôt que déduite d'une absence.
+MAPPING_PENDING_LIVE_DISCOVERY: dict[str, str] = {
+    "competition:football:bra:serie_a":
+        "modèle benchmarké EXPERIMENTAL (Brier 0.6276 < prior 0.6385, "
+        "n=1337, ECE 0.0097) — attente de l'identifiant de tournoi Winamax",
+    "competition:football:eur:champions_league":
+        "corpus backfillé (2 182 rencontres, fdo + api-sports + openfootball), "
+        "n_eval 2050, coverage 0.9395, Brier 0.5859 < prior 0.6316 — "
+        "max_calibration_error encore FAIL (ECE brute 0.0581 > 0.05) et "
+        "identifiant de tournoi Winamax inconnu",
+    "competition:football:eur:europa_league":
+        "corpus backfillé (814 rencontres, openfootball CC0-1.0), n_eval 734, "
+        "coverage 0.9017, Brier 0.6138 < prior 0.6383, ECE brute 0.0493 — tous "
+        "les critères statistiques mesurables passent ; identifiant de tournoi "
+        "Winamax inconnu ET aucun provider gratuit ne sert la saison courante",
+    "competition:football:eur:conference_league":
+        "corpus backfillé (575 rencontres, openfootball CC0-1.0) — statistiquement "
+        "insuffisant (n_eval 495 < 500, coverage 0.8609, data_quality 0.7778) : "
+        "la compétition n'existe que depuis 2021, c'est un manque de TEMPS",
+}
+
 _BY_TID: dict[str, WinamaxCompetitionMapping] = {
     m.winamax_tournament_id: m for m in WINAMAX_COMPETITION_MAPPINGS
 }

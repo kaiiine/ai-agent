@@ -82,12 +82,29 @@ def scope_du_club(nom: str, pays_par_club: dict[str, str], *, defaut: str = "unk
     return code.lower() if code else defaut
 
 
+def score_reglementaire(score: dict) -> dict:
+    """Le score des 90 MINUTES, jamais le score final.
+
+    Un marché 1X2 se règle au temps réglementaire. `fullTime` ne le donne pas :
+    en élimination directe il porte le score APRÈS prolongation, et après une
+    séance de tirs au but il porte carrément le score des tirs au but — la finale
+    2026 y figure « 5-4 » là où la rencontre s'est terminée 1-1.
+
+    MESURÉ sur la Ligue des Champions : 9 rencontres où `regularTime` diffère de
+    `fullTime`, dont 4 où l'ISSUE 1X2 elle-même change. Le modèle apprenait donc
+    une victoire là où le marché cotait un nul, sur les rencontres les plus
+    visibles du corpus. `regularTime` est absent des matchs de championnat, où
+    `fullTime` est déjà le bon score — d'où le repli, et non un choix.
+    """
+    return (score.get("regularTime") or score.get("fullTime") or {})
+
+
 def parse_matches(payload: list[dict], competition_code: str) -> list[ResultatBrut]:
     """Convertit la réponse `/matches` sans rien inventer."""
     bruts: list[ResultatBrut] = []
     for m in payload:
         domicile, exterieur = m.get("homeTeam") or {}, m.get("awayTeam") or {}
-        score = ((m.get("score") or {}).get("fullTime") or {})
+        score = score_reglementaire(m.get("score") or {})
         if not domicile.get("name") or not exterieur.get("name"):
             continue                      # un match sans les deux camps n'est pas exploitable
         bruts.append(ResultatBrut(

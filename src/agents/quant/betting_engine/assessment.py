@@ -136,6 +136,45 @@ def _assess_competition(loader, league_id, season, odds_observations) -> Maturit
     )
 
 
+def _assess_corpus_backfille(loader, league_id, season, odds_observations) -> MaturityAssessment:
+    """Même modèle, même walk-forward, sur un corpus dont l'identité a été résolue
+    en AMONT par `historical_discovery`.
+
+    Le chargeur générique ci-dessus passe un `IdentityResolver` alimenté par les
+    championnats onboardés ; une coupe d'Europe y perdrait la quasi-totalité de
+    ses clubs. Le corpus backfillé arrive déjà canonique, avec sa provenance —
+    d'où un chargeur qui n'attend pas de resolver. Rien d'autre ne change : ni le
+    modèle, ni le harness, ni le verdict de maturité.
+    """
+    from .sports.football.market_models.one_x_two import OneXTwoModel
+
+    matches, _fingerprint, _n_total = loader()
+    return assess_one_x_two_maturity(
+        matches=matches, model=OneXTwoModel(),
+        league_id=league_id, season=season,
+        odds_observations=odds_observations,
+        live_freshness_status=live_freshness_capability(league_id),
+    )
+
+
+def assess_champions_league(odds_observations: Sequence[OddsObservation] = ()) -> MaturityAssessment:
+    """Ligue des Champions — 2 182 rencontres, trois providers dédoublonnés."""
+    from .calibration.historical_dataset import CL_LEAGUE_ID, load_cl
+    return _assess_corpus_backfille(load_cl, CL_LEAGUE_ID, "multi", odds_observations)
+
+
+def assess_europa_league(odds_observations: Sequence[OddsObservation] = ()) -> MaturityAssessment:
+    """Ligue Europa — 814 rencontres, openfootball seul (CC0-1.0)."""
+    from .calibration.historical_dataset import EL_LEAGUE_ID, load_el
+    return _assess_corpus_backfille(load_el, EL_LEAGUE_ID, "multi", odds_observations)
+
+
+def assess_conference_league(odds_observations: Sequence[OddsObservation] = ()) -> MaturityAssessment:
+    """Conference League — 575 rencontres, compétition créée en 2021."""
+    from .calibration.historical_dataset import CONF_LEAGUE_ID, load_conf
+    return _assess_corpus_backfille(load_conf, CONF_LEAGUE_ID, "multi", odds_observations)
+
+
 def assess_serie_a(odds_observations: Sequence[OddsObservation] = ()) -> MaturityAssessment:
     """Serie A 2025-26 (dataset réel football-data.org) — verdict mécanique EXPERIMENTAL."""
     from .calibration.historical_dataset import SA_LEAGUE_ID, SA_SEASON, load_sa_2025

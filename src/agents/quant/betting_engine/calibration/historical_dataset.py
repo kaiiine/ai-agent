@@ -91,6 +91,66 @@ def load_competition_season(
     return matches, dataset_fingerprint(raw), n_finished
 
 
+CL_LEAGUE_ID = "competition:football:eur:champions_league"
+DEFAULT_CL_FIXTURE = _FIXTURES / "cl_backfilled_matches.json"
+
+EL_LEAGUE_ID = "competition:football:eur:europa_league"
+DEFAULT_EL_FIXTURE = _FIXTURES / "el_backfilled_matches.json"
+
+CONF_LEAGUE_ID = "competition:football:eur:conference_league"
+DEFAULT_CONF_FIXTURE = _FIXTURES / "conf_backfilled_matches.json"
+
+
+def load_canonical_corpus(path: Path, league_id: str):
+    """Corpus DÉJÀ canonique — `(matches, fingerprint, n_total)`.
+
+    Les chargeurs ci-dessus partent d'un payload football-data.org et résolvent
+    chaque équipe via l'`IdentityResolver`, dont le référentiel ne contient que
+    les clubs des championnats onboardés. Une coupe d'Europe y perdrait presque
+    tout : ses clubs viennent de cinquante pays, et les inscrire à la main
+    reviendrait à tenir une liste qui se périme chaque saison.
+
+    Ici la résolution d'identité a DÉJÀ eu lieu, en amont, dans
+    `historical_discovery` — rapprochement inter-provider prouvé, dédoublonnage
+    et conflits compris. Le fichier porte sa provenance ; ce chargeur ne fait
+    que la relire, sans rien réinterpréter.
+
+    C'est aussi le format qu'utilisera la PROCHAINE compétition backfillée :
+    aucun code par compétition, juste une fixture et un `league_id`.
+    """
+    raw = path.read_bytes()
+    data = json.loads(raw)
+    matches = [
+        CanonicalMatch(
+            canonical_match_id=m["canonical_match_id"], league_id=m["league_id"],
+            season=m["season"], home_team_id=m["home_team_id"],
+            away_team_id=m["away_team_id"],
+            kickoff=datetime.fromisoformat(m["kickoff"]), status="FINISHED",
+            goals_home=int(m["goals_home"]), goals_away=int(m["goals_away"]))
+        for m in data["matches"]
+        if m.get("status") == "FINISHED"
+        and m.get("goals_home") is not None and m.get("goals_away") is not None
+        and m.get("league_id") == league_id
+    ]
+    matches.sort(key=lambda m: m.kickoff)
+    return matches, dataset_fingerprint(raw), len(data["matches"])
+
+
+def load_cl(path: Path | None = None):
+    """Ligue des Champions — fdo + api-sports + openfootball (15 saisons)."""
+    return load_canonical_corpus(path or DEFAULT_CL_FIXTURE, CL_LEAGUE_ID)
+
+
+def load_el(path: Path | None = None):
+    """Ligue Europa — openfootball seul (aucun provider gratuit ne la sert)."""
+    return load_canonical_corpus(path or DEFAULT_EL_FIXTURE, EL_LEAGUE_ID)
+
+
+def load_conf(path: Path | None = None):
+    """Conference League — openfootball seul, compétition créée en 2021."""
+    return load_canonical_corpus(path or DEFAULT_CONF_FIXTURE, CONF_LEAGUE_ID)
+
+
 #: Saisons historiques acquises (football-data.org, free tier). 2022 et
 #: antérieures répondent 403 : hors fenêtre gratuite, pas hors existence.
 HISTORICAL_SEASONS = ("2023", "2024")

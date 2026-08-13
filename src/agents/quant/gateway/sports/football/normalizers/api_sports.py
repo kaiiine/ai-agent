@@ -30,6 +30,29 @@ def _canonical_status(short_code: str) -> str:
     return _STATUS_MAP.get(short_code, short_code)
 
 
+def _buts_reglementaires(fixture: dict) -> tuple[int | None, int | None]:
+    """Le score des 90 MINUTES, jamais le score final.
+
+    `goals` porte le score APRÈS prolongation : une rencontre finie 0-0 puis
+    gagnée 1-0 en prolongation y figure « 1-0 ». Un marché 1X2 se règle au temps
+    réglementaire, et `score.fulltime` le donne exactement.
+
+    MESURÉ sur la Ligue des Champions : 22 rencontres où les deux diffèrent, dont
+    10 où l'ISSUE 1X2 change — le modèle apprenait une victoire pour un nul. Le
+    repli sur `goals` couvre les payloads sans bloc `score` (produits non
+    football, réponses partielles), où il reste la seule valeur disponible.
+
+    Propre au FOOTBALL : au hockey ou au basket, la prolongation fait partie du
+    résultat qui règle le marché, et retrancher les points de prolongation y
+    serait la même erreur en sens inverse.
+    """
+    plein = ((fixture.get("score") or {}).get("fulltime") or {})
+    if plein.get("home") is not None and plein.get("away") is not None:
+        return plein["home"], plein["away"]
+    buts = fixture.get("goals") or {}
+    return buts.get("home"), buts.get("away")
+
+
 def _max_published(values: list[str | None]) -> datetime | None:
     """published_time du batch = mise à jour la plus récente parmi les items."""
     times = [datetime.fromisoformat(v.replace("Z", "+00:00")) for v in values if v]
@@ -46,6 +69,7 @@ class ApiSportsNormalizer:
             away_id, away_status = resolver.canonicalize("api_sports", str(fixture["teams"]["away"]["id"]), "team")
             if home_status != "RESOLVED" or away_status != "RESOLVED":
                 continue  # jamais de rattachement par proximité de nom — on écarte l'entrée
+            buts_dom, buts_ext = _buts_reglementaires(fixture)
             matches.append(CanonicalMatch(
                 canonical_match_id=f"api_sports:{fixture['fixture']['id']}",
                 league_id=league_id,
@@ -54,8 +78,8 @@ class ApiSportsNormalizer:
                 away_team_id=away_id,
                 kickoff=datetime.fromisoformat(fixture["fixture"]["date"]),
                 status=_canonical_status(fixture["fixture"]["status"]["short"]),
-                goals_home=fixture["goals"]["home"],
-                goals_away=fixture["goals"]["away"],
+                goals_home=buts_dom,
+                goals_away=buts_ext,
             ))
         # api_sports ne fournit PAS de "lastUpdated" sur les fixtures → published_time
         # None (fraîcheur dégradée, honnête). event_time None : batch, kickoff au

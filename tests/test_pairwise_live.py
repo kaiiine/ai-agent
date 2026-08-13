@@ -117,8 +117,29 @@ def test_non_roster_team_isolated(key):
     assert res.status is S.EVENT_NOT_RESOLVED
 
 
+def _avant_tout_historique(key) -> datetime:
+    """Un instant antérieur à la PREMIÈRE rencontre du corpus de ce sport.
+
+    La date était écrite en dur (NFL : 2022-07-01), ce qui était juste tant que
+    le corpus commençait en août 2022. Le backfill nflverse l'a fait remonter à
+    1999 : les Raiders ont désormais un historique à cette date, et le modèle a
+    RAISON de l'évaluer. Un test daté aurait exigé une abstention devenue fausse.
+
+    La propriété protégée n'a pas changé — aucune note fabriquée sans historique —
+    seule sa borne dépend des données. On la lit donc dans les données.
+    """
+    from src.agents.quant.betting_engine.sports.american_football.moneyline import load_nfl_games
+    from src.agents.quant.betting_engine.sports.baseball.moneyline import load_mlb_games
+    from src.agents.quant.betting_engine.sports.volleyball.moneyline import load_volleyball_games
+
+    chargeurs = {"american_football": load_nfl_games, "baseball": load_mlb_games,
+                 "volleyball": load_volleyball_games}
+    parties, _fp = chargeurs[key]()
+    return min(g.tipoff for g in parties) - timedelta(days=1)
+
+
 @pytest.mark.parametrize("key", list(CASES))
 def test_cold_start_before_season_abstains_without_fabrication(key):
     case = CASES[key]
-    res = _run(case, decision=case["preseason"], gateway=object())
+    res = _run(case, decision=_avant_tout_historique(key), gateway=object())
     assert res.status is S.INSUFFICIENT_FEATURES               # aucune note fabriquée

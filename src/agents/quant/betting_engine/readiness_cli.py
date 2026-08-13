@@ -10,6 +10,9 @@ from __future__ import annotations
 import argparse
 
 from .assessment import (
+    assess_champions_league,
+    assess_conference_league,
+    assess_europa_league,
     assess_bundesliga,
     assess_championship,
     assess_default_one_x_two,
@@ -93,7 +96,13 @@ _ASSESSORS = {"fl1": assess_default_one_x_two, "serie-a": assess_serie_a,
               "championship": assess_championship, "eredivisie": assess_eredivisie,
               "primeira-liga": assess_primeira_liga, "nba": _assess_nba, "mlb": _assess_mlb,
               "nfl": _assess_nfl, "volley": _assess_volley, "nhl": _assess_nhl,
-              "atp": _assess_atp, "wta": _assess_wta}
+              "atp": _assess_atp, "wta": _assess_wta,
+              # Coupes d'Europe : corpus backfillés par `historical_discovery`.
+              # Sans entrée ici, un modèle benchmarké reste invisible du produit —
+              # excellent sur le papier, absent de toute décision.
+              "champions-league": assess_champions_league,
+              "europa-league": assess_europa_league,
+              "conference-league": assess_conference_league}
 
 
 #: Compétition canonique de chaque modèle — pour lire sa couverture provider et
@@ -113,6 +122,9 @@ _COMPETITIONS = {
     "volley": "competition:volleyball:ita:serie_a1",
     "atp": "competition:tennis:atp:tour",
     "wta": "competition:tennis:wta:tour",
+    "champions-league": "competition:football:eur:champions_league",
+    "europa-league": "competition:football:eur:europa_league",
+    "conference-league": "competition:football:eur:conference_league",
 }
 
 #: Besoins EXTERNES connus, avec leur objet exact. Ne rien souscrire, mais dire

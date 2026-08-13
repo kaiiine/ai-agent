@@ -100,3 +100,27 @@ def valider_appartenance(
             detail=f"appartenance inconnue pour {', '.join(inconnus)}")
 
     return ValidationResult(ValidationStatus.CONSISTENT, competition_id, season)
+
+
+def validateur_pour_resolveur(registry: SeasonalMembershipRegistry, saison_de):
+    """Adapte `valider_appartenance` à ce qu'attend le résolveur d'événements live.
+
+    Le contrôle vivait ici sans appelant : testé, jamais branché. Une garantie
+    qui n'est câblée nulle part protège exactement zéro rencontre — et c'est le
+    genre d'écart qu'un test unitaire vert rend invisible.
+
+    `saison_de(event)` reste à la charge de l'appelant : la saison ne se déduit
+    pas d'une date sans connaître la compétition (un championnat européen chevauche
+    deux années civiles, une ligue américaine non). Deviner ici produirait des
+    démentis faux sur la moitié du calendrier.
+    """
+    def valider(event, competition_id, participant_ids):
+        if competition_id is None:
+            return None
+        saison = saison_de(event)
+        if saison is None:
+            return None
+        return valider_appartenance(
+            registry, competition_id=competition_id, season=saison,
+            participant_ids=participant_ids)
+    return valider

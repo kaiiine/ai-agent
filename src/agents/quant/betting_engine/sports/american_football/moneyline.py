@@ -33,7 +33,21 @@ NFL_PARAMS = EloParams(
     init_rating=1500.0, k_factor=20.0, home_edge=48.0, min_prior_games=6,
     notes="NFL: home ~57% -> home_edge 48 ; K=20 (Elo NFL standard) ; cold-start 6 (17 matchs/saison)")
 
-_FIXTURE = Path(__file__).resolve().parents[6] / "tests" / "fixtures" / "nfl_api_sports_games.json"
+_FIXTURES = Path(__file__).resolve().parents[6] / "tests" / "fixtures"
+
+#: Corpus CANONIQUE du modèle : api-sports (2022-2025) complété par nflverse
+#: (1999-2026, CC-BY-4.0), fusionné et dédoublonné par `historical_discovery`.
+#:
+#: Le modèle lisait `nfl_api_sports_games.json` seul. Un backfill validé mais
+#: jamais branché n'améliore rien : il produit un rapport flatteur et un modèle
+#: inchangé. Le corpus élargi entre donc ICI, à la source que le harness lit
+#: réellement, et la provenance de chaque rencontre reste dans le fichier
+#: (`src`) pour que l'apport de chaque source reste mesurable après coup.
+_FIXTURE = _FIXTURES / "nfl_backfilled_games.json"
+
+#: Corpus d'origine, conservé : c'est la référence AVANT backfill, et la seule
+#: façon de remesurer l'écart sans refaire le pipeline.
+_FIXTURE_AVANT_BACKFILL = _FIXTURES / "nfl_api_sports_games.json"
 
 
 def load_nfl_games(path: Path = _FIXTURE) -> tuple[list[PairwiseGame], str]:

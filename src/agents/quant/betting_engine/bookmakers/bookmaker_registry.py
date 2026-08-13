@@ -89,6 +89,11 @@ class BookmakerEventMapping:
 
 CompetitionResolver = Callable[[str | None], "tuple[str | None, str, str]"]
 
+#: `(event, competition_id, participant_ids) -> ValidationResult | None`.
+#: `None` = pas d'avis (référentiel absent ou saison indéterminable) — jamais un
+#: feu vert implicite, et jamais un rejet par ignorance.
+MembershipValidator = Callable[..., object]
+
 
 # Types d'entités pouvant être PARTICIPANT d'un événement. Générique : un sport
 # d'équipes peuple `team:{sport}:…`, un sport individuel (tennis, MMA) `player:{sport}:…`.
@@ -110,9 +115,15 @@ class BookmakerEventResolver:
         *,
         role_resolver: ParticipantRoleResolver | None = None,
         competition_resolver: CompetitionResolver | None = None,
+        membership_validator: "MembershipValidator | None" = None,
     ):
         self._identity = identity_resolver
         self._roles = role_resolver or ParticipantRoleResolver()
+        # Contrôle d'APPARTENANCE : chaque morceau peut être résolu alors que
+        # l'assemblage est impossible (`premier_league` + PSG). Optionnel parce
+        # qu'il exige un référentiel saisonnier peuplé ; absent, on ne se prononce
+        # pas — on n'invente pas un démenti faute de données.
+        self._membership = membership_validator
         # Le résolveur reçoit l'ÉVÉNEMENT, pas seulement son tid : c'est
         # strictement plus d'information, et certains sports ne peuvent pas
         # résoudre autrement. Le tennis en est un — son tid identifie une édition
@@ -144,6 +155,20 @@ class BookmakerEventResolver:
 
         evidence = (ev_1, ev_2, ev_comp)
         identity_status = most_severe([ev_1.status, ev_2.status, ev_comp.status])
+
+        # L'assemblage peut être impossible alors que chaque pièce est valide.
+        # On ne consulte le référentiel QUE si tout est résolu : demander à
+        # `PSG` s'il joue une compétition non résolue n'a pas de sens, et la
+        # réponse serait un démenti sans objet.
+        if identity_status == "RESOLVED" and self._membership is not None:
+            verdict = self._membership(
+                event, comp_id, (ev_1.canonical_id, ev_2.canonical_id))
+            if verdict is not None and verdict.rejected:
+                ev_membership = ResolutionEvidence(
+                    "membership", comp_id or "", "seasonal_membership",
+                    "CONFLICT", None, candidates=verdict.offending)
+                evidence = (*evidence, ev_membership)
+                identity_status = most_severe([identity_status, "CONFLICT"])
 
         canonical_event_id = None
         if identity_status == "RESOLVED" and event.start_time is not None:
