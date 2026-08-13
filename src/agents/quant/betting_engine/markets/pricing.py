@@ -133,7 +133,12 @@ class MarketPricing:
     maturity: str | None = None                  # dérivée du ledger, jamais déclarée
     calibration_status: str | None = None
     data_quality: float | None = None
-    freshness: float | None = None               # None = NON MESURÉE
+    freshness: float | None = None               # None = NON MESURÉE, jamais 0
+    #: La fraîcheur COMPLÈTE : statut, granularité réellement fournie par la
+    #: source, instant d'observation. Le score seul ne dit pas si l'absence vient
+    #: d'un manque de mesure ou d'une cote périmée — et ces deux-là ne se
+    #: réparent pas de la même façon.
+    freshness_detail: object | None = None
     point_in_time: datetime | None = None
     abstention_reasons: tuple[str, ...] = ()
     #: De quelle distribution ces probabilités sortent. Deux marchés du même
@@ -219,6 +224,19 @@ class MarketPricer:
     def price(self, *, event, family: MarketFamily, parameters: Mapping,
               context: Mapping) -> MarketPricing:                            # pragma: no cover
         raise NotImplementedError
+
+
+def avec_fraicheur(prix: "MarketPricing", observed_at, decision_at) -> "MarketPricing":
+    """Attache la fraîcheur MESURÉE à un prix. Jamais auto-déclarée.
+
+    L'instant d'observation vient du marché observé, pas du pricer : c'est la
+    donnée qui date la donnée. Un pricer qui la fabriquerait s'auto-délivrerait
+    le critère.
+    """
+    from .freshness import evaluer
+
+    mesure = evaluer(observed_at, decision_at)
+    return replace(prix, freshness=mesure.score, freshness_detail=mesure)
 
 
 def price_market(
