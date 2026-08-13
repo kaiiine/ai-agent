@@ -63,6 +63,17 @@ class CandidateBet:
     warnings: tuple[str, ...]
     explanation_ref: str
     source_decision_id: str | None     # provenance ; jamais inventée (Q5)
+    #: De quelle DISTRIBUTION cette probabilité sort. Deux candidats du même
+    #: événement qui la partagent — « domicile gagne », « plus de 2,5 buts »,
+    #: « double chance 1N », « score exact 2-1 » sortent tous de la même matrice
+    #: Dixon-Coles — ne sont pas deux paris indépendants : ils montent et
+    #: descendent ensemble. Sans cette trace, le sizing les additionne comme s'ils
+    #: diversifiaient, et concentre le risque en croyant l'étaler.
+    #:
+    #: `None` = l'appelant ne l'a pas déclarée. Aucune contrainte n'est alors
+    #: appliquée : inventer une dépendance non déclarée changerait le
+    #: comportement money existant sur la foi d'une supposition.
+    probability_origin: str | None = None
 
     def __post_init__(self) -> None:
         # Montants/cotes : Decimal obligatoire (aucun float).
@@ -94,6 +105,24 @@ class CandidateBet:
             value = getattr(self, name)
             if value is not None:
                 require_decimal(value, name)
+
+    # ── Lecture d'une sélection : valeur ou pronostic ? ──────────────────────
+    # Le classement se fait sur l'espérance, jamais sur la probabilité : une
+    # sélection peut arriver en tête à 47,60 %, et le modèle donne alors l'autre
+    # camp gagnant. Affichée sous un simple intitulé « sélection », elle se lit
+    # comme un pronostic — et se parie à l'envers.
+    # Ces deux dérivations vivent ICI et pas dans le renderer : la présentation ne
+    # définit aucun chiffre, sans quoi un second arrondi naîtrait en aval.
+
+    @property
+    def donnee_perdante(self) -> bool:
+        """Le modèle donne cette sélection PERDANTE (sous 50 %)."""
+        return self.fair_probability < Decimal("0.5")
+
+    @property
+    def probabilite_complementaire(self) -> Decimal:
+        """Masse de probabilité restante — l'autre camp sur un marché 2-way."""
+        return ONE - self.fair_probability
 
 
 @dataclass(frozen=True)

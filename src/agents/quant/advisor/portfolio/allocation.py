@@ -19,6 +19,7 @@ from ..combos.sizing import build_combo_candidate, combo_reliability
 from ..domain.candidates import CandidateEvaluation
 from ..domain.money import ZERO
 from ..domain.requests import RecommendationRequest
+from ..policy.reason_codes import CORRELATED_SAME_ORIGIN
 from ..recommendation.simple import SizingProfile, compute_single_stake
 from .bankroll import Budget
 from .constraints import PortfolioCaps
@@ -104,9 +105,21 @@ def allocate_lines(
 
     lines: list[AllocatedLine] = []
     dropped: list[tuple[str, str]] = []
+    #: (event_id, probability_origin) déjà servis. Règle conservatrice : au plus
+    #: UNE sélection misée par distribution et par événement, tant qu'aucun modèle
+    #: de dépendance n'est validé. Ce n'est pas une matrice de corrélation — c'en
+    #: est le contraire : on refuse d'en fabriquer une, donc on ne cumule pas.
+    origines_servies: set[tuple[str, str]] = set()
     for i, ev in enumerate(order):
         if len(lines) >= request.max_selections:               # respecte max_selections
             break
+        origine = getattr(ev.candidate, "probability_origin", None)
+        cle_origine = (ev.candidate.event_id, origine) if origine else None
+        if cle_origine is not None and cle_origine in origines_servies:
+            if anchor_id is not None and i == 0:
+                return None                                    # l'ancre elle-même est corrélée
+            dropped.append((ev.candidate.candidate_id, CORRELATED_SAME_ORIGIN))
+            continue
         stake, reason = _line_stake(ev, request, sizing=sizing, caps=caps,
                                     bankroll=bankroll, budget=budget, exposure=exposure)
         if stake <= ZERO:
@@ -116,6 +129,8 @@ def allocate_lines(
             continue
         budget.allocate(stake)
         exposure.allocate(ev.candidate, stake)
+        if cle_origine is not None:
+            origines_servies.add(cle_origine)
         lines.append(AllocatedLine(ev, stake))
 
     # COMBOS après les singles (mêmes budget + exposition). Ne remplacent jamais un single.

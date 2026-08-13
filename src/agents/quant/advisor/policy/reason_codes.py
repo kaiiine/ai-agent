@@ -34,6 +34,12 @@ BOOSTED_MARKET_NOT_SUPPORTED = "BOOSTED_MARKET_NOT_SUPPORTED"
 RANKING_MISSING_FRESHNESS = "RANKING_MISSING_FRESHNESS"
 RANKING_MODEL_NOT_SUPPORTED = "RANKING_MODEL_NOT_SUPPORTED"
 
+# Corrélation intra-événement : deux sélections issues de la MÊME distribution
+# ne sont pas deux expositions indépendantes. Le code est distinct d'un rejet de
+# valeur — le candidat était bon, c'est sa DÉPENDANCE qui l'écarte, et un rapport
+# doit pouvoir le dire.
+CORRELATED_SAME_ORIGIN = "CORRELATED_SAME_ORIGIN"
+
 # Combos (Lot 9) : code d'avertissement STABLE et machine-readable — un combo
 # admissible existe mais n'a pas pu devenir une PortfolioLine faute de contrat de
 # sizing COMBO. DISTINGUE ce cas d'un véritable NO_OPPORTUNITY (Lot 10 : replay).
