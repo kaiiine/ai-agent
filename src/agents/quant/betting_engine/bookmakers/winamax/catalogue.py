@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 
 from ..protocol import RawBookmakerEvent
 from .competition_mapping import resolve_competition
@@ -32,8 +33,37 @@ def all_events(connector, sport: str) -> Sequence[RawBookmakerEvent]:
 _PARALLELISME_SCAN = 4
 
 
-def multisport_events(connector, sports: Sequence[str]) -> Sequence[RawBookmakerEvent]:
-    """DÉCOUVERTE MULTISPORT (§3) : agrège les événements de CHAQUE sport demandé.
+@dataclass(frozen=True)
+class MultisportScan:
+    """Ce que le scan a rapporté, sport par sport — succès ET pannes.
+
+    `failures` est un statut TYPÉ par sport, pas un message perdu dans un log :
+    c'est ce qui permet à l'aval de distinguer « ce sport n'a rien à proposer »
+    de « ce sport n'a pas pu être interrogé », sans jamais les confondre.
+    """
+
+    events: tuple[RawBookmakerEvent, ...] = ()
+    failures: dict[str, str] = field(default_factory=dict)   # sport -> "TypeErreur: message"
+    scanned: tuple[str, ...] = ()                            # sports réellement rapportés
+    #: L'exception ELLE-MÊME, par sport. `failures` porte un texte, bon pour la
+    #: télémétrie et le rendu ; il ne suffit pas à un appelant strict, qui attrape
+    #: un type précis (`ConnectionError` pour une coupure). Relever une exception
+    #: de substitution lui ferait manquer sa propre panne.
+    exceptions: dict[str, BaseException] = field(default_factory=dict, repr=False)
+
+    @property
+    def total_failure(self) -> bool:
+        """Aucun sport n'a pu être interrogé — il n'y a pas de scan du tout."""
+        return bool(self.failures) and not self.scanned
+
+
+def _panne(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+def multisport_scan(connector, sports: Sequence[str]) -> MultisportScan:
+    """DÉCOUVERTE MULTISPORT (§3), avec ISOLATION PAR SPORT.
+
     Chaque `RawBookmakerEvent` porte son propre `sport` -> dispatch en aval via
     `SPORT_MODULES` (aucun `if sport ==`). L'isolation par ÉVÉNEMENT reste garantie par
     `evaluate_live_batch` : un événement non résolu (identité/compétition) devient un
@@ -44,17 +74,58 @@ def multisport_events(connector, sports: Sequence[str]) -> Sequence[RawBookmaker
     sortie reste celui des sports DEMANDÉS et non celui des réponses — deux runs
     identiques doivent produire le même catalogue, dans le même ordre.
 
-    Une erreur reste propagée : un scan qui échoue est une panne de source, pas
-    un sport vide, et la confondre avec l'absence d'événements ferait répondre
-    « rien aujourd'hui » à une coupure réseau.
+    UN ÉCHEC RESTE LOCAL AU SPORT QUI LE PROVOQUE. Une panne de source sur le
+    tennis ne dit rien du football, et la propager coûtait le run entier : sept
+    branches indépendantes s'arrêtaient pour une seule coupure. L'erreur n'est
+    pour autant jamais avalée — elle devient un statut porté par le scan, et
+    l'appelant qui ne le regarde pas ne peut pas conclure « rien aujourd'hui ».
     """
     demandes = list(sports)
-    if len(demandes) <= 1:
-        return [e for sport in demandes for e in connector.scan_catalog(sport)]
+    if not demandes:
+        return MultisportScan()
 
-    with ThreadPoolExecutor(max_workers=min(_PARALLELISME_SCAN, len(demandes))) as pool:
-        par_sport = list(pool.map(connector.scan_catalog, demandes))
-    return [event for lot in par_sport for event in lot]
+    def _un_sport(sport: str):
+        try:
+            return sport, tuple(connector.scan_catalog(sport)), None
+        except Exception as exc:   # noqa: BLE001 — la panne devient une donnée
+            return sport, (), exc
+
+    if len(demandes) == 1:
+        resultats = [_un_sport(demandes[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=min(_PARALLELISME_SCAN, len(demandes))) as pool:
+            resultats = list(pool.map(_un_sport, demandes))
+
+    events: list[RawBookmakerEvent] = []
+    failures: dict[str, str] = {}
+    exceptions: dict[str, BaseException] = {}
+    scanned: list[str] = []
+    for sport, lot, exc in resultats:
+        if exc is not None:
+            failures[sport] = _panne(exc)
+            exceptions[sport] = exc
+            continue
+        scanned.append(sport)
+        events.extend(lot)
+    return MultisportScan(tuple(events), failures, tuple(scanned), exceptions)
+
+
+def multisport_events(connector, sports: Sequence[str]) -> Sequence[RawBookmakerEvent]:
+    """Variante STRICTE : rend les événements, propage la première panne.
+
+    Conservée pour les appelants qui veulent tout ou rien — la collecte CLV, une
+    capture, un banc de mesure. Le chemin produit, lui, passe par
+    `multisport_scan` : là-bas, l'arrêt doit rester local à la branche qui le
+    provoque.
+
+    L'exception D'ORIGINE est relevée, jamais une de substitution : la collecte
+    CLV attrape `ConnectionError` pour distinguer une coupure d'une panne de
+    programme, et un `RuntimeError` enveloppant lui ferait manquer la sienne.
+    """
+    scan = multisport_scan(connector, sports)
+    if scan.exceptions:
+        raise next(iter(scan.exceptions.values()))
+    return list(scan.events)
 
 
 def supported_events(connector, sport: str) -> Sequence[RawBookmakerEvent]:

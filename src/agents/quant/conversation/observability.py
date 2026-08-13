@@ -76,6 +76,24 @@ class ScanTelemetry:
     events_inside_window: int = 0
     #: sport -> libellés de compétition rencontrés dans le scan (hors fenêtre inclus)
     catalog_competitions: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    #: sport -> rencontres vues au CATALOGUE, fenêtre comprise ou non. Sans ce
+    #: compte, la couverture d'un sport se calcule sur les seules rencontres
+    #: parvenues jusqu'à l'évaluation — un dénominateur qui exclut précisément ce
+    #: qu'on cherche à mesurer, donc un taux flatteur par construction.
+    #: Vide = NON MESURÉ, jamais « catalogue vide ».
+    events_seen_by_sport: Mapping[str, int] = field(default_factory=dict)
+    #: sport -> panne du scan (type + message). Un sport ICI n'a PAS été
+    #: interrogé : son absence du classement ne veut pas dire qu'il n'offrait
+    #: rien. Sans ce champ, une coupure réseau sur une branche se lisait comme
+    #: « aucune opportunité » sur cette branche — la pire des deux erreurs, parce
+    #: qu'elle est silencieuse.
+    scan_failures: Mapping[str, str] = field(default_factory=dict)
+
+    @property
+    def sports_effectivement_scannes(self) -> tuple[str, ...]:
+        """Les sports demandés dont la source a répondu. Le dénominateur honnête
+        de toute couverture : `scanned_sports` inclut ceux qui ont échoué."""
+        return tuple(s for s in self.scanned_sports if s not in self.scan_failures)
 
 
 @dataclass(frozen=True)

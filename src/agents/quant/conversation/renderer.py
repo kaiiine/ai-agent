@@ -173,7 +173,7 @@ def _render_couverture(obs: Any, evidence: Any) -> list[str]:
         f"- Sports exposés par Winamax : **{catalogue if catalogue else INDISPONIBLE}**",
         f"- Sports disposant d'un modèle : **{len(obs.model_capable_sports)}** "
         f"({', '.join(obs.model_capable_sports)})",
-        f"- Sports scannés dans ce run : **{len(obs.telemetry.scanned_sports)}**",
+        f"- Sports scannés dans ce run : **{len(obs.telemetry.sports_effectivement_scannes)}**",
         f"- Sports ayant des événements dans la fenêtre : **{len(obs.sports_in_window)}**"
         + (f" ({', '.join(obs.sports_in_window)})" if obs.sports_in_window else ""),
         f"- Sports ayant atteint l'évaluation : **{len(obs.sports_evaluated)}**"
@@ -186,6 +186,14 @@ def _render_couverture(obs: Any, evidence: Any) -> list[str]:
         f"- Compétitions résolues canoniquement : **{len(obs.competitions_resolved)}**",
         f"- Compétitions ayant atteint l'évaluation : **{len(obs.competitions_evaluated)}**",
     ]
+    # Une branche non interrogée doit se LIRE. Muette, son absence du classement
+    # se confond avec « ce sport n'offrait rien » — alors que rien n'a été vu.
+    pannes = dict(getattr(obs.telemetry, "scan_failures", {}) or {})
+    if pannes:
+        lignes.append(
+            f"- Sports NON interrogés (panne de source) : **{len(pannes)}** — "
+            "leur absence ci-dessous ne signifie aucune opportunité, mais aucune mesure")
+        lignes += [f"  · `{sport}` — {panne}" for sport, panne in sorted(pannes.items())]
     return lignes
 
 
@@ -221,7 +229,12 @@ def _render_revue(run: RecommendationRun, *, debug: bool) -> list[str]:
         "placement. Classement par borne basse d'edge — il ne mesure pas une "
         "distance au misable, aucun candidat ne l'étant.",
         "",
-        "| # | rencontre | h. Paris | sél. | cote | implicite | modèle | borne basse | edge | EV |",
+        "⚠ **« sél. VALEUR » n'est pas un pronostic.** Le moteur classe par écart "
+        "au prix, pas par probabilité : une sélection marquée ⚠ est donnée "
+        "PERDANTE par le modèle (moins de 50 %) et ne remonte que parce que la "
+        "cote la sous-évalue. Le favori du modèle est alors l'autre camp.",
+        "",
+        "| # | rencontre | h. Paris | sél. VALEUR | cote | implicite | modèle | borne basse | edge | EV |",
         "|---|---|---|---|---|---|---|---|---|---|",
     ]
     affichees = classees if debug else classees[:_TOP_REVIEW]
@@ -244,11 +257,38 @@ def _render_ligne_revue(ligne: Any, fenetre: Any) -> str:
         return f"| {ligne.rang} | ⚠ hors fenêtre — écarté du rendu | | | | | | | | |"
     from .window import to_paris
 
+    # Une sélection sous 50 % est un signal de PRIX, pas un pronostic : le modèle
+    # donne l'issue perdante. Sans marque, la colonne se lit « qui va gagner ».
+    marque = " ⚠" if c.donnee_perdante else ""
     return (f"| {ligne.rang} | {participant_label(c.participant_ids)} "
-            f"| {to_paris(c.scheduled_at):%d/%m %H:%M} | {c.selection} "
+            f"| {to_paris(c.scheduled_at):%d/%m %H:%M} | {c.selection}{marque} "
             f"| {c.bookmaker_odds} | {_pct(c.implied_probability)} "
             f"| {_pct(c.fair_probability)} | {_pct(c.probability_low)} "
             f"| {_signed(c.edge_low)} | {_signed(c.expected_value_low)} |")
+
+
+def _avertissement_selection_perdante(c: Any) -> list[str]:
+    """Dit explicitement que le modèle ne donne pas cette sélection gagnante.
+
+    Le classement se fait sur l'espérance, pas sur la probabilité : une sélection
+    peut remonter en tête avec 47,6 %. Lue sous un intitulé « sélection », elle
+    passe pour un pronostic — et se parie à l'envers. La phrase est écrite ici,
+    dans la sortie structurée, pour qu'aucun résumé en aval ne puisse l'omettre.
+
+    Les deux chiffres viennent du candidat : la présentation n'en dérive aucun.
+    """
+    if not c.donnee_perdante:
+        return []
+    # Sur un marché 2-way le camp adverse porte le complément ; au-delà, la masse
+    # restante se répartit sur plusieurs issues et aucune ne peut être nommée.
+    reste = _pct(c.probabilite_complementaire)
+    contre = (f" contre {reste} à l'autre camp" if len(c.participant_ids) == 2
+              else f" — les {len(c.participant_ids) - 1} autres issues totalisent {reste}")
+    return [
+        f"- ⚠ **Sélection de VALEUR, pas un pronostic.** Le modèle donne cette issue "
+        f"PERDANTE : {_pct(c.fair_probability)}{contre}. Elle est classée en tête "
+        f"parce que la cote la sous-évalue, pas parce qu'elle est probable.",
+    ]
 
 
 def _valeur(value: Any, rendu=lambda v: str(v)) -> str:
@@ -279,6 +319,7 @@ def _render_candidat(evaluation: Any, obs: Any = None, fenetre: Any = None) -> l
         f"- Sport / compétition : {c.sport} · `{c.competition_id}`",
         f"- Coup d'envoi : {render_kickoff(c.scheduled_at)}",
         f"- Marché / sélection : {c.market_type} · **{c.selection}**",
+        *_avertissement_selection_perdante(c),
         f"- Cote bookmaker : {c.bookmaker_odds} ({c.bookmaker})",
         f"- Probabilité implicite (1/cote, marge incluse) : {_pct(c.implied_probability)}",
         f"- Probabilité modèle : {_pct(c.fair_probability)} "

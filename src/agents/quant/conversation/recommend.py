@@ -123,7 +123,7 @@ def _default_scan(window: TimeWindow, sports: Sequence[str], decision_time: date
     import functools
 
     from ..advisor.input_adapter.betting_engine_adapter import adapt_live_batch
-    from ..betting_engine.bookmakers.winamax.catalogue import multisport_events
+    from ..betting_engine.bookmakers.winamax.catalogue import multisport_scan
     from ..betting_engine.bookmakers.winamax.connector import WinamaxConnector
     from ..betting_engine.live_batch import evaluate_live_batch
     from ..betting_engine.live_coverage import evaluation_coverage_check
@@ -134,13 +134,27 @@ def _default_scan(window: TimeWindow, sports: Sequence[str], decision_time: date
     connector = WinamaxConnector()
     compte: Counter = Counter()
     competitions: dict[str, set[str]] = {}
+    vus_par_sport: dict[str, int] = {}
+    pannes: dict[str, str] = {}
 
     def catalogue(conn):
-        events = multisport_events(conn, list(sports))
+        # Un sport dont la source tombe ne fait plus tomber les autres : sa panne
+        # devient un statut porté jusqu'au rendu. Si AUCUN sport n'a répondu, on
+        # relaie l'échec — il n'y a alors pas de scan partiel, il n'y a pas de scan.
+        resultat = multisport_scan(conn, list(sports))
+        pannes.update(resultat.failures)
+        if resultat.total_failure:
+            raise RuntimeError(
+                "aucun sport n'a pu être interrogé — "
+                + " ; ".join(f"{s} ({p})" for s, p in sorted(resultat.failures.items())))
+        events = list(resultat.events)
         compte["scannes"] = len(events)
         for event in events:
             competitions.setdefault(event.sport, set()).add(
                 event.competition or "sans libellé")
+            # Dénominateur de la couverture : le CATALOGUE, pas ce qui a survécu
+            # jusqu'à l'évaluation.
+            vus_par_sport[event.sport] = vus_par_sport.get(event.sport, 0) + 1
         retenus = [e for e in events if window.contains(e.start_time)]
         compte["dans_fenetre"] = len(retenus)
         return retenus
@@ -167,6 +181,8 @@ def _default_scan(window: TimeWindow, sports: Sequence[str], decision_time: date
         events_outside_window=compte["scannes"] - compte["dans_fenetre"],
         events_inside_window=compte["dans_fenetre"],
         catalog_competitions={s: tuple(sorted(c)) for s, c in sorted(competitions.items())},
+        events_seen_by_sport=dict(sorted(vus_par_sport.items())),
+        scan_failures=dict(sorted(pannes.items())),
     )
     return adapt_live_batch(batch), telemetrie, build_traces(batch.results)
 
@@ -181,6 +197,18 @@ def _default_audit(request, batch, result, cfg) -> None:
     _persist_audit(request, batch, result, cfg, None)
 
 
+def _default_capture(evaluations, **kwargs) -> None:
+    from ..betting_engine.outcomes.capture import capturer_predictions
+    capturer_predictions(evaluations, **kwargs)
+
+
+def _default_coverage(observability, *, response, evidence) -> None:
+    """Mesure la couverture du run et l'archive. Injectée, donc neutralisable."""
+    from ..betting_engine.catalog_coverage import JsonlCoverageStore, mesurer
+    JsonlCoverageStore().append(
+        mesurer(observability, response=response, evidence=evidence))
+
+
 # ── Le tour ───────────────────────────────────────────────────────────────────
 def run_recommendation(
     constraints: UserBettingConstraints,
@@ -189,6 +217,8 @@ def run_recommendation(
     scan: Callable = _default_scan,
     configs: Callable[[], dict] = _default_configs,
     persist_audit: Callable | None = _default_audit,
+    capture: Callable | None = _default_capture,
+    coverage: Callable | None = _default_coverage,
     request_id: str | None = None,
     readiness: Callable[[Sequence[str]], tuple] | None = None,
     enrich: Callable[[Any, Sequence[str]], dict] | None = None,
@@ -307,6 +337,18 @@ def run_recommendation(
         internet_features=features,
     )
 
+    # Capture des prédictions — la boucle de retour. Sans elle, le moteur annonce
+    # des probabilités que rien ne vient jamais confronter au résultat.
+    # INJECTÉE comme l'audit, et pour la même raison : appelée en dur, elle écrivait
+    # dans le store RÉEL depuis la suite de tests. 515 prédictions synthétiques y
+    # ont atterri avant que ça se voie — de quoi fausser toute calibration future.
+    if capture is not None:
+        try:
+            capture(result.trace.policy_evaluations, decided_at=now,
+                    adapted_for=observabilite.adapted_for, run_id=request.request_id)
+        except Exception:   # noqa: BLE001 — la comptabilité ne casse jamais un scan
+            pass
+
     evidence = BettingResponseEvidence(
         request_id=request.request_id,
         run_id=f"run:{uuid.uuid4().hex[:12]}",
@@ -325,6 +367,14 @@ def run_recommendation(
         events_evaluated=observabilite.events_evaluated,
         reason_counts=dict(response.rejection_summary),
     )
+    # Couverture produit — mesurée sur CE run, jamais extrapolée. Après evidence,
+    # qui porte la fenêtre et l'identifiant de run.
+    if coverage is not None:
+        try:
+            coverage(observabilite, response=response, evidence=evidence)
+        except Exception:   # noqa: BLE001 — une mesure ne casse jamais un scan
+            pass
+
     return RecommendationRun(COMPLETED, constraints, response=response, evidence=evidence,
                              observability=observabilite)
 
