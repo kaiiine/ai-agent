@@ -152,6 +152,87 @@ _SOURCES: dict[str, str] = {
 }
 
 
+#: Compétitions football servant de corpus d'incertitude — les mêmes fixtures
+#: réelles que la validation, et rien d'autre. Trois saisons de Ligue 1 : ~900
+#: rencontres, ~0,3 s par saison, mémorisé. Élargir le corpus élargirait les
+#: effectifs par tranche ; ce n'est pas nécessaire ici, et ce serait une décision
+#: à mesurer, pas à supposer.
+_CORPUS_FOOTBALL = (("fl1", "competition:football:fra:ligue1", ("2023", "2024", "2025")),)
+
+#: Une capacité, ses cibles de walk-forward. Les sélections d'une même famille
+#: sont MISES EN COMMUN (les trois unions d'une double chance, les deux sens d'un
+#: remboursé-si-nul) : elles partagent la loi et la ligne. Les LIGNES, elles, ne
+#: sont jamais mises en commun — une borne de TOTALS 1.5 servie à un TOTALS 4.5
+#: serait mesurée sur un autre marché.
+_CIBLES_PAR_CAPACITE: dict[str, tuple[str, ...]] = {
+    "football.one_x_two.dixon_coles.v0": ("MATCH_WINNER",),
+    "football.double_chance.dixon_coles.v0": (
+        "DOUBLE_CHANCE(home_or_draw)", "DOUBLE_CHANCE(home_or_away)",
+        "DOUBLE_CHANCE(draw_or_away)"),
+    "football.draw_no_bet.dixon_coles.v0": ("DRAW_NO_BET(home)", "DRAW_NO_BET(away)"),
+    "football.exact_score.dixon_coles.v0": ("EXACT_SCORE",),
+    **{f"football.totals_line_{str(l).replace('.', '_')}.dixon_coles.v0":
+       (f"TOTALS(line={l})",) for l in (1.5, 2.5, 3.5, 4.5, 5.5)},
+}
+
+
+@functools.lru_cache(maxsize=1)
+def _paires_football_par_cible() -> dict:
+    """Rejoue le walk-forward multi-marché sur le corpus football embarqué.
+
+    Une seule fois : toutes les capacités football sortent du MÊME passage, donc
+    de la même distribution par match — la cohérence entre familles vaut aussi
+    pour leurs bornes.
+    """
+    import pathlib as _pathlib
+    from collections import defaultdict
+
+    from .calibration.historical_dataset import load_competition_season
+    from .calibration.market_walk_forward import (
+        cibles_football, paires_de_calibration, run_market_walk_forward,
+    )
+    from src.agents.quant.gateway.core.identity_data import TEAMS
+    from src.agents.quant.gateway.core.identity_resolver import IdentityResolver
+
+    fixtures = _pathlib.Path(__file__).resolve().parents[4] / "tests" / "fixtures"
+    resolveur = IdentityResolver(TEAMS)
+    cibles = cibles_football([1.5, 2.5, 3.5, 4.5, 5.5])
+    paires: dict[str, list] = defaultdict(list)
+
+    for code, ligue, saisons in _CORPUS_FOOTBALL:
+        for saison in saisons:
+            chemin = fixtures / f"{code}_{saison}_matches.json"
+            if not chemin.exists():
+                continue
+            matchs, _, _ = load_competition_season(resolveur, chemin, ligue, saison)
+            if not matchs:
+                continue
+            run = run_market_walk_forward(matchs, league_id=ligue, season=saison,
+                                          targets=cibles)
+            for cle, cible_run in run.runs.items():
+                paires[cle].extend(paires_de_calibration(cible_run))
+    return dict(paires)
+
+
+@functools.lru_cache(maxsize=32)
+def bins_for_capability(model_version: str, confiance: float = 0.95) -> CalibrationBins | None:
+    """Table de calibration d'UNE capacité multi-marché football.
+
+    Séparée de `bins_for_model` par ce qu'elle mesure : une famille et sa ligne,
+    pas un sport. Deux capacités du même sport et de la même loi ont des bornes
+    différentes parce qu'elles répondent à des questions différentes.
+    """
+    cibles = _CIBLES_PAR_CAPACITE.get(model_version)
+    if cibles is None:
+        return None
+    try:
+        par_cible = _paires_football_par_cible()
+    except Exception:   # noqa: BLE001 — l'incertitude ne casse jamais une prédiction
+        return None
+    paires = [couple for cle in cibles for couple in par_cible.get(cle, ())]
+    return build_bins(paires, confiance=confiance) if paires else None
+
+
 @functools.lru_cache(maxsize=16)
 def bins_for_model(model_version: str, confiance: float = 0.95) -> CalibrationBins | None:
     """Table de calibration d'un modèle, ou `None` s'il n'en a pas.
@@ -163,6 +244,8 @@ def bins_for_model(model_version: str, confiance: float = 0.95) -> CalibrationBi
     mesure, le modèle doit continuer d'annoncer `NOT_ESTIMATED` — pas une borne
     fabriquée à partir de rien.
     """
+    if model_version in _CIBLES_PAR_CAPACITE:
+        return bins_for_capability(model_version, confiance)
     cle = _SOURCES.get(model_version)
     if cle is None:
         return None

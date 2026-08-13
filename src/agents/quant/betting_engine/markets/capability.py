@@ -256,6 +256,18 @@ def register(capability: ModelCapability) -> None:
     CAPABILITIES.append(capability)
 
 
+def identite_capacite(family: MarketFamily, parameters: Mapping | None = None,
+                     *, winamax_sport_id: int = 1) -> str | None:
+    """La version de modèle qui traiterait ce marché, sans le résoudre.
+
+    Sert à aller chercher la borne d'incertitude PROPRE à cette capacité : une
+    borne de TOTALS 1.5 ne doit jamais être servie à un TOTALS 4.5.
+    """
+    resolution = resolve_model(winamax_sport_id=winamax_sport_id, family=family,
+                               context=parameters or {})
+    return resolution.capability.model_version if resolution.capability else None
+
+
 def resolve_model(
     *,
     winamax_sport_id: int | None,

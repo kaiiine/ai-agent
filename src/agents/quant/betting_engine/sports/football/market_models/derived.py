@@ -321,8 +321,10 @@ class FootballDerivedPricer:
             parameters=dict(parameters), context={},
             status=PricingStatus.PRICED,
             selections=tuple(
-                PricedSelection(selection=nom, model_probability=p, fair_probability=p,
-                                settlement_shares=_parts_de_reglement(family, nom, matrix))
+                PricedSelection(
+                    selection=nom, model_probability=p, fair_probability=p,
+                    probability_low=_borne_basse(family, parameters, p),
+                    settlement_shares=_parts_de_reglement(family, nom, matrix))
                 for nom, p in probabilites.items()),
             model_name=self.model_name, model_version=self.model_version,
             maturity=_maturite(), calibration_status=readiness.value,
@@ -331,6 +333,28 @@ class FootballDerivedPricer:
             point_in_time=point_in_time,
             probability_origin=f"dixon_coles:score_matrix:{event_id}",
             abstention_reasons=(f"masse hors grille mesurée : {hors:.3e}",))
+
+
+def _borne_basse(family: MarketFamily, parameters: Mapping, probabilite: float):
+    """La borne d'incertitude de CETTE capacité — jamais celle d'une autre.
+
+    Une borne de `TOTALS 1.5` servie à un `TOTALS 4.5` serait mesurée sur un
+    autre marché : les deux n'ont ni la même fréquence de base, ni la même
+    calibration. La table est donc cherchée sous l'identité de la capacité qui
+    traiterait ce marché précis, ligne comprise.
+
+    `None` veut dire NON ESTIMÉE, et surtout pas `fair_probability` : rendre le
+    point comme borne prudente est le faux substitut que tout ce mécanisme
+    existe pour supprimer.
+    """
+    from ....markets.capability import identite_capacite
+    from ....uncertainty import bins_for_capability
+
+    version = identite_capacite(family, parameters)
+    if version is None:
+        return None
+    tables = bins_for_capability(version)
+    return tables.borne_basse(probabilite) if tables is not None else None
 
 
 def _parts_de_reglement(family: MarketFamily, selection: str, matrix) -> tuple:

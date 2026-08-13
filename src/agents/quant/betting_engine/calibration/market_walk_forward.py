@@ -250,6 +250,17 @@ def run_market_walk_forward(
         evaluation_end=ordonnes[-1].kickoff.isoformat() if ordonnes else "")
 
 
+def paires_de_calibration(run: TargetRun) -> list[tuple[float, float]]:
+    """Couples (probabilité annoncée, issue 0/1) — la matière d'une borne basse.
+
+    Toutes les issues du marché entrent, pas seulement la « gagnante » : une
+    borne sert aussi bien à `under` qu'à `over`, et les tranches se peuplent
+    d'autant mieux. C'est la même convention que l'ECE mutualisée.
+    """
+    return [(probs[classe], 1.0 if classe == reel else 0.0)
+            for probs, reel in run.predictions for classe in run.target.classes]
+
+
 def build_target_metrics(run: TargetRun, *, n_folds: int = 4) -> dict:
     """Métriques d'UNE cible : qualité, calibration, baseline, stabilité.
 
