@@ -17,6 +17,32 @@ from .needs import HistoricalDataNeed
 
 MESURE_LE = "2026-08-13"
 
+#: Statut des chantiers historiques par sport. Un chantier CLOS ne se rouvre pas
+#: pour grappiller quelques points : la mesure a montré ce qu'il en coûtait.
+STATUTS = {
+    "tennis:atp": {
+        "statut": "CLOSED",
+        "couverture": 0.9366,
+        "min_data_coverage": "PASS",
+        "note": "Les Futures ITF ne seront PAS ajoutés : 2 points de couverture "
+                "de plus pour une dégradation de Brier six fois supérieure "
+                "(ΔBrier +0.003083 contre +0.000539). Mesuré, pas supposé.",
+    },
+    "tennis:wta": {
+        "statut": "PARTIAL",
+        "couverture": 0.8545,
+        "min_data_coverage": "FAIL",
+        "blocker": "MISSING_RECENT_QUALIFYING_ITF_HISTORY",
+        "classe": "DATA / EXTERNAL",
+        "note": "Ne JAMAIS présenter le WTA comme historiquement complet. Le "
+                "backfill Kaggle est conservé — il récupère 5 009 prédictions et "
+                "améliore le Brier absolu — mais il ne justifie AUCUNE promotion "
+                "de maturité. Le jeu s'arrête en 2021 et n'expose pratiquement "
+                "aucune qualification : la recherche de source gratuite est close, "
+                "faute de candidat récent, structuré et correctement licencié.",
+    },
+}
+
 
 def besoins_mesures() -> tuple[HistoricalDataNeed, ...]:
     """Les manques observés sur les corpus réels d'AXON."""

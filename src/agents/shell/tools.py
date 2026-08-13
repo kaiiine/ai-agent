@@ -2,6 +2,8 @@ from __future__ import annotations
 import shutil
 import subprocess
 import os
+import signal
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Any
 from langchain_core.tools import tool
@@ -161,7 +163,7 @@ def shell_run(
         return {
             "status": "blocked",
             "command": command,
-            "message": "Écriture de fichier via shell bloquée. Utilise propose_file_change(path, content, description) pour toute modification de fichier.",
+            "message": "Écriture de fichier via shell bloquée. Utilise edit_file(path, old_string, new_string) pour modifier une partie d'un fichier existant, propose_file_change(path, content, description) pour en créer un.",
         }
 
     work_dir = Path(cwd) if cwd else None
@@ -221,9 +223,43 @@ def shell_run(
             text=True,
             bufsize=1,
             env=env,
+            # Session dédiée : la commande et TOUS ses descendants forment un
+            # groupe qu'on peut tuer d'un bloc. Sans elle, tuer `proc` ne tue que
+            # l'enveloppe — `rtk sleep 10` laisse un `sleep` orphelin qui garde le
+            # tube ouvert, et la lecture bloque jusqu'au bout malgré l'échéance.
+            start_new_session=True,
         )
 
         output_lines: list[str] = []
+
+        # Le délai est armé AVANT la lecture, pas après.
+        #
+        # `for line in proc.stdout` bloque jusqu'à la fermeture du flux, donc
+        # jusqu'à la fin du processus : le `proc.wait(timeout=...)` qui suivait
+        # n'était atteint qu'une fois la commande terminée, et n'expirait jamais.
+        # Un `sleep 10` avec `timeout=1` tournait dix secondes et rendait « ok » ;
+        # une commande qui ne rend pas la main aurait figé l'agent indéfiniment.
+        #
+        # Une minuterie tue le processus à l'échéance : le flux se ferme, la
+        # boucle rend la main, et la sortie déjà reçue est conservée — ce qu'un
+        # `wait(timeout=...)` seul ne permet pas.
+        expire = threading.Event()
+
+        def _echeance() -> None:
+            expire.set()
+            try:
+                # Le GROUPE, pas seulement le processus lancé : l'enveloppe rtk
+                # et le shell intermédiaire ont des enfants qui survivraient.
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+        minuterie = threading.Timer(timeout, _echeance)
+        minuterie.daemon = True
+        minuterie.start()
 
         try:
             stdout = proc.stdout
@@ -232,16 +268,11 @@ def shell_run(
                     clean = line.rstrip("\n")
                     output_lines.append(clean)
                     _emit_shell_stream(clean)
+            exit_code = proc.wait()
+        finally:
+            minuterie.cancel()
 
-            exit_code = proc.wait(timeout=timeout)
-
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            try:
-                proc.wait(timeout=2)
-            except Exception:
-                pass
-
+        if expire.is_set():
             stdout_text = _compact_shell_output("\n".join(output_lines))
             return {
                 "status": "timeout",

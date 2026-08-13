@@ -36,6 +36,17 @@ from datetime import datetime, timedelta, timezone
 from ..evidence import HistoricalMatchEvidence, utcnow
 from .sackmann import DECALAGE_FIN_TOURNOI
 
+#: Variable d'environnement — LE SEUL endroit d'où un jeton Kaggle se lit.
+#:
+#: Kaggle propose aussi `~/.kaggle/access_token`, que son client lit tout seul.
+#: On ne s'en sert pas : un fichier dans le répertoire personnel finit copié,
+#: sauvegardé, ou committé par un `git add .` distrait. Une variable
+#: d'environnement disparaît avec le shell.
+#:
+#: Rien de ce module n'écrit ni ne journalise cette valeur. La seule question
+#: qu'on lui pose est « est-elle présente ? ».
+VARIABLE_JETON = "KAGGLE_API_TOKEN"
+
 SOURCE = "kaggle_atpwta"
 LICENCE = "CC-BY-NC-SA-4.0"
 DATASET = "taylorbrownlow/atpwta-tennis-data"
@@ -76,6 +87,33 @@ class ParseResult:
         return {"lignes": self.n_lignes, "rencontres": len(self.evidences),
                 "non_analysees": len(self.unparsed),
                 "genres_refuses": self.genres_refuses}
+
+
+def jeton_disponible() -> bool:
+    """Un jeton est-il fourni par l'environnement ? Rien de plus n'est exposé.
+
+    Rendre le jeton lui-même en ferait circuler une copie — dans un message
+    d'erreur, une trace de pile, un journal. L'appelant n'a besoin que de savoir
+    s'il peut acquérir ; l'acquisition, elle, lit l'environnement au dernier
+    moment et ne le stocke pas.
+    """
+    import os
+
+    return bool((os.environ.get(VARIABLE_JETON) or "").strip())
+
+
+def exiger_jeton() -> str:
+    """Le jeton, lu à l'instant de l'appel. Échoue en NOMMANT la variable, jamais
+    en montrant une valeur — un message d'erreur finit dans un journal."""
+    import os
+
+    jeton = (os.environ.get(VARIABLE_JETON) or "").strip()
+    if not jeton:
+        raise RuntimeError(
+            f"{VARIABLE_JETON} absent — acquisition Kaggle impossible. "
+            f"Exporter la variable ; ne jamais déposer le jeton dans un fichier "
+            f"du dépôt.")
+    return jeton
 
 
 def lire_joueurs(texte: str) -> dict[str, dict]:

@@ -1,129 +1,146 @@
-"""Tests for src/agents/memory/tools.py — axon_note, _find_git_root, _memory_path."""
+"""Mémoire persistante par projet — `axon_note` et le stockage qui la porte.
+
+CE FICHIER A ÉTÉ RECIBLÉ. Il visait `src/agents/memory/tools._find_git_root` et
+`._memory_path`, deux fonctions privées qui ont déménagé : la logique vit
+désormais dans `memory/persistent.py`, et le stockage est passé d'un fichier
+unique `.axon/memory.md` à un RÉPERTOIRE `.axon/memory/` avec un fichier par
+nature de note.
+
+Les CONTRATS testés n'ont pas changé — découvrir la racine git, écrire la note,
+créer l'arborescence, poser un en-tête une seule fois, dater, retirer les espaces
+superflus. Seule leur adresse a bougé. Un test qui importe une fonction disparue
+ne prouve rien ; il ne signale même pas la régression qu'il était censé attraper.
+"""
+import re
 import subprocess
-import pytest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 
-# ── _find_git_root ────────────────────────────────────────────────────────────
+
+# ── Découverte de la racine git ───────────────────────────────────────────────
 
 def test_find_git_root_finds_repo(tmp_path):
-    from src.agents.memory.tools import _find_git_root
+    from src.agents.memory.persistent import _find_git_root
     (tmp_path / ".git").mkdir()
     assert _find_git_root(tmp_path) == tmp_path
 
 
 def test_find_git_root_finds_parent_repo(tmp_path):
-    from src.agents.memory.tools import _find_git_root
+    from src.agents.memory.persistent import _find_git_root
     (tmp_path / ".git").mkdir()
     nested = tmp_path / "src" / "module"
     nested.mkdir(parents=True)
     assert _find_git_root(nested) == tmp_path
 
 
-def test_find_git_root_no_repo_returns_start(tmp_path):
-    from src.agents.memory.tools import _find_git_root
-    # No .git anywhere — should return the start directory
-    result = _find_git_root(tmp_path)
-    assert result == tmp_path
+def test_find_git_root_hors_repo_rend_none(tmp_path):
+    """Rend `None`, pas le répertoire de départ.
+
+    L'ancienne version rendait le point de départ, ce qui faisait écrire une
+    mémoire de projet dans un dossier quelconque — hors de tout dépôt, donc sans
+    projet auquel la rattacher. `_axon_dir` a besoin de la distinction pour
+    renoncer proprement.
+    """
+    from src.agents.memory.persistent import _find_git_root
+    assert _find_git_root(tmp_path) is None
 
 
 # ── axon_note ─────────────────────────────────────────────────────────────────
 
-def test_axon_note_creates_memory_file(tmp_path):
+@pytest.fixture
+def memoire(tmp_path):
+    """Redirige la mémoire vers un répertoire temporaire.
+
+    On substitue `_memory_dir`, la frontière du stockage — pas `Path.cwd`, qui
+    ferait dépendre le test de la découverte git ET de l'écriture à la fois.
+    """
+    cible = tmp_path / ".axon" / "memory"
+    with patch("src.agents.memory.persistent._memory_dir", return_value=cible):
+        yield cible
+
+
+def _note(fact: str, kind: str = "learning") -> str:
     from src.agents.memory.tools import axon_note
-    (tmp_path / ".git").mkdir()
-
-    with patch("src.agents.memory.tools._memory_path", return_value=tmp_path / ".axon" / "memory.md"):
-        result = axon_note.invoke({"fact": "Auth uses JWT RS256. See src/auth/tokens.py"})
-
-    mem = tmp_path / ".axon" / "memory.md"
-    assert mem.exists()
-    assert "Auth uses JWT RS256" in mem.read_text()
-    assert "Note enregistrée" in result
+    return axon_note.invoke({"fact": fact, "kind": kind})
 
 
-def test_axon_note_creates_parent_dirs(tmp_path):
-    from src.agents.memory.tools import axon_note
-    memory_path = tmp_path / "deep" / "nested" / ".axon" / "memory.md"
+def test_axon_note_cree_le_fichier_de_memoire(memoire):
+    resultat = _note("Auth uses JWT RS256. See src/auth/tokens.py")
 
-    with patch("src.agents.memory.tools._memory_path", return_value=memory_path):
-        axon_note.invoke({"fact": "test fact"})
-
-    assert memory_path.exists()
-
-
-def test_axon_note_writes_header_on_first_call(tmp_path):
-    from src.agents.memory.tools import axon_note
-    memory_path = tmp_path / ".axon" / "memory.md"
-
-    with patch("src.agents.memory.tools._memory_path", return_value=memory_path):
-        axon_note.invoke({"fact": "First note ever"})
-
-    content = memory_path.read_text()
-    assert "# Axon Memory" in content
-    assert "Généré automatiquement" in content
+    fichier = memoire / "learnings.md"
+    assert fichier.exists()
+    assert "Auth uses JWT RS256" in fichier.read_text(encoding="utf-8")
+    assert "Note enregistrée" in resultat
 
 
-def test_axon_note_no_duplicate_header(tmp_path):
-    from src.agents.memory.tools import axon_note
-    memory_path = tmp_path / ".axon" / "memory.md"
-
-    with patch("src.agents.memory.tools._memory_path", return_value=memory_path):
-        axon_note.invoke({"fact": "First note"})
-        axon_note.invoke({"fact": "Second note"})
-
-    content = memory_path.read_text()
-    assert content.count("# Axon Memory") == 1
+def test_axon_note_cree_l_arborescence(tmp_path):
+    cible = tmp_path / "profond" / "imbrique" / ".axon" / "memory"
+    with patch("src.agents.memory.persistent._memory_dir", return_value=cible):
+        _note("fait de test")
+    assert (cible / "learnings.md").exists()
 
 
-def test_axon_note_appends_multiple_notes(tmp_path):
-    from src.agents.memory.tools import axon_note
-    memory_path = tmp_path / ".axon" / "memory.md"
-
-    with patch("src.agents.memory.tools._memory_path", return_value=memory_path):
-        axon_note.invoke({"fact": "Note one"})
-        axon_note.invoke({"fact": "Note two"})
-
-    content = memory_path.read_text()
-    assert "Note one" in content
-    assert "Note two" in content
+def test_axon_note_pose_un_en_tete_au_premier_appel(memoire):
+    _note("Première note")
+    contenu = (memoire / "learnings.md").read_text(encoding="utf-8")
+    assert contenu.startswith("# Learnings")
 
 
-def test_axon_note_includes_timestamp(tmp_path):
-    from src.agents.memory.tools import axon_note
-    import re
-    memory_path = tmp_path / ".axon" / "memory.md"
-
-    with patch("src.agents.memory.tools._memory_path", return_value=memory_path):
-        axon_note.invoke({"fact": "Timestamped fact"})
-
-    content = memory_path.read_text()
-    # Should contain a date like ## 2024-03-15 14:30
-    assert re.search(r"## \d{4}-\d{2}-\d{2} \d{2}:\d{2}", content)
+def test_axon_note_ne_duplique_pas_l_en_tete(memoire):
+    _note("Première note")
+    _note("Seconde note, différente de la première")
+    contenu = (memoire / "learnings.md").read_text(encoding="utf-8")
+    assert contenu.count("# Learnings") == 1
 
 
-def test_axon_note_strips_whitespace(tmp_path):
-    from src.agents.memory.tools import axon_note
-    memory_path = tmp_path / ".axon" / "memory.md"
-
-    with patch("src.agents.memory.tools._memory_path", return_value=memory_path):
-        axon_note.invoke({"fact": "  fact with spaces  "})
-
-    content = memory_path.read_text()
-    assert "fact with spaces" in content
-    # Leading/trailing spaces should be stripped
-    assert "  fact with spaces  " not in content
+def test_axon_note_ajoute_les_notes_successives(memoire):
+    _note("Note une, sur le système d'authentification")
+    _note("Note deux, sur la base de données PostgreSQL")
+    contenu = (memoire / "learnings.md").read_text(encoding="utf-8")
+    assert "Note une" in contenu and "Note deux" in contenu
 
 
-def test_axon_note_real_git_repo(tmp_path):
-    """Integration test: axon_note discovers real git repo from cwd."""
-    from src.agents.memory.tools import axon_note
-    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+def test_axon_note_date_chaque_entree(memoire):
+    """La date sépare les entrées et permet l'archivage — sans elle, le découpage
+    par `## AAAA-MM-JJ` ne retrouverait plus les anciennes notes."""
+    _note("Fait daté")
+    contenu = (memoire / "learnings.md").read_text(encoding="utf-8")
+    assert re.search(r"## \d{4}-\d{2}-\d{2}", contenu)
 
-    with patch("pathlib.Path.cwd", return_value=tmp_path):
-        result = axon_note.invoke({"fact": "Real repo fact"})
 
-    mem = tmp_path / ".axon" / "memory.md"
-    assert mem.exists()
-    assert "Real repo fact" in mem.read_text()
+def test_axon_note_retire_les_espaces_superflus(memoire):
+    _note("  fait avec des espaces  ")
+    contenu = (memoire / "learnings.md").read_text(encoding="utf-8")
+    assert "fait avec des espaces" in contenu
+    assert "  fait avec des espaces  " not in contenu
+
+
+def test_axon_note_range_selon_la_nature_de_la_note(memoire):
+    """Cinq fichiers, pas un seul : une décision et un blocage ne se relisent pas
+    dans le même contexte."""
+    _note("Choix de PostgreSQL 15 plutôt que MySQL", kind="decision")
+    _note("Le build casse sans NODE_OPTIONS", kind="blocker")
+    assert (memoire / "decisions.md").exists()
+    assert (memoire / "blockers.md").exists()
+
+
+def test_axon_note_sans_repo_git_n_ecrit_rien(tmp_path):
+    """Hors dépôt, il n'y a pas de projet auquel rattacher la note."""
+    with patch("src.agents.memory.persistent._memory_dir", return_value=None):
+        resultat = _note("fait orphelin")
+    assert "Pas de repo git" in resultat
+
+
+def test_axon_note_trouve_un_vrai_depot_git(tmp_path):
+    """Intégration : la découverte de la racine et l'écriture, ensemble."""
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=False)
+
+    with patch("src.agents.memory.persistent.Path.cwd", return_value=tmp_path), \
+         patch("src.agents.shell.tools.get_cwd", return_value=tmp_path):
+        _note("Fait de dépôt réel")
+
+    fichier = tmp_path / ".axon" / "memory" / "learnings.md"
+    assert fichier.exists()
+    assert "Fait de dépôt réel" in fichier.read_text(encoding="utf-8")

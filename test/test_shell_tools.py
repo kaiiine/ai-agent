@@ -4,6 +4,17 @@ from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 
+def _popen_factice(sortie: str = "ok", code: int = 0):
+    """Processus simulé. `shell_run` DIFFUSE la sortie : il itère sur
+    `proc.stdout` puis appelle `wait()`. Un `MagicMock` nu rendrait un itérateur
+    infini, et la boucle de lecture ne se terminerait jamais."""
+    proc = MagicMock()
+    proc.stdout = iter([sortie + "\n"] if sortie else [])
+    proc.wait.return_value = code
+    proc.pid = 4242
+    return proc
+
+
 # ── _wrap_rtk ─────────────────────────────────────────────────────────────────
 
 def _wrap(cmd, rtk_path="/usr/bin/rtk"):
@@ -118,24 +129,36 @@ def test_shell_run_returns_exit_code():
 
 
 def test_shell_run_timeout_respected():
+    """Le délai doit COUPER, pas seulement être rapporté.
+
+    La lecture ligne à ligne bloquait jusqu'à la fermeture du flux : le
+    `wait(timeout=...)` qui suivait n'était atteint qu'une fois la commande
+    finie. `sleep 10` avec `timeout=1` tournait dix secondes et rendait « ok ».
+    On mesure donc la DURÉE, pas seulement le statut.
+    """
+    import time
+
     from src.agents.shell.tools import shell_run
+
+    debut = time.monotonic()
     result = shell_run.invoke({"command": "sleep 10", "timeout": 1})
+    ecoule = time.monotonic() - debut
+
     assert result["status"] == "timeout"
+    assert ecoule < 5, f"le délai n'a pas coupé : {ecoule:.1f}s pour un timeout de 1s"
 
 
 def test_shell_run_timeout_clamped_to_300():
     """Timeouts above 300 must be clamped, not passed as-is to subprocess."""
-    import subprocess
     from src.agents.shell.tools import shell_run
-    with patch("subprocess.run") as mock_run:
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = ""
-        mock_result.stderr = ""
-        mock_run.return_value = mock_result
+
+    # `shell_run` diffuse la sortie ligne à ligne : il utilise Popen, pas
+    # `subprocess.run`. Patcher `run` ne mockait plus rien et le test lisait
+    # `call_args` à None.
+    with patch("src.agents.shell.tools.threading.Timer") as mock_timer:
         shell_run.invoke({"command": "echo hi", "timeout": 9999})
-        _, kwargs = mock_run.call_args
-        assert kwargs["timeout"] <= 300
+        delai = mock_timer.call_args[0][0]
+        assert delai <= 300
 
 
 def test_shell_run_rtk_prefix_applied():
@@ -143,15 +166,10 @@ def test_shell_run_rtk_prefix_applied():
     import src.agents.shell.tools as mod
     from src.agents.shell.tools import shell_run
     with patch.object(mod, "_RTK", "/usr/bin/rtk"), \
-         patch("src.agents.shell.tools.subprocess.run") as mock_run:
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "ok"
-        mock_result.stderr = ""
-        mock_run.return_value = mock_result
+         patch("src.agents.shell.tools.subprocess.Popen") as mock_popen:
+        mock_popen.return_value = _popen_factice()
         shell_run.invoke({"command": "ls"})
-        call_args = mock_run.call_args
-        cmd = call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert "rtk" in cmd and "ls" in cmd, f"Expected rtk prefix, got: {cmd!r}"
 
 
@@ -160,15 +178,10 @@ def test_shell_run_no_rtk_prefix_when_absent():
     import src.agents.shell.tools as mod
     from src.agents.shell.tools import shell_run
     with patch.object(mod, "_RTK", None), \
-         patch("src.agents.shell.tools.subprocess.run") as mock_run:
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "ok"
-        mock_result.stderr = ""
-        mock_run.return_value = mock_result
+         patch("src.agents.shell.tools.subprocess.Popen") as mock_popen:
+        mock_popen.return_value = _popen_factice()
         shell_run.invoke({"command": "ls"})
-        call_args = mock_run.call_args
-        cmd = call_args[0][0]
+        cmd = mock_popen.call_args[0][0]
         assert cmd == "ls", f"Expected raw command, got: {cmd!r}"
 
 
