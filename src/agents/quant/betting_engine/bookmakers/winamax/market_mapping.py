@@ -19,18 +19,38 @@ _MATCH_WINNER = frozenset({
     ("Vainqueur", "2way"),
 })
 
-# Vainqueur d'une épreuve listée (F1, cyclisme, escrime) : template ListOdd.
+# Vainqueur d'une épreuve listée (F1, cyclisme, golf) : liste de compétiteurs SUR
+# UN ÉVÉNEMENT QUE LA SOURCE DÉCLARE OUTRIGHT. Les trois conditions comptent.
 _OUTRIGHT = frozenset({
     ("Vainqueur", "ListOdd"),
 })
 
 
-def map_market(bet_type_name: str, template: str) -> MarketType:
-    """(betTypeName, template) bruts -> `MarketType`. `UNMAPPED` si inconnu."""
+def map_market(bet_type_name: str, template: str, *, is_outright: bool = False) -> MarketType:
+    """(betTypeName, template) bruts -> `MarketType`. `UNMAPPED` si indémontrable.
+
+    LE TEMPLATE SEUL NE PROUVE RIEN, et la capture réelle l'a établi. La règle
+    précédente renvoyait `OUTRIGHT_WINNER` pour TOUT `ListOdd` : sur 1 263
+    marchés `ListOdd` observés (29 sports, 98 événements), **33** sont des
+    vainqueurs d'épreuve. Les 1 230 autres sont des marqueurs, des « Résultat et
+    nombre de buts », des « Mi-temps/Fin de match », des listes de props joueurs —
+    97,4 % de classifications fausses.
+
+    Ce qui se démontre : les 33 vainqueurs d'épreuve sont TOUS portés par un
+    événement que la source elle-même marque `isOutright`, et le marché s'appelle
+    « Vainqueur ». Le drapeau vient du bookmaker, ce n'est pas une déduction de
+    notre part ; c'est ce qui autorise à nommer la famille.
+
+    `is_outright` vaut `False` par défaut, et ce défaut est sûr : un appelant qui
+    ne connaît pas le drapeau obtient `UNMAPPED`, jamais un outright supposé. Une
+    classification inconnue est préférable à une classification fausse.
+
+    Le chemin `MATCH_WINNER` est inchangé : mêmes trois couples, même priorité.
+    """
     key = (bet_type_name, template)
     if key in _MATCH_WINNER:
         return MarketType.MATCH_WINNER
-    if key in _OUTRIGHT or template == "ListOdd":
+    if is_outright and key in _OUTRIGHT:
         return MarketType.OUTRIGHT_WINNER
     return MarketType.UNMAPPED
 

@@ -108,7 +108,8 @@ def _build_selections(
 
 
 def _build_markets(
-    match_id: str, bets_by_match: dict, outcomes: dict, odds: dict, bookmaker: str
+    match_id: str, bets_by_match: dict, outcomes: dict, odds: dict, bookmaker: str,
+    *, is_outright: bool = False
 ) -> list[RawMarket]:
     markets: list[RawMarket] = []
     for bet in bets_by_match.get(match_id, []):
@@ -117,8 +118,11 @@ def _build_markets(
             continue
         markets.append(
             RawMarket(
+                # Le drapeau `isOutright` vient de l'ÉVÉNEMENT : c'est lui, et non
+                # le template, qui autorise à nommer un vainqueur d'épreuve.
                 market_type=market_mapping.map_market(
-                    bet.get("betTypeName", ""), bet.get("template", "")
+                    bet.get("betTypeName", ""), bet.get("template", ""),
+                    is_outright=is_outright,
                 ),
                 raw_bet_type=int(bet.get("betType", 0)),
                 raw_label=bet.get("betTypeName", ""),
@@ -192,7 +196,8 @@ def parse_catalog(
                 status=match.get("status", ""),
                 is_outright=bool(match.get("isOutright")),
                 markets=_build_markets(
-                    str(match_id), bets_by_match, outcomes, odds, "winamax"
+                    str(match_id), bets_by_match, outcomes, odds, "winamax",
+                    is_outright=bool(match.get("isOutright")),
                 ),
                 fetched_at=fetched_at,
                 sr_tournament_id=match.get("srTournamentId"),

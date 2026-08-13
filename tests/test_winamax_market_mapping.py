@@ -14,7 +14,8 @@ from src.agents.quant.betting_engine.bookmakers.winamax import market_mapping as
         ("Résultat", "3way", MarketType.MATCH_WINNER),    # foot / rugby XIII 1X2
         ("Résultat", "2way", MarketType.MATCH_WINNER),    # baseball
         ("Vainqueur", "2way", MarketType.MATCH_WINNER),   # tennis / baseball
-        ("Vainqueur", "ListOdd", MarketType.OUTRIGHT_WINNER),  # F1 / cyclisme
+        # Sans le drapeau `isOutright` de la source, une liste ne prouve rien.
+        ("Vainqueur", "ListOdd", MarketType.UNMAPPED),
         ("Total de buts", "2way", MarketType.UNMAPPED),   # marché non couvert -> jamais deviné
         ("", "", MarketType.UNMAPPED),
     ],
@@ -23,9 +24,25 @@ def test_map_market(name, template, expected):
     assert mm.map_market(name, template) == expected
 
 
-def test_listodd_is_always_outright():
-    # Tout template ListOdd est une liste de vainqueurs, même libellé inattendu.
-    assert mm.map_market("Vainqueur du tournoi", "ListOdd") == MarketType.OUTRIGHT_WINNER
+def test_le_vainqueur_d_epreuve_exige_le_drapeau_de_la_source():
+    """`Vainqueur` + `ListOdd` + événement DÉCLARÉ outright : les trois ensemble."""
+    assert mm.map_market("Vainqueur", "ListOdd", is_outright=True) == MarketType.OUTRIGHT_WINNER
+    assert mm.map_market("Vainqueur", "ListOdd", is_outright=False) == MarketType.UNMAPPED
+
+
+def test_le_template_listodd_seul_ne_prouve_aucune_famille():
+    """L'ancienne règle — TOUT `ListOdd` est un vainqueur d'épreuve — est INFIRMÉE
+    par la capture réelle : sur 1 263 marchés `ListOdd` observés, 33 sont des
+    vainqueurs d'épreuve. Les autres sont des marqueurs, des « Résultat et nombre
+    de buts », des « Mi-temps/Fin de match », des listes de props joueurs.
+
+    Les libellés ci-dessous viennent tous de la capture, et aucun ne désigne le
+    vainqueur d'une épreuve — même sur un événement outright, où l'on trouve
+    aussi des marchés annexes."""
+    for libelle in ("Résultat et nombre de buts", "Mi-temps/Fin de match",
+                    "Marqueur d'essai", "Double chance marqueur d'essais"):
+        assert mm.map_market(libelle, "ListOdd") == MarketType.UNMAPPED
+        assert mm.map_market(libelle, "ListOdd", is_outright=True) == MarketType.UNMAPPED
 
 
 @pytest.mark.parametrize(
