@@ -7,27 +7,22 @@ n°1 déjà répondue. Deux défauts rendaient le garde-fou inopérant :
   - il était désactivé dès qu'un outil de flow de confirmation (slack_send_message,
     git_commit) était simplement DISPONIBLE — or « poste sur le canal … » suffit à le
     rendre disponible.
+
+SECOND CAS RAPPORTÉ, INVERSE — la détection est passée de trop étroite à trop
+large : « ? » N'IMPORTE OÙ dans la réponse suffisait. Une réponse complète close
+par « Tu veux que je détaille ? » était donc corrigée d'office, et l'utilisateur
+recevait un questionnaire APRÈS avoir été servi. Le critère porte maintenant sur
+l'absence de réponse, pas sur la ponctuation.
+
+Ces tests importent la VRAIE fonction. La version précédente en recopiait la
+logique : la copie restait verte pendant que la production changeait.
 """
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
-
-# ── Détection d'une question posée en texte libre ────────────────────────────────
-def _looks_like_question(resp_text: str) -> bool:
-    """Réplique la détection du garde-fou (graph.py) pour la tester unitairement."""
-    return bool(
-        resp_text.endswith("?")
-        or "?" in resp_text
-        or re.search(
-            r"(?i)\b(veuillez préciser|merci de préciser|peux-tu préciser|"
-            r"il me (?:manque|faut)|precise[rz]|please specify)\b",
-            resp_text,
-        )
-    )
+from src.orchestrator.graph import _demande_de_precision
 
 
 REAL_CASE = (
@@ -40,7 +35,7 @@ REAL_CASE = (
 
 def test_real_reported_plain_text_question_is_detected():
     assert not REAL_CASE.endswith("?")          # ancien test : ne se déclenchait pas
-    assert _looks_like_question(REAL_CASE)      # nouveau : détecté
+    assert _demande_de_precision(REAL_CASE)      # nouveau : détecté
 
 
 @pytest.mark.parametrize("text", [
@@ -50,7 +45,7 @@ def test_real_reported_plain_text_question_is_detected():
     "1 Fournisseur ? 2 Heure d'envoi.",
 ])
 def test_various_question_forms_detected(text):
-    assert _looks_like_question(text)
+    assert _demande_de_precision(text)
 
 
 @pytest.mark.parametrize("text", [
@@ -58,7 +53,33 @@ def test_various_question_forms_detected(text):
     "Rapport envoyé sur le canal test-cron.",
 ])
 def test_plain_statements_are_not_flagged(text):
-    assert not _looks_like_question(text)
+    assert not _demande_de_precision(text)
+
+
+# ── Une réponse LIVRÉE n'est pas une demande, même si elle se clôt sur une question ──
+REPONSE_LIVREE = (
+    "Le moteur a été interrogé sur les trois rencontres du tableau ATP de ce soir. "
+    "Verdict ABSTAIN sur les trois : la couverture de données est sous le seuil pour "
+    "deux d'entre elles, et la troisième n'a pas de cote disponible chez le bookmaker "
+    "au moment du scan. Aucune mise n'est donc proposée, et aucune sélection ne peut "
+    "être affichée dans cet état.\n"
+    "Tu veux que je relance le scan plus tard dans la soirée ?"
+)
+
+
+def test_une_reponse_livree_n_est_pas_corrigee():
+    """Le cas rapporté : l'utilisateur reçoit sa réponse PUIS un questionnaire sans
+    objet, parce qu'une politesse finale portait un point d'interrogation."""
+    assert REPONSE_LIVREE.rstrip().endswith("?")   # l'ancienne détection déclenchait
+    assert not _demande_de_precision(REPONSE_LIVREE)
+
+
+def test_une_question_reste_detectee_meme_avec_un_preambule():
+    """Un préambule court ne fait pas une réponse : la demande reste une demande."""
+    assert _demande_de_precision(
+        "Bonne question, je peux regarder ça.\n"
+        "Sur quel tournoi veux-tu que je scanne ?"
+    )
 
 
 # ── Le garde-fou reste actif malgré un flow de confirmation SI des réponses existent ──

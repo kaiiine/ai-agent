@@ -43,6 +43,46 @@ console = RichConsole()
 
 _MAX_TOOL_ROUNDS = 12
 
+#: Demande explicite d'information — sans point d'interrogation, elle reste une
+#: question posée à l'utilisateur.
+_DEMANDE_EXPLICITE = re.compile(
+    r"(?i)\b(veuillez préciser|merci de préciser|peux-tu préciser|"
+    r"il me (?:manque|faut)|precise[rz]|please specify)\b")
+
+#: Longueur, HORS questions, à partir de laquelle une réponse est considérée comme
+#: livrée. Le seuil vaut environ trois lignes : de quoi porter un verdict et son
+#: motif, pas seulement une formule d'attente.
+#:
+#: Le biais est assumé, et il penche vers « ne pas déclencher ». Un faux positif
+#: impose un questionnaire à qui vient de recevoir sa réponse — c'est le défaut
+#: rapporté. Un faux négatif laisse le modèle poser sa question en texte libre, et
+#: l'utilisateur la lit puis répond en tapant : moins confortable que le
+#: questionnaire, jamais bloquant.
+_SUBSTANCE_REPONSE = 240
+
+
+def _demande_de_precision(texte: str) -> bool:
+    """Le modèle RÉCLAME-T-IL une information au lieu de répondre ?
+
+    L'ancienne détection déclenchait sur un « ? » N'IMPORTE OÙ dans la réponse.
+    Une réponse complète qui se terminait par « Tu veux que je détaille ? » était
+    donc traitée comme une question en texte libre : le modèle recevait l'ordre de
+    la reposer via `ask_clarification`, et l'utilisateur voyait un questionnaire
+    arriver APRÈS sa réponse, sans objet. Chaque réponse contenant une seule
+    interrogation coûtait en plus un aller-retour de correction.
+
+    Ce qui distingue les deux cas n'est pas la présence d'une question mais
+    l'absence de réponse : on mesure donc ce que le texte dit EN DEHORS de ses
+    questions.
+    """
+    phrases = [p.strip() for p in re.split(r"(?<=[.!?])\s+|\n+", texte or "") if p.strip()]
+    questions = [p for p in phrases if p.endswith("?")]
+    substance = sum(len(p) for p in phrases if not p.endswith("?"))
+
+    if not questions and not _DEMANDE_EXPLICITE.search(texte or ""):
+        return False
+    return substance < _SUBSTANCE_REPONSE
+
 # ── Compile callback ───────────────────────────────────────────────────────────
 _compile_callback = None
 _compressed_this_turn: bool = False
@@ -397,15 +437,11 @@ def _chat_node_factory():
             no_tool_call = not getattr(response, "tool_calls", None)
             resp_text = _content_to_str(response.content).strip()
             # Une question en texte libre ne finit pas forcément par « ? » : le modèle
-            # énumère souvent « 1 … 2 … 3 … » et termine par un point. On détecte donc
-            # un « ? » N'IMPORTE OÙ, ou une demande explicite de précision.
-            _looks_like_question = (
-                resp_text.endswith("?")
-                or "?" in resp_text
-                or re.search(r"(?i)\b(veuillez préciser|merci de préciser|peux-tu préciser|"
-                             r"il me (?:manque|faut)|precise[rz]|please specify)\b", resp_text)
-            )
-            if no_tool_call and _looks_like_question:
+            # énumère souvent « 1 … 2 … 3 … » et termine par un point. Mais toute
+            # interrogation n'est pas une demande — une réponse livrée peut se
+            # clore sur « Tu veux que je détaille ? » sans rien attendre pour
+            # continuer. Le critère est l'absence de réponse, pas la ponctuation.
+            if no_tool_call and _demande_de_precision(resp_text):
                 console.print(
                     "[dim]  ↩  question en texte libre détectée — correction…[/dim]"
                 )
