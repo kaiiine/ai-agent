@@ -137,7 +137,15 @@ def run_tennis_walk_forward(matches, params: TennisEloParams) -> TennisRun:
         R_w = blend * rs_w + (1 - blend) * rg_w
         R_l = blend * rs_l + (1 - blend) * rg_l
 
-        eligible = played[w] >= params.min_prior_matches and played[l] >= params.min_prior_matches
+        # Une rencontre de Challenger, de qualification ou de Futures CONSTRUIT la
+        # force des joueurs mais n'est jamais une cible : AXON ne parie que sur le
+        # circuit principal. La compter comme cible fausserait la couverture dans
+        # les deux sens — dénominateur gonflé, et évaluations sur un marché qui
+        # n'existe pas chez le bookmaker.
+        cible = m.est_cible_d_evaluation
+        eligible = (cible
+                    and played[w] >= params.min_prior_matches
+                    and played[l] >= params.min_prior_matches)
         if eligible:
             cfirst, csecond = (w, l) if w < l else (l, w)   # ordre canonique (nom)
             y = 1.0 if cfirst == w else 0.0                 # cfirst a-t-il gagné ?
@@ -171,7 +179,11 @@ def run_tennis_walk_forward(matches, params: TennisEloParams) -> TennisRun:
             if m.p1_rank < m.p2_rank:
                 fav_wins += 1
 
-    return TennisRun(model_pairs, base_pairs, mkt_pairs, years, len(matches), n_eval)
+    # `n_total` ne compte que les CIBLES : la couverture répond à « quelle part
+    # des rencontres pariables sais-je évaluer ? ». Compter le contexte y
+    # répondrait par un chiffre qui ne concerne aucune décision.
+    n_cibles = sum(1 for m in matches if m.est_cible_d_evaluation)
+    return TennisRun(model_pairs, base_pairs, mkt_pairs, years, n_cibles, n_eval)
 
 
 @dataclass(frozen=True)

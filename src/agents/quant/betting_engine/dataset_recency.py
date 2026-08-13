@@ -84,10 +84,20 @@ def _dates_pairwise(loader: Callable) -> Callable[[], list[datetime]]:
 def _dates_tennis(tour: str) -> Callable[[], list[datetime]]:
     def dates() -> list[datetime]:
         from .sports.tennis.tennis_data_loader import load_tennis_data
-        # `tourney_date` est la date du TOURNOI (Sackmann) : la seule date portée par
-        # match dans ce corpus. Elle peut être un `date` — on l'élève en datetime
+        # `tourney_date` est la date du TOURNOI : la seule date portée par match
+        # dans ce corpus. Elle peut être un `date` — on l'élève en datetime
         # plutôt que de l'ignorer.
         return [_as_datetime(m.tourney_date) for m in load_tennis_data(tour).matches]
+    return dates
+
+
+def _dates_corpus(nom_loader: str) -> Callable[[], list[datetime]]:
+    """Corpus déjà canonique : le chargeur n'attend pas d'`IdentityResolver`."""
+    def dates() -> list[datetime]:
+        from .calibration import historical_dataset
+
+        matches, _fp, _n = getattr(historical_dataset, nom_loader)()
+        return [_as_datetime(m.kickoff) for m in matches]
     return dates
 
 
@@ -128,13 +138,36 @@ def _providers() -> dict[str, tuple[str, Callable[[], list[datetime]]]]:
     from .sports.volleyball.moneyline import load_volleyball_games
 
     return {
-        "nfl": ("nfl_api_sports_games.json", _dates_pairwise(load_nfl_games)),
+        # Le libellé nomme le fichier RÉELLEMENT lu. Il est resté figé sur
+        # `nfl_api_sports_games.json` après que le modèle eut basculé sur le
+        # corpus backfillé : le rapport de fraîcheur citait alors une source qui
+        # n'alimentait plus rien, ce qui est pire qu'une absence de libellé.
+        "nfl": ("nfl_backfilled_games.json (api_sports + nflverse)",
+                _dates_pairwise(load_nfl_games)),
         "mlb": ("mlb_api_sports_games.json", _dates_pairwise(load_mlb_games)),
         "nba": ("nba_api_sports_games.json", _dates_pairwise(load_nba_games)),
         "nhl": ("nhl_api_sports_games.json", _dates_pairwise(load_nhl_regulation)),
         "volley": ("volley_api_sports_games.json", _dates_pairwise(load_volleyball_games)),
-        "atp": ("sackmann atp", _dates_tennis("atp")),
-        "wta": ("sackmann wta", _dates_tennis("wta")),
+        # Corpus backfillés : la fraîcheur se lit sur le corpus RÉELLEMENT chargé.
+        # Sans entrée, le rapport affichait « NOT_MEASURABLE » pour un dataset
+        # pourtant daté — un trou d'instrumentation qui ressemble à un trou de données.
+        "champions-league": ("cl_backfilled_matches.json (fdo + api_sports + openfootball)",
+                             _dates_corpus("load_cl")),
+        "europa-league": ("el_backfilled_matches.json (openfootball)",
+                          _dates_corpus("load_el")),
+        "conference-league": ("conf_backfilled_matches.json (openfootball)",
+                              _dates_corpus("load_conf")),
+        # « sackmann » était trompeur : le chargeur lit tennis-data.co.uk, pas
+        # les CSV Jeff Sackmann — dont les dépôts publics ont d'ailleurs disparu
+        # (HTTP 404, vérifié le 2026-08-13). Nommer la vraie source évite de
+        # croire couvert le circuit Challenger, qui ne l'est pas.
+        "atp": ("tennis_data_atp_2000_2026.csv.gz (tennis-data.co.uk) + "
+                "tennis_sackmann_atp_backfill.csv.gz (Sackmann, CC BY-NC-SA 4.0, "
+                "Challenger/qualifs jusqu'en 2018)", _dates_tennis("atp")),
+        "wta": ("tennis_data_wta_2000_2026.csv.gz (tennis-data.co.uk) + "
+                "tennis_kaggle_wta_backfill.csv.gz (Kaggle atpwta-tennis-data v1, "
+                "CC BY-NC-SA 4.0, tour/Fed Cup/ITF jusqu'en 2021)",
+                _dates_tennis("wta")),
         **{cle: (f"{fichier}_2025_matches.json", _dates_football(loader))
            for cle, fichier, loader in (
                ("fl1", "fl1", "load_fl1_2025"),

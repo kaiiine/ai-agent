@@ -60,6 +60,28 @@ class TennisMatch:
     comment: str | None = None
     p1_close_odds: float | None = None
     p2_close_odds: float | None = None
+    #: Circuit d'origine. `None` = circuit principal (tennis-data.co.uk), le seul
+    #: sur lequel AXON parie. Les rencontres de Challenger, de qualification ou de
+    #: Futures arrivent par backfill : elles servent de PASSÉ pour construire la
+    #: force d'un joueur, jamais de cible d'évaluation.
+    #:
+    #: Sans cette distinction, ajouter 400 000 matchs de Futures ferait chuter
+    #: `min_data_coverage` — le dénominateur compterait des rencontres qu'AXON
+    #: n'évaluera jamais — et le backfill paraîtrait nuisible alors qu'il apporte
+    #: exactement l'historique manquant.
+    circuit: str | None = None
+
+    @property
+    def est_cible_d_evaluation(self) -> bool:
+        """Seul le corpus sur lequel AXON parie est une cible.
+
+        Tout ce qui arrive par backfill est du CONTEXTE — y compris les
+        rencontres de circuit principal antérieures à la fenêtre pariable. Les
+        compter comme cibles changerait le dénominateur de `min_data_coverage`
+        et rendrait l'avant/après incomparable : on ne saurait plus si la
+        couverture progresse ou si le dénominateur a bougé.
+        """
+        return self.circuit is None
 
     @property
     def is_pre_match_complete(self) -> bool:
