@@ -46,6 +46,12 @@ class PricingStatus(str, Enum):
     #: construire ; le confondre avec « pas de modèle » ferait croire qu'il n'y a
     #: rien, alors qu'il ne manque qu'une portée.
     MODEL_CONTEXT_MISMATCH = "MODEL_CONTEXT_MISMATCH"
+    #: Le modèle couvre la famille ET la portée, mais pas la POPULATION : un
+    #: participant n'a plus de données dans le domaine courant (changement de
+    #: division, corpus qui ne suit plus sa compétition). Distinct d'un manque de
+    #: données pour l'événement — ici les données existent, elles sont périmées
+    #: pour la question posée.
+    MODEL_DOMAIN_MISMATCH = "MODEL_DOMAIN_MISMATCH"
     UNSUPPORTED = "UNSUPPORTED"                  # famille non canonicalisée
 
 

@@ -273,6 +273,15 @@ class FootballDerivedPricer:
                     "ne bat pas la fréquence historique (must_beat_baselines FAIL). "
                     "Une probabilité qui n'apporte rien ne doit pas ressortir comme un edge")
 
+        # Le modèle a-t-il des données sur la POPULATION ACTUELLE ? Vérifié AVANT
+        # de produire une probabilité : une équipe qui a changé de division reçoit
+        # sinon des forces calculées sur une saison qu'elle ne joue plus.
+        from ....markets.domain import DomainStatus, verifier_domaine
+
+        domaine = verifier_domaine(event, features)
+        if domaine.status is DomainStatus.INSUFFICIENT_CURRENT_DOMAIN_HISTORY:
+            return refus(PricingStatus.MODEL_DOMAIN_MISMATCH, domaine.reason)
+
         try:
             matrix = self._base.distribution(event, features, point_in_time)
         except Exception as exc:   # noqa: BLE001 — l'abstention porte la cause
