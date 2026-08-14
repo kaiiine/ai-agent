@@ -44,6 +44,23 @@ class DomainStatus(str, Enum):
 #: discriminante — c'est l'ordre de grandeur qui l'est.
 CYCLE_SAISON_JOURS = 365
 
+#: Seuils SPÉCIALISÉS par compétition. Vide aujourd'hui, et c'est honnête : rien
+#: n'a été mesuré ailleurs qu'en Serie A. Y ajouter une entrée est le geste
+#: prévu le jour où une compétition démontre une autre période — pas une
+#: refonte.
+SEUILS_PAR_COMPETITION: dict[str, int] = {}
+
+
+def seuil_pour(competition_id: str | None, explicite: int | None = None) -> tuple[int, str]:
+    """`(seuil en jours, portée)`. L'appelant peut imposer ; sinon la compétition
+    décide ; sinon le défaut annuel, DÉCLARÉ comme tel."""
+    if explicite is not None:
+        return explicite, "imposé par l'appelant"
+    if competition_id and competition_id in SEUILS_PAR_COMPETITION:
+        return SEUILS_PAR_COMPETITION[competition_id], f"propre à {competition_id}"
+    return CYCLE_SAISON_JOURS, "défaut annuel (aucune mesure propre à cette compétition)"
+
+
 #: Le champ de features qui porte l'âge. Il existait déjà et n'était lu par
 #: personne : `rest_days` valait 810 sans que `missing_features` ne signale quoi
 #: que ce soit.
@@ -57,19 +74,45 @@ class DomainCheck:
     #: participant -> âge en jours de sa dernière observation.
     ages: dict = field(default_factory=dict)
     hors_domaine: tuple[str, ...] = ()
+    #: La règle EXACTE appliquée, en toutes lettres, dans la sortie elle-même.
+    #: Un seuil qui ne vit que dans une constante finit par être cité de mémoire
+    #: et de travers ; celui-ci voyage avec chaque verdict.
+    rule: str = ""
+    #: Le seuil retenu et SA provenance. `scope` dit à quoi il se rapporte —
+    #: aujourd'hui la valeur par défaut, demain une propriété de la compétition.
+    threshold_days: int | None = None
+    threshold_scope: str = ""
 
     @property
     def usable(self) -> bool:
         return self.status is DomainStatus.IN_DOMAIN
 
 
-def verifier_domaine(event, features, *, cycle_jours: int = CYCLE_SAISON_JOURS) -> DomainCheck:
+def regle(cycle_jours: int, scope: str) -> str:
+    """La règle, écrite comme elle s'applique. Reproduite dans chaque verdict."""
+    return (f"{CHAMP_AGE} > {cycle_jours} j (dernière rencontre observée du "
+            f"participant, comparée à l'instant de décision) — seuil {scope}")
+
+
+def verifier_domaine(event, features, *, cycle_jours: int | None = None,
+                     competition_id: str | None = None) -> DomainCheck:
     """Chaque participant a-t-il une observation dans le cycle courant ?
+
+    LE SEUIL EST UNE PROPRIÉTÉ DU DOMAINE, PAS UNE CONSTANTE UNIVERSELLE. Il est
+    résolu par compétition, avec un défaut annuel explicite. Rien ne démontre
+    aujourd'hui qu'un cycle de 365 jours convienne à toutes les compétitions :
+    une ligue à saison courte, un circuit à calendrier continu ou une coupe
+    bisannuelle n'ont pas la même période. La mesure disponible (six rencontres
+    de Serie A, trou empirique de 84 à 447 jours) justifie la séparation OBSERVÉE
+    ici ; elle ne démontre pas l'optimalité ailleurs, et le point d'entrée est
+    fait pour qu'on puisse la spécialiser sans toucher au reste.
 
     `NOT_MEASURABLE` quand l'âge n'est pas disponible : c'est un troisième état,
     et il ne doit pas se confondre avec un feu vert. Un appelant qui l'ignore
     price comme avant ; un appelant prudent s'abstient.
     """
+    cycle, scope = seuil_pour(competition_id, cycle_jours)
+    enonce = regle(cycle, scope)
     ages: dict[str, float] = {}
     for participant in getattr(event, "participants", ()) or ():
         cid = participant.canonical_id
@@ -80,18 +123,20 @@ def verifier_domaine(event, features, *, cycle_jours: int = CYCLE_SAISON_JOURS) 
     if not ages:
         return DomainCheck(DomainStatus.NOT_MEASURABLE,
                            f"aucun `{CHAMP_AGE}` disponible : l'appartenance au domaine "
-                           "courant n'est pas vérifiable")
+                           "courant n'est pas vérifiable",
+                           rule=enonce, threshold_days=cycle, threshold_scope=scope)
 
-    hors = tuple(sorted(cid for cid, age in ages.items() if age > cycle_jours))
+    hors = tuple(sorted(cid for cid, age in ages.items() if age > cycle))
     if hors:
         detail = ", ".join(f"{cid} ({ages[cid]:.0f} j)" for cid in hors)
         return DomainCheck(
             DomainStatus.INSUFFICIENT_CURRENT_DOMAIN_HISTORY,
-            f"aucune rencontre observée depuis plus d'un cycle de compétition "
-            f"({cycle_jours} j) pour : {detail}. L'identité de l'équipe n'a pas "
-            "changé ; son appartenance au domaine du modèle, si.",
-            ages, hors)
+            f"règle appliquée : {enonce}. Hors domaine : {detail}. "
+            "L'identité de l'équipe n'a pas changé ; son appartenance au domaine "
+            "du modèle, si.",
+            ages, hors, rule=enonce, threshold_days=cycle, threshold_scope=scope)
 
     return DomainCheck(DomainStatus.IN_DOMAIN,
-                       "tous les participants ont une observation dans le cycle courant",
-                       ages)
+                       f"règle appliquée : {enonce}. Tous les participants ont une "
+                       "observation dans le cycle courant.",
+                       ages, rule=enonce, threshold_days=cycle, threshold_scope=scope)

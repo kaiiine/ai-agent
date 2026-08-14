@@ -278,7 +278,8 @@ class FootballDerivedPricer:
         # sinon des forces calculées sur une saison qu'elle ne joue plus.
         from ....markets.domain import DomainStatus, verifier_domaine
 
-        domaine = verifier_domaine(event, features)
+        domaine = verifier_domaine(event, features,
+                                   competition_id=getattr(event, 'competition_id', None))
         if domaine.status is DomainStatus.INSUFFICIENT_CURRENT_DOMAIN_HISTORY:
             return refus(PricingStatus.MODEL_DOMAIN_MISMATCH, domaine.reason)
 
