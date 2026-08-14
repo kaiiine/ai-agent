@@ -43,6 +43,72 @@ def _sport_de(event_id: str) -> str:
     return parties[1] if len(parties) >= 2 and parties[0] == "event" else "?"
 
 
+def capacite_de(sport: str, market_type: str) -> str:
+    """`(sport, identité de contrat)` -> nom de capacité, pour l'isolation CLV.
+
+    La maturité se lit PAR CAPACITÉ : trente paires sur « qui gagne » ne disent
+    rien de « plus de 2,5 buts ». Le nom se dérive de l'identité de contrat
+    elle-même — aucune table à tenir à jour, et deux contrats distincts ne
+    peuvent pas se retrouver sous le même nom.
+    """
+    from .contract import famille_de, parametres_de
+
+    famille = famille_de(market_type).lower()
+    params = parametres_de(market_type)
+    suffixe = "".join(f".{k}_{v.replace('.', '_')}" for k, v in sorted(params.items()))
+    return f"{sport}.{famille}{suffixe}"
+
+
+def collect_par_capacite(observations, *, min_events: int) -> list[dict]:
+    """Une ligne par CAPACITÉ : sport × contrat. C'est l'unité sur laquelle la
+    maturité se décide, donc la seule qui puisse dire « où en est TOTALS 2.5 »."""
+    par_capacite: dict[tuple, list] = defaultdict(list)
+    for obs in observations:
+        sport = _sport_de(obs.event_id)
+        par_capacite[(sport, obs.market_type)].append(obs)
+
+    lignes = []
+    for (sport, contrat), lot in sorted(par_capacite.items()):
+        decisions = [o for o in lot if o.phase is ObservationPhase.DECISION]
+        clotures = [o for o in lot if o.phase is ObservationPhase.CLOSING]
+        admis = admissibles(lot)
+        lecture = clv_readiness(admis)
+        motifs = exclusions(lot)
+        reste = max(0, min_events - lecture.n_events)
+        lignes.append({
+            "capacite": capacite_de(sport, contrat),
+            "sport": sport,
+            "market_family": contrat.split("(", 1)[0],
+            "parametres": contrat[contrat.index("(") + 1: -1] if "(" in contrat else "",
+            "decisions": len(decisions),
+            "clotures": len(clotures),
+            "paires": lecture.n_complete_pairs,
+            "eligibles": len(admis),
+            "independants": lecture.n_events,
+            "mean_clv": lecture.mean_clv,
+            "borne_basse": lecture.clv_lower_bound,
+            "exclues_par_motif": motifs,
+            "requises": min_events,
+            "manque": "—" if reste == 0 else f"{reste} rencontre(s) de plus",
+            "statut": lecture.status,
+        })
+    return lignes
+
+
+def render_par_capacite(lignes: list[dict]) -> list[str]:
+    if not lignes:
+        return ["Aucune observation : rien à isoler par capacité."]
+    entete = (f"{'capacité':34} {'déc.':>5} {'clôt.':>5} {'paires':>7} {'indép.':>7} "
+              f"{'CLV moy.':>10} {'borne basse':>12}  il manque")
+    sortie = [entete, "-" * len(entete)]
+    for l in lignes:
+        sortie.append(
+            f"{l['capacite']:34} {l['decisions']:>5} {l['clotures']:>5} "
+            f"{l['paires']:>7} {l['independants']:>7} "
+            f"{_clv(l['mean_clv']):>10} {_clv(l['borne_basse']):>12}  {l['manque']}")
+    return sortie
+
+
 def collect(observations, *, min_events: int) -> list[dict]:
     """Une ligne par sport présent dans l'historique, plus le total."""
     par_sport: dict[str, list] = defaultdict(list)
