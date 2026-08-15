@@ -55,6 +55,34 @@ NFLVERSE = SourceClassification(
     notes="Attribution obligatoire à la redistribution. `nflverse/nfldata` — où vit "
           "aussi un games.csv — n'a AUCUNE licence et reste donc exclu.")
 
+# ── american_football : nflverse, release JOUEUR ────────────────────────────
+#
+# La MÊME organisation et la MÊME licence que la release `schedules` déjà
+# enregistrée, mais une release DIFFÉRENTE et une entité différente : ce n'est pas
+# le même besoin, et le confondre aurait laissé croire que les props étaient
+# couvertes depuis le début.
+NFLVERSE_JOUEUR = SourceClassification(
+    source="nflverse (release `player_stats`)",
+    reachable=_m(OUI, "HTTP 200, player_stats.csv 33 447 747 octets, "
+                      "134 470 lignes joueur-semaine, 53 colonnes"),
+    licence=_m(OUI, "LICENSE.md du dépôt lu : Attribution 4.0 International (CC-BY-4.0)"),
+    licence_id="CC-BY-4.0",
+    provenance=_m(OUI, "release `player_stats` du dépôt nflverse/nflverse-data"),
+    structured=_m(OUI, "CSV, 134 470 lignes analysées, 0 non reconnue ; colonnes "
+                       "completions/attempts/passing_yards/passing_tds/interceptions/"
+                       "carries/rushing_yards/rushing_tds/receptions/targets/"
+                       "receiving_yards/receiving_tds/target_share"),
+    identity_compatible=_m(Axe.UNKNOWN,
+                           "identifiants `player_id` nflverse ; AUCUN pont vers un "
+                           "nom Winamax n'a pu être mesuré — le catalogue n'expose "
+                           "aucune prop NFL à ce jour"),
+    point_in_time_capable=_m(OUI, "granularité SEMAINE avec `season`/`week`/`season_type` : "
+                                  "l'ordre chronologique est reconstructible sans ambiguïté, "
+                                  "playoffs compris"),
+    notes="Attribution obligatoire à la redistribution. 26 saisons (1999-2024) ; "
+          "s'arrête une saison avant le présent, ce qui est une contrainte de "
+          "domaine à surveiller au moment de pricer.")
+
 # ── baseball : Retrosheet ───────────────────────────────────────────────────
 RETROSHEET = SourceClassification(
     source="retrosheet",
@@ -228,6 +256,21 @@ def registre_par_defaut() -> CapabilityRegistry:
             data_kinds=("results", "scores", "timestamps"), access_type="OPEN",
             classification=NFLVERSE, earliest_season="1999", latest_season="2026",
             provenance_quality="COMMUNITY"),
+        HistoricalProviderCapability(
+            provider="nflverse_player_stats", sport="american_football",
+            competitions=("competition:american_football:usa:nfl",),
+            historical_depth_years=26, entity_types=("player",),
+            data_kinds=("results", "scores"), access_type="OPEN",
+            classification=NFLVERSE_JOUEUR, earliest_season="1999",
+            latest_season="2024", provenance_quality="COMMUNITY",
+            detail={"lignes": 134470, "colonnes": 53,
+                    "familles_couvertes": ["passing_yards", "attempts", "passing_tds",
+                                           "interceptions", "carries", "rushing_yards",
+                                           "rushing_tds", "receptions", "targets",
+                                           "receiving_yards", "receiving_tds"],
+                    "feature_usage": "target_share (disponible AVANT le match)",
+                    "marche_winamax": "0 prop observée sur 16 événements NFL "
+                                      "(2026-08-15) — la saison ouvre le 10 septembre"}),
         HistoricalProviderCapability(
             provider="retrosheet", sport="baseball", competitions=("*",),
             historical_depth_years=154, entity_types=("team",),
