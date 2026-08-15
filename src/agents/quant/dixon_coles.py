@@ -26,6 +26,7 @@ Aucun LLM ici : calculs déterministes et testables uniquement.
 
 from __future__ import annotations
 import math
+from typing import Callable
 import random
 
 LEAGUE_AVG_GOALS = 1.35   # buts par équipe et par match (référence Europe)
@@ -58,6 +59,7 @@ def team_strengths(
     form: list[dict],
     opponent_ratings: dict | None = None,
     shrinkage_k: float = DEFAULT_SHRINKAGE_K,
+    poids: "Callable[[int, dict], float] | None" = None,
 ) -> dict:
     """Force d'attaque et de défense d'une équipe depuis sa forme récente.
 
@@ -68,6 +70,16 @@ def team_strengths(
 
     attack > 1 : marque plus que la moyenne ; defense > 1 : encaisse plus (mauvais).
     Les estimations sont shrinkées vers 1.0 selon la taille d'échantillon.
+
+    `poids` remplace la pondération par défaut, qui décroît avec le RANG du match
+    dans la forme (`exp(-DECAY × i)`). Ce point d'accroche existe pour qu'un banc
+    de mesure puisse comparer une décroissance par ANCIENNETÉ CALENDAIRE sans
+    écrire une seconde fonction de force : deux implémentations, même identiques
+    le jour où on les écrit, finiraient par diverger — et c'est alors la version
+    validée qu'on croirait exécuter.
+
+    `None` reproduit EXACTEMENT le comportement historique, au bit près : le
+    chemin de production ne passe jamais cet argument, et un test le vérifie.
     """
     if not form:
         raise ValueError("Forme vide — impossible d'estimer les forces")
@@ -77,7 +89,7 @@ def team_strengths(
     total_weight = 0.0
 
     for i, match in enumerate(form):  # i=0 → le plus récent
-        weight = math.exp(-DECAY * i)
+        weight = math.exp(-DECAY * i) if poids is None else poids(i, match)
         is_home = match["is_home"]
         scored = match["goals_home"] if is_home else match["goals_away"]
         conceded = match["goals_away"] if is_home else match["goals_home"]

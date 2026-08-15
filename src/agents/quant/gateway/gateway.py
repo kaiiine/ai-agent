@@ -37,9 +37,29 @@ def search_team(name: str) -> dict | None:
     return {"canonical_id": entity.canonical_id, "name": entity.canonical_name}
 
 
+def saison_precedente(season: str) -> str | None:
+    """La saison qui précède, ou rien si l'étiquette n'est pas une année."""
+    try:
+        return str(int(season) - 1)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resultats(competition_id: str, season: str) -> list:
+    """Matchs JOUÉS d'une compétition sur une saison. `[]` si indisponible."""
+    try:
+        envelope = fetch_league_data(
+            sport="football", data_type="RESULTS",
+            league_canonical_id=competition_id, season=season, resolver=_resolver)
+    except NoDataAvailableError:
+        return []
+    return list(envelope.payload.matches)
+
+
 def recent_form(canonical_team_id: str, *, competition_id: str,
                 last: int = 10, season: str | None = None) -> list[dict]:
-    """Forme récente d'une équipe DANS UNE COMPÉTITION DONNÉE.
+    """Les `last` derniers matchs d'une équipe DANS UNE COMPÉTITION, saison
+    précédente comprise tant que la saison en cours ne remplit pas la fenêtre.
 
     `competition_id` est REQUIS et vient de l'événement évalué, jamais de l'équipe.
     Une équipe appartient à plusieurs compétitions simultanément — le PSG joue en
@@ -49,24 +69,54 @@ def recent_form(canonical_team_id: str, *, competition_id: str,
     forme domestique, et une équipe hors des ligues onboardées était déclarée
     introuvable alors que son historique européen existait.
 
-    La chaîne est désormais : événement -> compétition canonique -> couverture
-    provider -> historique du participant. Aucun maillon ne part de l'équipe.
+    LA FRONTIÈRE DE SAISON NE REMET PLUS LA FORME À ZÉRO. Elle le faisait, et le
+    coût était mesuré : à la première journée, AUCUNE rencontre n'était évaluable
+    — zéro sur quarante-sept sur un rejeu de sept championnats — et `data_quality`
+    tombait à 0,500 pour deux mois. Le benchmark cold-start (deux ouvertures de
+    saison, 679 rencontres, sélection sur 2024 et mesure sur 2025) a comparé
+    quatre candidats ; celui-ci est le candidat B, retenu parce qu'il capture
+    l'essentiel du gain SANS AUCUN PARAMÈTRE : ΔBrier apparié +0,0227 sur J1-J5,
+    +0,0125 sur J1-J10, couverture 84,5 % -> 100 %.
+
+    LA TRANSITION EST MÉCANIQUE, PAS CALENDAIRE. On ne va chercher la saison
+    précédente que si la saison en cours ne remplit pas la fenêtre pour CETTE
+    équipe. Dès qu'elle a joué `last` matchs, la saison précédente disparaît
+    d'elle-même — aucune règle du type « report jusqu'à la cinquième journée »
+    n'existe, et aucun appel réseau supplémentaire n'est fait en cours de saison.
+
+    MÊME COMPÉTITION, STRICTEMENT. Un match de Ligue 1 nourrit la Ligue 1, jamais
+    la Ligue des Champions ni une autre division. Une équipe promue n'a donc
+    aucun historique dans sa nouvelle compétition et reste en démarrage à froid :
+    transférer une force d'une division à l'autre supposerait un rapport
+    d'échelle entre elles, que rien ne mesure ici.
+
+    Chaque entrée porte LA SAISON DONT ELLE VIENT, jamais celle de l'événement :
+    c'est ce qui permet à `opponent_ratings_for_form` d'aller chercher le
+    classement de la bonne année.
 
     En trêve estivale, peu ou pas de matchs "FINISHED" existent encore pour la
-    saison à venir — pas un bug, un vrai manque de données.
+    saison à venir — pas un bug, un vrai manque de données, désormais comblé par
+    la saison précédente quand elle existe.
     """
     season = season or current_season()
-    # recent_form consomme les matchs JOUÉS → data_type RESULTS.
-    envelope = fetch_league_data(
-        sport="football",
-        data_type="RESULTS",
-        league_canonical_id=competition_id,
-        season=season,
-        resolver=_resolver,
-    )
     # Calcul dérivé (pur) délégué à sports/football/derived.py — orchestration ici,
     # agrégation là-bas (frontière GW-FR-012).
-    return derived.recent_form(envelope.payload.matches, canonical_team_id, competition_id, season, last)
+    forme = derived.recent_form(_resultats(competition_id, season),
+                                canonical_team_id, competition_id, season, last)
+    if len(forme) >= last:
+        return forme
+
+    precedente = saison_precedente(season)
+    if precedente is None:
+        return forme
+    anterieure = derived.recent_form(_resultats(competition_id, precedente),
+                                     canonical_team_id, competition_id, precedente, last)
+    if not anterieure:
+        return forme
+    # Fusion par DATE décroissante : la fenêtre reste « les `last` derniers
+    # matchs », sans qu'aucun code ne décide combien viennent de quelle saison.
+    fusion = sorted(forme + anterieure, key=lambda m: m["date"], reverse=True)
+    return fusion[:last]
 
 
 def standings_strength(league_canonical_id: str, season: str | None = None) -> dict[str, float]:
