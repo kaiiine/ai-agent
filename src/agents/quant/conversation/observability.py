@@ -88,6 +88,29 @@ class ScanTelemetry:
     #: « aucune opportunité » sur cette branche — la pire des deux erreurs, parce
     #: qu'elle est silencieuse.
     scan_failures: Mapping[str, str] = field(default_factory=dict)
+    #: Marchés RÉELLEMENT rapportés, avant et après la récupération par événement.
+    #: L'écart est la mesure de ce que la page catalogue ne montre pas : elle ne
+    #: sert qu'un marché par rencontre, et s'en contenter revenait à déclarer que
+    #: le bookmaker n'en propose qu'un. `0` = non mesuré (aucun scan).
+    markets_from_catalog: int = 0
+    markets_after_event_pages: int = 0
+    events_market_enriched: int = 0
+    #: Rencontres dont la page n'a PAS été demandée (aucun modèle ne peut les
+    #: évaluer), et le nombre de marchés que la source déclare pour elles. Ce
+    #: second compte est ce qui empêche « page non lue » de se confondre avec
+    #: « rencontre à un seul marché ».
+    events_without_market_page: int = 0
+    declared_markets_not_fetched: int = 0
+    #: identifiant d'événement -> panne de sa page. Ces rencontres restent
+    #: évaluées sur leur marché de catalogue : une page absente n'est pas un
+    #: événement absent.
+    market_fetch_failures: Mapping[str, str] = field(default_factory=dict)
+    #: L'entonnoir MARCHÉ du run (`markets.event_pricing.MarketFunnel`), agrégé
+    #: sur tous les événements évalués : combien de marchés vus, canonicalisés,
+    #: couverts par un modèle, pricés — et sous quel motif les autres sont tombés.
+    #: `None` = aucun événement n'a atteint l'étape marché, ce qui n'est pas la
+    #: même chose qu'un entonnoir à zéro.
+    market_funnel: object | None = None
 
     @property
     def sports_effectivement_scannes(self) -> tuple[str, ...]:
@@ -147,6 +170,12 @@ class RunObservability:
     #: candidat : une feature Internet ne doit pas pouvoir voyager dans un objet
     #: que l'Advisor lit. La séparation est structurelle, pas conventionnelle.
     internet_features: Mapping[str, tuple[Any, ...]] = field(default_factory=dict)
+
+    #: Le classement produit multi-marché (`market_review.MarketReview`) : global,
+    #: par événement, et les non-comparables avec leur motif. `None` = non
+    #: construit sur ce run. Aucune décision d'argent n'en dépend — le
+    #: portefeuille décide, ce classement montre.
+    review: Any = None
 
     def adapted_for(self, candidate: Any) -> Any | None:
         return self.adapted_by_key.get(

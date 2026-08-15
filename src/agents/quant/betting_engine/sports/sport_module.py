@@ -24,6 +24,16 @@ class SportModule:
     # stable d'une saison à l'autre. Le tennis ne peut pas s'en servir : son tid
     # identifie une ÉDITION de tournoi et change chaque semaine.
     resolve_competition: Callable | None = None
+    #: () -> Sequence[MarketPricer] — les pricers des marchés AUTRES que « qui
+    #: gagne », déclarés par le sport. `None` = ce sport n'en a aucun, et c'est
+    #: une information : son catalogue restera lu, canonicalisé et compté, mais
+    #: aucun de ses Plus/Moins ne recevra de probabilité. Un défaut vide serait
+    #: identique en comportement ; l'attribut existe pour que « ce sport n'a pas
+    #: encore de modèle dérivé » se lise dans le registre, et pas dans un `if`.
+    market_pricers: Callable | None = None
+
+    def pricers(self):
+        return tuple(self.market_pricers()) if self.market_pricers is not None else ()
 
     def known_entities(self):
         """Entités canoniques de CE sport, pour la résolution d'identité.

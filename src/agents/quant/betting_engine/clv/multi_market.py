@@ -37,7 +37,7 @@ from ..bookmakers.market_canonicalizer import resolve_participant_roles
 from ..markets.capability import CapabilityStatus, resolve_model
 from ..markets.families import MarketFamily
 from ..markets.inventory import build_row
-from ..markets.observation import RawMarketObservation, RawSelectionObservation
+from ..markets.observation import observation_de_marche
 from ..markets.selection_binding import canonicaliser_selections
 from .contract import identite_contrat
 from .observation import ObservationPhase, OddsObservation
@@ -68,46 +68,6 @@ class MultiMarketSummary:
         return (f"{self.events_recorded}/{self.events_seen} événement(s), "
                 f"{self.markets_recorded}/{self.markets_seen} marché(s) retenu(s), "
                 f"{self.selections_written} sélection(s) écrite(s)")
-
-
-def _sport_id(nom: str) -> int | None:
-    """Nom de sport -> `sportId` bookmaker. La table du connecteur est l'autorité :
-    le registre de capacité est indexé dessus, et une valeur absente ferait
-    silencieusement échouer toutes les résolutions."""
-    from ..bookmakers.winamax.connector import SPORT_IDS
-    return SPORT_IDS.get((nom or "").lower())
-
-
-def _observation_de_marche(raw_event, raw_market, *, competition=None) -> RawMarketObservation:
-    """`RawMarket` du connecteur -> observation d'inventaire.
-
-    Conversion de forme uniquement : aucun champ n'est inventé, et les codes
-    bruts sont conservés tels quels pour la liaison des sélections.
-    """
-    return RawMarketObservation(
-        bookmaker=raw_event.bookmaker,
-        sport=raw_event.sport,
-        sport_id=_sport_id(raw_event.sport),
-        competition=competition or getattr(raw_event, "competition", None),
-        competition_source_id=getattr(raw_event, "raw_tournament_id", None),
-        source_event_id=raw_event.bookmaker_event_id,
-        event_label=f"{raw_event.slot_1_name} - {raw_event.slot_2_name}",
-        start_time=raw_event.start_time,
-        is_outright=bool(getattr(raw_event, "is_outright", False)),
-        market_source_id=None,
-        bet_type=getattr(raw_market, "raw_bet_type", None),
-        bet_type_name=getattr(raw_market, "raw_label", None),
-        bet_title=None,
-        template=getattr(raw_market, "template", None),
-        special_bet_value=getattr(raw_market, "special_bet_value", None),
-        is_live=getattr(raw_market, "is_live", None),
-        selections=tuple(
-            RawSelectionObservation(
-                source_selection_id=None, code=s.code, label=s.label,
-                decimal_odds=s.decimal_odds)
-            for s in raw_market.selections),
-        observed_at=raw_event.fetched_at,
-    )
 
 
 def record_all_markets(
@@ -147,8 +107,8 @@ def record_all_markets(
         ecrites_pour_evenement = 0
         for raw_market in raw_event.markets:
             resume.markets_seen += 1
-            obs = _observation_de_marche(raw_event, raw_market,
-                                         competition=mapping.competition_id)
+            obs = observation_de_marche(raw_event, raw_market,
+                                        competition=mapping.competition_id)
             ligne = build_row(obs)
 
             if not ligne.classification.canonical:
@@ -166,7 +126,8 @@ def record_all_markets(
             resume.markets_capability_available += 1
 
             binding = canonicaliser_selections(
-                family=ligne.family, codes=[s.code for s in obs.selections], roles=roles)
+                family=ligne.family, codes=[s.code for s in obs.selections], roles=roles,
+                parameters=ligne.classification.parameters)
             if not binding.complete:
                 resume.markets_selection_failed += 1
                 continue

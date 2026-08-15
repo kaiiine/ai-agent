@@ -50,6 +50,36 @@ _NOM_UNION = {
 
 _CODE_SCORE = re.compile(r"^(\d+):(\d+)$")
 
+#: GRAMMAIRE DU HANDICAP, MESURÉE sur 548 marchés réels (basket 282, football
+#: américain 248, baseball 18) :
+#:
+#:     `hcp` est le handicap appliqué à SLOT_1.
+#:     `yes` désigne le compétiteur dont le handicap est NÉGATIF.
+#:     `no`  désigne celui dont le handicap est POSITIF.
+#:
+#: Vérifié contre les libellés : 548/548 sur la VALEUR et le CAMP. Les 31 écarts
+#: constatés ne portaient que sur l'orthographe du nom (« L.A. Sparks » pour
+#: « Los Angeles Sparks ») — c'est-à-dire exactement la raison pour laquelle un
+#: libellé ne peut pas servir de source de vérité.
+#:
+#: Sans cette règle, le sujet du handicap n'existait que dans le libellé, et un
+#: handicap attribué au mauvais camp est une prédiction exactement inversée.
+_CODES_HANDICAP = ("yes", "no")
+
+
+def slot_du_handicap(handicap: float, code: str) -> str | None:
+    """Le SLOT que désigne cette issue, d'après le seul signe du handicap.
+
+    `None` sur un handicap NUL : « slot_1 +0 » et « slot_2 −0 » ne se distinguent
+    plus, et le signe ne désigne alors plus personne. C'est aussi le cas où le
+    règlement d'une égalité exacte serait à deviner — deux raisons de refuser.
+    """
+    if code not in _CODES_HANDICAP or handicap == 0:
+        return None
+    if handicap < 0:
+        return "slot_1" if code == "yes" else "slot_2"
+    return "slot_2" if code == "yes" else "slot_1"
+
 
 @dataclass(frozen=True)
 class SelectionBinding:
@@ -71,12 +101,18 @@ def _role(slot: str, roles) -> str | None:
     return "draw" if slot == "draw" else roles.get(slot)
 
 
-def canonicaliser_selections(*, family: MarketFamily, codes, roles) -> SelectionBinding:
+def canonicaliser_selections(*, family: MarketFamily, codes, roles,
+                             parameters=None) -> SelectionBinding:
     """`(famille, codes bruts, rôles par slot)` -> sélections canoniques.
 
     `roles` vient du `ParticipantRoleResolver` : `{"slot_1": "home", "slot_2":
     "away"}` — ou l'inverse. Rien ici ne suppose l'un plutôt que l'autre.
+
+    `parameters` porte les paramètres canoniques du marché. Une seule famille
+    s'en sert aujourd'hui — le handicap, dont le camp se lit dans le SIGNE de
+    `hcp` et nulle part ailleurs.
     """
+    parametres = dict(parameters or {})
     par_code: dict[str, str] = {}
     non_resolus: list[str] = []
 
@@ -105,10 +141,20 @@ def canonicaliser_selections(*, family: MarketFamily, codes, roles) -> Selection
                     # TOUJOURS domicile:extérieur.
                     canonique = f"{a}:{b}" if roles["slot_1"] == "home" else f"{b}:{a}"
 
-        elif family is MarketFamily.TOTALS:
+        elif family in (MarketFamily.TOTALS, MarketFamily.TEAM_TOTALS):
             # `over` / `under` sont déjà canoniques : ils ne désignent aucun
-            # compétiteur, donc aucun rôle à résoudre.
+            # compétiteur, donc aucun rôle à résoudre. Le SUJET d'un total
+            # d'équipe, lui, vit dans les paramètres (`side`), pas dans l'issue.
             canonique = brut if brut in ("over", "under") else None
+
+        elif family is MarketFamily.HANDICAP:
+            # Le camp vient du SIGNE de `hcp`, jamais du libellé. Sans handicap
+            # numérique, aucune issue n'est attribuable — et une issue attribuée
+            # au mauvais camp est une prédiction exactement inversée.
+            handicap = parametres.get("handicap")
+            if isinstance(handicap, (int, float)):
+                slot = slot_du_handicap(float(handicap), brut)
+                canonique = _role(slot, roles) if slot else None
 
         if canonique is None:
             non_resolus.append(brut)

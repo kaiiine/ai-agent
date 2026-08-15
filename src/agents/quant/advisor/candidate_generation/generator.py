@@ -75,6 +75,11 @@ def candidate_from_evaluation(adapted: AdaptedEvaluation) -> CandidateBet:
         warnings=adapted.warnings,                           # préservés (aucun supprimé)
         explanation_ref=f"expl:{candidate_id}",
         source_decision_id=adapted.source_decision_id,       # None (Q5) : jamais inventé
+        # DÉCLARÉE par le moteur, jamais déduite. Le champ existait sur le
+        # candidat et la règle de portefeuille le lisait déjà — mais rien ne le
+        # remplissait : la contrainte de corrélation était inerte en production.
+        probability_origin=(adapted.provenance.probability_origin
+                            if adapted.provenance is not None else None),
     )
 
 

@@ -103,6 +103,18 @@ class LiveEvaluationResult:
     # Fraîcheur MESURÉE par la Gateway (0..1), propagée à l'aval (adaptateur/Advisor).
     # None = non mesurable (jamais fabriquée). Distincte du gate DATA_TOO_STALE.
     freshness_score: float | None = None
+    #: TOUS les autres marchés de l'événement, pricés ou refusés avec leur motif
+    #: (`markets.event_pricing.PricedMarket`). Vide quand le sport ne déclare
+    #: aucun pricer dérivé — ce qui est une information, pas un manque de données.
+    priced_markets: tuple = ()
+    #: L'entonnoir de CET événement : combien de marchés vus, canonicalisés,
+    #: couverts, pricés, et sous quel motif les autres sont tombés.
+    market_funnel: object | None = None
+    #: La distribution dont sortent TOUTES les probabilités de cet événement —
+    #: « qui gagne » compris, puisque le 1X2 et les marchés dérivés lisent la
+    #: même matrice. Sans cette trace, le sizing traiterait « domicile gagne » et
+    #: « plus de 2,5 buts » comme deux paris indépendants.
+    probability_origin: str | None = None
 
     @property
     def is_evaluated(self) -> bool:
@@ -295,7 +307,59 @@ def evaluate_live_event(
         for sel in schema.selections
     )
 
+    # 10) TOUS LES AUTRES MARCHÉS de l'événement — additif, jamais substitutif.
+    #     Le marché « qui gagne » reste évalué par le chemin ci-dessus, avec ses
+    #     mêmes nombres : le dupliquer ici en produirait un second exemplaire, et
+    #     un candidat compté deux fois est une opportunité inventée.
+    #
+    #     Une panne de cette étape ne doit PAS coûter l'évaluation qui vient de
+    #     réussir : elle est donc bornée, et son échec devient un warning visible
+    #     plutôt qu'un événement perdu. L'inverse — laisser une nouvelle capacité
+    #     faire tomber le chemin money éprouvé — serait une régression.
+    marches, entonnoir, origine = _pricer_autres_marches(
+        raw_event, module=module, event=event, features=features,
+        decision_time=decision_time, roles=dict(role_resolution.roles),
+        competition_id=mapping.competition_id, warnings=warnings)
+
     return result(LiveEvaluationStatus.EVALUATED, "ok",
                   canonical_event=event, feature_set=features,
                   predictions=predictions, decisions=decisions,
-                  freshness_score=measured_freshness)
+                  freshness_score=measured_freshness,
+                  priced_markets=marches, market_funnel=entonnoir,
+                  probability_origin=origine)
+
+
+#: Familles déjà évaluées par le chemin historique. Les repricer ici produirait
+#: un DOUBLON : mêmes cote, même sélection, même événement, sous une autre
+#: version de modèle — donc deux candidats là où il n'y a qu'un pari.
+_FAMILLES_DEJA_EVALUEES = ("MATCH_WINNER",)
+
+
+def _pricer_autres_marches(raw_event, *, module, event, features, decision_time,
+                           roles, competition_id, warnings) -> tuple:
+    """Les marchés dérivés de l'événement, leur entonnoir, et leur origine commune."""
+    from .markets.event_pricing import MarketFunnel, price_event_markets, pricers_partages
+
+    pricers = module.pricers() if hasattr(module, "pricers") else ()
+    if not pricers:
+        return (), None, None
+
+    entonnoir = MarketFunnel()
+    try:
+        marches = price_event_markets(
+            raw_event, event=event, features=features, decision_time=decision_time,
+            pricers=pricers_partages(pricers), roles=roles,
+            competition_id=competition_id, funnel=entonnoir)
+    except Exception as exc:   # noqa: BLE001 — frontière : l'évaluation 1X2 est déjà acquise
+        warnings.append(
+            f"multi_market_unavailable: {type(exc).__name__}: {exc} — "
+            "les marchés dérivés n'ont pas pu être évalués pour cet événement ; "
+            "le marché « qui gagne » ci-dessus, lui, l'a été")
+        return (), entonnoir, None
+
+    retenus = tuple(m for m in marches if m.family.value not in _FAMILLES_DEJA_EVALUEES)
+    # L'origine est celle que les pricers DÉCLARENT, jamais une chaîne fabriquée
+    # ici : c'est le modèle qui sait de quelle distribution il a lu.
+    origines = {m.pricing.probability_origin for m in marches
+                if m.priced and m.pricing.probability_origin}
+    return retenus, entonnoir, (origines.pop() if len(origines) == 1 else None)

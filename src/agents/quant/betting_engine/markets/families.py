@@ -47,6 +47,26 @@ _MATCH_WINNER_OBSERVE = frozenset({
 
 _TEMPLATES_HANDICAP = frozenset({"asian_handicap", "asiantext_handicap"})
 
+#: `betType` -> CAMP dont le total est coté. MESURÉ sur 40 marchés de trois
+#: sports, et le résultat corrige une conclusion antérieure : ces identifiants
+#: désignent le SLOT, pas l'équipe.
+#:
+#:     football           2615 = slot_1   2680 = slot_2   (20 marchés, 4 affiches)
+#:     basketball         2474 = slot_1   2877 = slot_2   (20 marchés, 4 affiches)
+#:     american_football  2475 = slot_1   2878 = slot_2   ( 2 marchés, 1 affiche)
+#:
+#: L'erreur d'origine venait d'une lecture trop rapide : sur une seule affiche,
+#: « 2877 = Dallas Wings » et « 2474 = Indiana Fever » se lisent comme deux
+#: identifiants d'ÉQUIPE. Il fallait une deuxième affiche pour voir que 2877
+#: suivait le second compétiteur et non les Wings. Une table construite sur un
+#: seul exemple aurait attribué chaque total d'équipe au hasard — et une
+#: probabilité donnée au mauvais camp est une prédiction inversée.
+CAMP_DU_TOTAL_D_EQUIPE: dict[int, str] = {
+    2615: "slot_1", 2680: "slot_2",      # football
+    2474: "slot_1", 2877: "slot_2",      # basketball
+    2475: "slot_1", 2878: "slot_2",      # football américain
+}
+
 #: Codes de sélection d'une double chance. Mesurés IDENTIQUES sur les 23 marchés
 #: « Double chance » de la capture, dans quatre sports (football, hockey, rugby à
 #: XIII, rugby à XV). Trois issues, trois codes, toujours les mêmes.
@@ -70,6 +90,12 @@ class MarketFamily(str, Enum):
 
     MATCH_WINNER = "MATCH_WINNER"
     TOTALS = "TOTALS"
+    #: Total d'UN camp. Distinct de `TOTALS` parce que ce n'est pas le même pari :
+    #: « plus de 110,5 points pour le domicile » et « plus de 220,5 points dans le
+    #: match » ont la même forme et des issues différentes. Les fondre sous une
+    #: seule famille leur donnerait la MÊME identité de contrat, donc la même
+    #: exposition et la même paire CLV — pour deux marchés qui n'ont rien à voir.
+    TEAM_TOTALS = "TEAM_TOTALS"
     HANDICAP = "HANDICAP"
     OUTRIGHT_WINNER = "OUTRIGHT_WINNER"
     DOUBLE_CHANCE = "DOUBLE_CHANCE"
@@ -161,6 +187,15 @@ def _classify(obs: RawMarketObservation) -> MarketClassification:
             return MarketClassification(
                 MarketFamily.UNMAPPED, ClassificationStatus.AMBIGUOUS,
                 {"line": ligne}, f"template OverUnder à {n} issues (2 attendues)")
+        # Total d'un CAMP : le `betType` le dit, et lui seul. Le libellé
+        # (« Nombre de points de Dallas Wings ») nomme l'équipe et non le camp,
+        # donc il ne peut pas servir — mais le betType est stable et mesuré.
+        camp = CAMP_DU_TOTAL_D_EQUIPE.get(obs.bet_type)
+        if camp is not None:
+            return MarketClassification(
+                MarketFamily.TEAM_TOTALS, ClassificationStatus.CANONICALIZED,
+                _parametres_canoniques(obs, line=ligne, side=camp),
+                f"template OverUnder + seuil + betType {obs.bet_type} = total du {camp}")
         return MarketClassification(
             MarketFamily.TOTALS, ClassificationStatus.CANONICALIZED,
             _parametres_canoniques(obs, line=ligne),

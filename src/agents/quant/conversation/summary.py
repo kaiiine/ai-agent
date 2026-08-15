@@ -155,6 +155,175 @@ def rencontre_lisible(candidate: Any) -> str:
     return participant_label(candidate.participant_ids)
 
 
+# ── Marchés : dire ce qu'on parie, pas seulement sur qui ─────────────────────
+#: Libellés de familles. Un marché absent d'ici s'affiche par son nom canonique :
+#: un code brut est lisible par quelqu'un, une paraphrase inventée ne l'est par
+#: personne.
+_LIBELLE_FAMILLE = {
+    "MATCH_WINNER": "Vainqueur",
+    "TOTALS": "Nombre de buts",
+    "DOUBLE_CHANCE": "Double chance",
+    "DRAW_NO_BET": "Vainqueur (remboursé si match nul)",
+    "EXACT_SCORE": "Score exact",
+    "HANDICAP": "Handicap",
+    "OUTRIGHT_WINNER": "Vainqueur de l'épreuve",
+}
+
+#: Issues dont le nom ne désigne AUCUN participant : elles se traduisent seules.
+#: Celles qui en désignent un passent par `selection_lisible`, qui va chercher le
+#: nom canonique — « Naomi Osaka », jamais « player_b ».
+_LIBELLE_ISSUE = {
+    "over": "PLUS", "under": "MOINS",
+    "home_or_draw": "1N — domicile ou nul",
+    "draw_or_away": "N2 — nul ou extérieur",
+    "home_or_away": "12 — pas de nul",
+    "other": "tout autre score",
+}
+
+#: Rôles DITS EN FRANÇAIS, pour le cas où le participant n'est pas nommable —
+#: identité canonique sans rôle encodé, référentiel incomplet. Un rôle est une
+#: notion interne : « player_a » demande à l'utilisateur de deviner lequel des
+#: deux joueurs c'est, alors que « le premier joueur » ne prétend rien de plus
+#: que ce qu'on sait réellement.
+_ROLE_SANS_NOM = {
+    "home": "l'équipe à domicile", "away": "l'équipe à l'extérieur",
+    "player_a": "le premier joueur", "player_b": "le second joueur",
+}
+
+
+def libelle_marche(candidat: Any) -> str:
+    """« Plus de 2.5 buts » — la famille ET son paramètre, jamais l'un sans l'autre.
+
+    Une double chance et un Plus/Moins 2,5 affichés tous deux « TOTALS » se
+    confondraient ; un Plus/Moins sans sa ligne est un pari qu'on ne peut pas
+    placer. Le paramètre vient du marché observé, jamais d'un défaut.
+    """
+    famille = getattr(candidat.family, "value", str(candidat.family))
+    nom = _LIBELLE_FAMILLE.get(famille, famille)
+    ligne = (candidat.parameters or {}).get("line")
+    if ligne is not None:
+        return f"{nom} — seuil {ligne}"
+    return nom
+
+
+def libelle_issue(candidat: Any) -> str:
+    """L'issue, dite en clair. Un score exact garde sa forme domicile:extérieur.
+
+    Une issue qui désigne un COMPÉTITEUR passe par le référentiel d'identités :
+    « player_a » est un rôle interne, et l'afficher tel quel demande à
+    l'utilisateur de savoir lequel des deux joueurs c'est.
+    """
+    issue = candidat.selection
+    if issue in _LIBELLE_ISSUE:
+        return _LIBELLE_ISSUE[issue]
+    if issue in ("draw", "nul"):
+        return "match nul"
+    if ":" in issue:
+        return f"score {issue} (domicile:extérieur)"
+    nomme = selection_lisible(candidat)
+    return nomme if nomme != issue else _ROLE_SANS_NOM.get(issue, issue)
+
+
+def rencontre_du_candidat(candidat: Any) -> str:
+    """Le nom de la rencontre. Le référentiel canonique d'abord ; le libellé du
+    bookmaker en repli — il est lisible, mais c'est son orthographe à lui."""
+    if getattr(candidat, "participant_ids", ()):
+        return rencontre_lisible(candidat)
+    return candidat.event_label or candidat.source_event_id
+
+
+def _flottant_pct(valeur) -> str:
+    return NON_MESURE if valeur is None else f"{valeur * 100:.2f} %"
+
+
+def _flottant_pct_signe(valeur) -> str:
+    if valeur is None:
+        return NON_MESURE
+    return f"{'+' if valeur >= 0 else ''}{valeur * 100:.2f} %"
+
+
+def render_marches_en_revue(review: Any, *, top: int = TOP_LISTE) -> list[str]:
+    """§8 — les meilleures opportunités TOUS MARCHÉS, explicitement non misables.
+
+    Cette section existe parce que la précédente répondait toujours « qui gagne » :
+    c'était le seul marché évalué, donc le seul montrable. Elle affiche désormais
+    ce que le modèle sait réellement pricer, et le nomme — le marché, son
+    paramètre, l'issue.
+
+    AUCUN NOMBRE N'EST CALCULÉ ICI. Chacun est lu sur le candidat classé, y
+    compris l'espérance prudente, qui vient du classement et non d'une seconde
+    formule écrite pour l'affichage.
+    """
+    if review is None:
+        return []
+    lignes: list[str] = []
+    classes = list(review.review)[:top]
+    if classes:
+        lignes += ["", "## Meilleures opportunités en revue — NON MISABLES", ""]
+        for r in classes:
+            c = r.candidate
+            lignes += [
+                f"{r.global_rank}. {rencontre_du_candidat(c)}"
+                f"  ({_LIBELLE_SPORT.get(c.sport, c.sport)})",
+                f"   Marché : {libelle_marche(c)}",
+                f"   Sélection : {libelle_issue(c)}",
+                f"   Cote : {c.bookmaker_odds}",
+                f"   Probabilité du modèle : {_flottant_pct(c.fair_probability)}",
+                f"   Probabilité basse mesurée : {_flottant_pct(c.probability_low)}",
+                f"   Probabilité sans marge du bookmaker : "
+                f"{_flottant_pct(c.vig_adjusted_probability)}",
+                f"   Espérance prudente : {_flottant_pct_signe(r.expected_value_low)}",
+                "   Statut : REVIEW_ONLY — aucune mise",
+                f"   Bloqueur : maturité {c.maturity} (le ledger n'a validé aucune "
+                f"décision de support pour {c.model_version})",
+                "",
+            ]
+
+    # Ce qui n'a PAS pu être comparé, et pourquoi. Un classement qui ne montre que
+    # ses gagnants laisse croire que le reste a perdu.
+    if review.non_comparables:
+        motifs: dict[str, int] = {}
+        for r in review.non_comparables:
+            for motif in r.reasons:
+                motifs[motif] = motifs.get(motif, 0) + 1
+        lignes += ["", f"Non comparables : {len(review.non_comparables)} sélection(s)"]
+        for motif, n in sorted(motifs.items(), key=lambda kv: -kv[1])[:4]:
+            lignes.append(f"- {motif} — {n}")
+    if review.ecartes_par_politique:
+        lignes.append(f"- écartés par la politique d'éligibilité : "
+                      f"{len(review.ecartes_par_politique)}")
+    return lignes
+
+
+def render_meilleur_par_rencontre(review: Any, *, top_evenements: int = 3,
+                                  top_marches: int = 6) -> list[str]:
+    """§3 — pour une rencontre, TOUS ses marchés priceables, puis le meilleur.
+
+    Ne montre que les rencontres dont le meilleur marché N'EST PAS « qui gagne » :
+    partout ailleurs, la section précédente dit déjà la même chose. C'est aussi la
+    seule preuve produit que le chantier a changé quelque chose.
+    """
+    if review is None:
+        return []
+    interessants = review.evenements_dont_le_meilleur_n_est_pas_le_vainqueur
+    if not interessants:
+        return []
+    lignes = ["", "## Rencontres dont le meilleur marché n'est pas le vainqueur", ""]
+    for event_id in interessants[:top_evenements]:
+        classees = review.par_evenement[event_id][:top_marches]
+        premier = classees[0].candidate
+        lignes.append(rencontre_du_candidat(premier))
+        for r in classees:
+            c = r.candidate
+            marque = "  ← MEILLEUR MARCHÉ" if r.event_rank == 1 else ""
+            lignes.append(
+                f"   {r.event_rank}. {libelle_marche(c)} · {libelle_issue(c)} "
+                f"@ {c.bookmaker_odds} · espérance prudente "
+                f"{_flottant_pct_signe(r.expected_value_low)}{marque}")
+        lignes.append("")
+    return lignes
+
+
 def _sport_entete(sports: list[str]) -> str:
     if len(sports) == 1:
         sport = sports[0]
@@ -267,18 +436,44 @@ def _rencontre(ligne: Any, obs: Any, index: int) -> list[str]:
     return lignes
 
 
-#: Refus du Betting Engine, dits en français. Un code absent d'ici s'affiche tel
-#: quel : un code brut vaut mieux qu'une phrase inventée qui le trahirait.
-_REFUS = {
-    "EVENT_NOT_RESOLVED": "participants inconnus de notre référentiel",
-    "COMPETITION_NOT_RESOLVED": "compétition non identifiée",
-    "COMPETITION_NOT_COVERED": "aucun provider ne couvre cette compétition",
-    "SPORT_NOT_SUPPORTED": "sport sans modèle",
-    "MARKET_CANONICALIZATION_FAILED": "marché illisible",
-    "INSUFFICIENT_FEATURES": "données insuffisantes pour ce match",
-    "DATA_TOO_STALE": "données trop anciennes",
-    "GATEWAY_UNAVAILABLE": "source de données indisponible",
+#: Refus du Betting Engine : libellé + le temps peut-il y changer quelque chose ?
+#: Un code absent d'ici s'affiche tel quel — un code brut vaut mieux qu'une phrase
+#: inventée qui le trahirait.
+#:
+#: `EVENT_NOT_RESOLVED` disait « participants inconnus de notre référentiel ».
+#: C'était FAUX sur le cas qui l'a révélé : PSG et Aston Villa étaient tous deux
+#: dans le référentiel, et c'est la COMPÉTITION (une européenne, non onboardée)
+#: qui ne se rattachait à rien. Le libellé accusait une cause non vérifiée et
+#: envoyait chercher au mauvais endroit. Il ne nomme plus que ce qui est établi :
+#: l'identité de la rencontre n'a pas été résolue — participants OU compétition.
+#:
+#: `attendre` gouverne le conseil. Dire « re-scanne dans 24 h » sur une
+#: compétition non onboardée est un conseil qui ne peut pas marcher.
+_REFUS: dict[str, tuple[str, bool]] = {
+    "EVENT_NOT_RESOLVED": (
+        "rencontre non rattachée à une compétition connue (participants ou "
+        "compétition non résolus)", False),
+    "COMPETITION_NOT_RESOLVED": (
+        "compétition absente du référentiel — non onboardée dans AXON", False),
+    "COMPETITION_NOT_COVERED": (
+        "compétition connue, mais aucun provider vérifié ne la couvre", False),
+    "SPORT_NOT_SUPPORTED": ("sport sans modèle disponible", False),
+    "MARKET_CANONICALIZATION_FAILED": ("marché illisible pour ce sport", False),
+    "INSUFFICIENT_FEATURES": ("historique trop mince pour ce match", True),
+    "DATA_TOO_STALE": ("données trop anciennes", True),
+    "GATEWAY_UNAVAILABLE": ("source de données indisponible", True),
 }
+
+#: Ce que l'utilisateur peut réellement faire, par famille de blocage. Aucune
+#: mention d'attente là où l'attente ne résout rien.
+_CONSEIL_STRUCTUREL = (
+    "Ces rencontres sont proposées par le bookmaker, mais AXON n'a pas de modèle "
+    "compatible avec leur compétition. Attendre n'y changera rien : il faut "
+    "onboarder la compétition (référentiel + rattachement bookmaker + données "
+    "historiques + benchmark).")
+_CONSEIL_TEMPOREL = (
+    "Ces rencontres peuvent devenir évaluables : les données manquantes "
+    "s'enrichissent avec le temps ou au prochain rafraîchissement.")
 
 
 def _pourquoi_rien(run: Any, obs: Any) -> list[str]:
@@ -297,8 +492,21 @@ def _pourquoi_rien(run: Any, obs: Any) -> list[str]:
         return []
     lignes = ["", f"{telemetrie.events_inside_window} rencontre(s) dans la fenêtre, "
                   "aucune évaluable :"]
+    structurel = temporel = 0
     for code, nombre in sorted(refus.items(), key=lambda kv: (-kv[1], kv[0])):
-        lignes.append(f"  · {nombre} — {_REFUS.get(code, code)}")
+        libelle, attendre = _REFUS.get(code, (code, True))
+        lignes.append(f"  · {nombre} — {libelle}")
+        if code in _REFUS:
+            temporel += nombre if attendre else 0
+            structurel += 0 if attendre else nombre
+
+    # Le conseil suit le blocage réel. Sans cette phrase, la couche de résumé
+    # comblait le vide par « re-scanne dans 24 h » — un conseil qui ne pouvait
+    # pas marcher, et un identifiant de compétition inventé pour l'illustrer.
+    if structurel:
+        lignes += ["", _CONSEIL_STRUCTUREL]
+    if temporel:
+        lignes += ["", _CONSEIL_TEMPOREL]
     return lignes
 
 
@@ -339,6 +547,12 @@ def render_resume(run: Any, *, top_liste: int = TOP_LISTE,
                     f"gain net si gagné {ligne_pf.net_profit} €")
     else:
         lignes.append("Aucun pari n'est encore validé pour une mise réelle.")
+
+    # Les marchés d'abord : la question de l'utilisateur est « quoi parier », et
+    # la réponse n'est plus « qui gagne » par défaut.
+    review = getattr(obs, "review", None) if obs is not None else None
+    lignes += render_marches_en_revue(review)
+    lignes += render_meilleur_par_rencontre(review)
 
     candidats = list(response.review_candidates or ())
     if not candidats:

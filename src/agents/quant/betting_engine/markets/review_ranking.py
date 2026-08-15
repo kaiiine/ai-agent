@@ -74,6 +74,22 @@ class ReviewCandidate:
     market_source_id: str | None = None
     observed_at: datetime | None = None
     abstention_reasons: tuple[str, ...] = ()
+    #: Provenance BRUTE du marché chez la source (§9). Ces champs n'entrent dans
+    #: aucun calcul et dans aucun tri : ils existent pour qu'un chiffre affiché
+    #: puisse être remonté jusqu'à la ligne exacte du bookmaker qui l'a produit.
+    #: Le `betType` en particulier est le seul discriminant structuré de portée —
+    #: le perdre en route rendrait invérifiable le refus d'un total de mi-temps.
+    bet_type: int | None = None
+    bet_type_name: str | None = None
+    model_name: str | None = None
+    model_version: str | None = None
+    bookmaker: str | None = None
+    #: Identité CANONIQUE de la rencontre et de ses participants. Elles ne
+    #: servent à aucun calcul : elles permettent de NOMMER une issue. Sans elles,
+    #: une sélection s'affiche « player_a », c'est-à-dire un rôle interne là où
+    #: l'utilisateur attend un nom de joueur.
+    event_id: str | None = None
+    participant_ids: tuple[str, ...] = ()
 
     @property
     def market_key(self) -> tuple:
@@ -112,13 +128,50 @@ _INDISPENSABLES = (
 )
 
 
+def _seuil_qualite() -> float:
+    """Le seuil de qualité de données du moteur — LU, jamais choisi ici.
+
+    C'est celui de `bet_decision_policy`, la politique versionnée qui décide déjà
+    si une prédiction mérite qu'on agisse dessus. Elle n'est appliquée
+    aujourd'hui que sur le chemin SUPPORTED : un modèle EXPERIMENTAL ne la
+    rencontre jamais, et ses prédictions entraient donc dans le classement sans
+    qu'aucune porte ne les ait vues.
+    """
+    from ..value_engine.bet_policy import default_bet_decision_policy
+    return float(default_bet_decision_policy().min_data_quality)
+
+
 def comparabilite(candidat: ReviewCandidate) -> tuple[Comparability, tuple[str, ...]]:
+    """Ce candidat peut-il être MIS EN FACE d'un autre ?
+
+    Le refus le moins évident est celui de la QUALITÉ DES DONNÉES, et c'est le
+    plus important. Mesuré sur un run réel de mi-août : le modèle football
+    déclarait `form_insufficient` pour les deux équipes de chaque rencontre
+    portugaise — une et deux journées jouées — et tirait donc ses forces vers la
+    moyenne de la ligue. Ses probabilités ne décrivaient plus les équipes, mais
+    le championnat : 0,55 de victoire pour Rio Ave contre le FC Porto, coté 6,25.
+    Le classement en faisait un « +86 % d'espérance » et le plaçait en tête.
+
+    Ce n'est pas un edge, c'est un écart d'information — dans le mauvais sens. Et
+    la borne basse ne le rattrape pas : elle est mesurée en fonction de la
+    probabilité prédite, pas du volume de données derrière elle (cf. la limite
+    déclarée de `uncertainty.py`). Une prédiction de saison pleine et une
+    prédiction de deuxième journée reçoivent la même borne.
+
+    Le seuil appliqué n'est pas inventé ici : c'est celui du moteur.
+    """
     manquants = [motif for champ, motif in _INDISPENSABLES
                  if getattr(candidat, champ, None) is None]
     if manquants:
         return Comparability.NOT_COMPARABLE, tuple(manquants)
     if candidat.bookmaker_odds is not None and candidat.bookmaker_odds <= 1.0:
         return Comparability.NOT_COMPARABLE, ("cote invalide (<= 1)",)
+    seuil = _seuil_qualite()
+    if candidat.data_quality < seuil:
+        return Comparability.NOT_COMPARABLE, (
+            f"DATA_QUALITY_INSUFFICIENT — qualité mesurée {candidat.data_quality:.3f} "
+            f"< {seuil:.2f} (seuil du moteur) : le modèle déclare lui-même n'avoir "
+            "eu qu'une partie de ses entrées pour cette rencontre",)
     return Comparability.COMPARABLE, ()
 
 

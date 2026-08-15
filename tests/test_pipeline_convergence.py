@@ -46,13 +46,19 @@ def test_un_seul_site_construit_le_resolveur_dans_tout_le_code():
 
     racine = pathlib.Path(__file__).resolve().parents[1] / "src"
     motif = re.compile(r"BookmakerEventResolver\s*\(")
+    # Le FICHIER, pas la ligne : c'est le nombre de sites qui est la propriété
+    # protégée. Épingler le numéro de ligne faisait échouer ce test à chaque
+    # édition sans rapport du registre, et un test qui casse pour rien finit par
+    # être mis à jour sans être lu — ce qui est exactement la façon dont un
+    # cinquième site passerait.
     sites = [
         f"{chemin.relative_to(racine)}:{n}"
         for chemin in racine.rglob("*.py")
         for n, ligne in enumerate(chemin.read_text(encoding="utf-8").splitlines(), 1)
         if motif.search(ligne)
     ]
-    assert sites == ["agents/quant/betting_engine/sports/registry.py:92"], (
+    assert len(sites) == 1 and sites[0].startswith(
+        "agents/quant/betting_engine/sports/registry.py:"), (
         f"le résolveur est construit hors de sa fabrique : {sites}")
 
 

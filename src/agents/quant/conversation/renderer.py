@@ -207,6 +207,55 @@ def _render_compteurs(obs: Any, evidence: Any) -> list[str]:
     lignes += ["```",
                f"Contrôle : {detail}" if coherent
                else f"⚠ {detail}"]
+    return lignes + _render_entonnoir_marches(obs)
+
+
+def _render_entonnoir_marches(obs: Any) -> list[str]:
+    """§7 — l'entonnoir MARCHÉ, du catalogue au candidat comparable.
+
+    Les dénominateurs sont ceux du CATALOGUE. Un taux calculé sur les marchés
+    parvenus jusqu'au modèle vaudrait toujours 100 % ; celui-ci part de ce que le
+    bookmaker expose, et chaque marché qui n'arrive pas au bout porte son motif.
+
+    Aucun pourcentage n'est affiché : les rendre demanderait de choisir un
+    dénominateur, et il y en a trois différents dans ce tableau.
+    """
+    entonnoir = getattr(obs.telemetry, "market_funnel", None)
+    tel = obs.telemetry
+    lignes = ["", "### Marchés", "```"]
+    lignes += [
+        f"{'marchés servis par la page catalogue':44}{tel.markets_from_catalog:>7}",
+        f"{'marchés servis par les pages événement':44}{tel.markets_after_event_pages:>7}",
+        f"{'rencontres enrichies':44}{tel.events_market_enriched:>7}",
+        f"{'rencontres sans page demandée':44}{tel.events_without_market_page:>7}",
+        f"{'  marchés que la source y déclare':44}{tel.declared_markets_not_fetched:>7}",
+    ]
+    if entonnoir is not None:
+        for libelle, champ in (
+                ("marchés observés", "markets_observed"),
+                ("marchés canonicalisés", "markets_canonicalized"),
+                ("marchés couverts par un modèle", "markets_capability_available"),
+                ("marchés pricés", "markets_priced"),
+                ("marchés avec borne basse", "markets_with_probability_low"),
+                ("sélections pricées", "selections_priced")):
+            lignes.append(f"{libelle:44}{getattr(entonnoir, champ):>7}")
+    review = getattr(obs, "review", None)
+    if review is not None:
+        lignes += [
+            f"{'candidats comparables':44}{len(review.global_ranking):>7}",
+            f"{'  dont REVIEW (non misables)':44}{len(review.review):>7}",
+            f"{'  dont ACTIONABLE':44}{len(review.actionable):>7}",
+            f"{'non comparables':44}{len(review.non_comparables):>7}",
+            f"{'écartés par la politique':44}{len(review.ecartes_par_politique):>7}",
+        ]
+    lignes.append("```")
+    if entonnoir is not None:
+        equilibre, detail = entonnoir.equilibre()
+        lignes.append(f"Contrôle : pricés + motifs = {detail}" if equilibre else f"⚠ {detail}")
+        motifs = entonnoir.principaux_motifs()
+        if motifs:
+            lignes += ["", "Motifs d'exclusion :"]
+            lignes += [f"- `{motif}` — {n}" for motif, n in motifs]
     return lignes
 
 

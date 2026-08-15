@@ -64,6 +64,12 @@ class RawMarket:
     is_live: bool
     special_bet_value: str | None
     selections: list[RawSelection]
+    #: Identifiant du marché CHEZ LE BOOKMAKER (`betId` Winamax). La provenance
+    #: d'un chiffre affiché doit remonter jusqu'à la ligne du bookmaker, et
+    #: `(événement, betType, specialBetValue)` ne suffit pas : deux marchés
+    #: peuvent partager les trois. `None` quand la source n'en expose pas —
+    #: jamais un identifiant fabriqué.
+    market_source_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +96,11 @@ class RawBookmakerEvent:
     fetched_at: datetime
     sr_tournament_id: str | None = None
     raw_tournament_id: str | None = None
+    #: Nombre de marchés que la SOURCE déclare pour cet événement (`moreBets`).
+    #: La page catalogue n'en sert qu'un ; ce compte est le seul moyen de dire,
+    #: sans les télécharger, combien on n'a PAS regardés. `None` = non déclaré,
+    #: jamais confondu avec « aucun autre marché ».
+    declared_market_count: int | None = None
 
 
 @dataclass(frozen=True)

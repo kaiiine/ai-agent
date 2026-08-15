@@ -253,3 +253,49 @@ class BookmakerEventResolver:
                 matches.append(entity)
                 alias_hit[entity.canonical_id] = True
         return matches, alias_hit
+
+
+class MemoizingEventResolver:
+    """Le même résolveur, interrogé une seule fois par ÉVÉNEMENT et par run.
+
+    La résolution d'identité coûte cher — mesuré : 26 ms par appel, parce qu'elle
+    parcourt le référentiel des sept sports pour chaque nom. Ce n'était pas
+    visible tant qu'elle n'était appelée qu'une fois par rencontre ; depuis que le
+    produit s'en sert AUSSI pour décider quelles pages de marchés valent un appel
+    réseau, chaque rencontre est résolue deux fois. Sur un run réel : 502 appels
+    pour 261 rencontres, 13,2 s sur 40 — un tiers du run passé à recalculer une
+    réponse déjà obtenue.
+
+    LA CLÉ NE CONTIENT QUE CE DONT L'IDENTITÉ DÉPEND : l'événement du bookmaker,
+    ses deux compétiteurs, son tournoi. Surtout PAS ses marchés — le même
+    événement est vu deux fois, d'abord avec son seul marché de catalogue puis
+    avec les deux cents de sa page, et ces deux vues doivent partager leur
+    identité. Les inclure dans la clé rendrait le mémo inopérant au moment précis
+    où il sert.
+
+    PORTÉE : un run. Le référentiel ne change pas pendant un scan, mais le
+    supposer stable AU-DELÀ ferait dépendre une réponse d'un état vieux d'une
+    heure — et rendrait un onboarding d'équipe invisible jusqu'au redémarrage.
+    """
+
+    def __init__(self, resolver: BookmakerEventResolver):
+        self._resolver = resolver
+        self._cache: dict[tuple, BookmakerEventMapping] = {}
+        self.appels = 0
+        self.calculs = 0
+
+    def __getattr__(self, nom):
+        return getattr(self._resolver, nom)
+
+    @staticmethod
+    def _cle(event: RawBookmakerEvent) -> tuple:
+        return (event.bookmaker, event.bookmaker_event_id, event.sport,
+                event.slot_1_name, event.slot_2_name, event.raw_tournament_id)
+
+    def resolve_event(self, event: RawBookmakerEvent) -> BookmakerEventMapping:
+        self.appels += 1
+        cle = self._cle(event)
+        if cle not in self._cache:
+            self.calculs += 1
+            self._cache[cle] = self._resolver.resolve_event(event)
+        return self._cache[cle]

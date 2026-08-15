@@ -57,6 +57,60 @@ class AdaptedExplanation:
 
 
 @dataclass(frozen=True)
+class MarketProvenance:
+    """D'où vient ce chiffre — la chaîne complète, du `betId` au modèle.
+
+    Chaque champ répond à une question qu'on doit pouvoir poser d'une ligne
+    affichée : quel marché du bookmaker ? quel type brut ? quelle famille
+    canonique et quels paramètres ? quel modèle, et de quelle distribution ?
+
+    AUCUN de ces champs n'entre dans un calcul. Ils existent pour que la
+    provenance soit vérifiable plutôt que plausible — et parce qu'une chaîne qui
+    évalue cinq familles au lieu d'une ne peut plus se relire de mémoire.
+
+    `probability_origin` est le seul à avoir une conséquence : le portefeuille
+    refuse de miser deux fois sur la même distribution (`CORRELATED_SAME_ORIGIN`).
+    Il est donc DÉCLARÉ par le modèle, jamais déduit d'une ressemblance.
+    """
+
+    source_event_id: str | None = None
+    bookmaker_market_id: str | None = None     # `betId` — None si la source n'en expose pas
+    raw_bet_type: int | None = None            # betType : le seul discriminant de portée
+    raw_bet_type_name: str | None = None
+    market_family: str | None = None           # famille CANONIQUE (pas le libellé)
+    parameters: tuple[tuple[str, str], ...] = ()
+    model_name: str | None = None
+    probability_origin: str | None = None
+    #: Parts de règlement quand le pari n'est PAS binaire — un « remboursé si
+    #: match nul » rend la mise sur un nul. `(issue, probabilité)`. Vide = WIN/LOSS
+    #: pur. L'espérance affichée en dépend directement : la traiter comme binaire
+    #: la surestime d'un facteur 1/(1−P(push)).
+    settlement_shares: tuple[tuple[str, float], ...] = ()
+    event_label: str | None = None
+
+
+def _provenance_from_jsonable(d: dict | None) -> "MarketProvenance | None":
+    """Provenance archivée -> objet. Absente des archives antérieures : un replay
+    d'avant ce champ doit rester rejouable, donc `None` est une valeur normale."""
+    if not d:
+        return None
+    return MarketProvenance(
+        source_event_id=d.get("source_event_id"),
+        bookmaker_market_id=d.get("bookmaker_market_id"),
+        raw_bet_type=d.get("raw_bet_type"),
+        raw_bet_type_name=d.get("raw_bet_type_name"),
+        market_family=d.get("market_family"),
+        parameters=tuple(tuple(p) for p in d.get("parameters") or ()),
+        model_name=d.get("model_name"),
+        probability_origin=d.get("probability_origin"),
+        # Les probabilités sont archivées en chaîne canonique (`repr`) : les
+        # relire en float restitue le MÊME nombre, sans arrondi intermédiaire.
+        settlement_shares=tuple((str(issue), float(p))
+                                for issue, p in d.get("settlement_shares") or ()),
+        event_label=d.get("event_label"))
+
+
+@dataclass(frozen=True)
 class AdaptedEvaluation:
     """Une sélection évaluée, traduite fidèlement (une par home/draw/away)."""
 
@@ -106,6 +160,10 @@ class AdaptedEvaluation:
     warnings: tuple[str, ...]           # union préservée résultat + explication
     explanation: AdaptedExplanation
     source_decision_id: str | None      # None tant qu'aucun id source réel (Q5)
+    #: §9 — la chaîne de provenance du marché. `None` pour une évaluation dont la
+    #: source ne l'a pas déclarée : jamais un objet vide, qui se lirait comme une
+    #: provenance renseignée à blanc.
+    provenance: MarketProvenance | None = None
 
 
 @dataclass(frozen=True)
@@ -171,7 +229,8 @@ def _evaluation_from_jsonable(d: dict) -> AdaptedEvaluation:
         expected_value=_dec(d["expected_value"]), is_boosted=d["is_boosted"], decision=d["decision"],
         decision_reasons=tuple(d["decision_reasons"]), warnings=tuple(d["warnings"]),
         explanation=_explanation_from_jsonable(d["explanation"]),
-        source_decision_id=d["source_decision_id"])
+        source_decision_id=d["source_decision_id"],
+        provenance=_provenance_from_jsonable(d.get("provenance")))
 
 
 def adapted_batch_from_jsonable(d: dict) -> AdaptedBatch:

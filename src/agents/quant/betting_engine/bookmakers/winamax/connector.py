@@ -27,6 +27,10 @@ from ..protocol import (
 from . import market_mapping
 
 BASE_URL = "https://www.winamax.fr/paris-sportifs/sports"
+#: Page d'UN événement. Elle porte TOUS ses marchés ; la page catalogue n'en
+#: sert qu'un seul par rencontre (`mainBetId`). La différence est massive et
+#: mesurée : jusqu'à 252 marchés sur une seule rencontre contre 1.
+EVENT_URL = "https://www.winamax.fr/paris-sportifs/match"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -73,6 +77,18 @@ def _fetch_state(sport_id: int) -> dict:
         )
     start += len(STATE_MARKER)
     state, _ = json.JSONDecoder().raw_decode(html[start:])
+    return state
+
+
+def _fetch_event_state(bookmaker_event_id: str) -> dict:
+    """Le `PRELOADED_STATE` de la page d'UN événement — tous ses marchés."""
+    resp = requests.get(f"{EVENT_URL}/{bookmaker_event_id}", headers=HEADERS, timeout=TIMEOUT)
+    resp.raise_for_status()
+    start = resp.text.find(STATE_MARKER)
+    if start == -1:
+        raise RuntimeError(
+            f"PRELOADED_STATE introuvable sur la page de l'événement {bookmaker_event_id}")
+    state, _ = json.JSONDecoder().raw_decode(resp.text[start + len(STATE_MARKER):])
     return state
 
 
@@ -130,6 +146,10 @@ def _build_markets(
                 is_live=bool(bet.get("betTypeIsLive", False)),
                 special_bet_value=bet.get("specialBetValue"),
                 selections=selections,
+                # `betId` était lu par l'inventaire et jeté par le connecteur : la
+                # chaîne produit ne pouvait donc pas dire de QUELLE ligne du
+                # bookmaker venait une cote affichée.
+                market_source_id=(str(bet["betId"]) if bet.get("betId") is not None else None),
             )
         )
     return markets
@@ -202,6 +222,8 @@ def parse_catalog(
                 fetched_at=fetched_at,
                 sr_tournament_id=match.get("srTournamentId"),
                 raw_tournament_id=_str_or_none(match.get("tournamentId")),
+                declared_market_count=(int(match["moreBets"])
+                                       if str(match.get("moreBets", "")).isdigit() else None),
             )
         )
     return events
@@ -218,6 +240,31 @@ class WinamaxConnector:
             raise ValueError(f"Sport inconnu : {sport}. Choix : {sorted(SPORT_IDS)}")
         state = _fetch_state(sport_id)
         return parse_catalog(state, sport.lower(), sport_id)
+
+    def fetch_event_markets(self, event: RawBookmakerEvent) -> RawBookmakerEvent:
+        """Le MÊME événement, avec TOUS ses marchés — un seul appel réseau.
+
+        La page catalogue ne sert que le marché principal de chaque rencontre.
+        Tant qu'un seul marché était modélisé, cela suffisait ; désormais, s'en
+        contenter reviendrait à déclarer « ce match n'a qu'un marché » alors que
+        la source en expose deux cents.
+
+        Le coût est d'UN appel par événement, et il ne dépend pas du nombre de
+        marchés lus. C'est la raison pour laquelle cette méthode rend l'événement
+        entier plutôt qu'un marché : appeler par marché multiplierait le réseau
+        par deux cents sans rien apporter.
+
+        L'événement d'origine est rendu tel quel si la page ne le contient pas —
+        jamais un événement vide, qui se lirait « aucun marché » là où il faut
+        lire « pas de réponse ».
+        """
+        sport_id = SPORT_IDS.get((event.sport or "").lower())
+        if sport_id is None:
+            raise ValueError(f"Sport inconnu : {event.sport}. Choix : {sorted(SPORT_IDS)}")
+        state = _fetch_event_state(event.bookmaker_event_id)
+        complets = parse_catalog(state, (event.sport or "").lower(), sport_id)
+        return next((e for e in complets
+                     if e.bookmaker_event_id == event.bookmaker_event_id), event)
 
     def discover_sports(self) -> dict[int, str]:
         """Découverte DYNAMIQUE de tous les sports exposés par Winamax (sportId -> nom).

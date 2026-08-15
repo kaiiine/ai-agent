@@ -123,7 +123,8 @@ def _default_scan(window: TimeWindow, sports: Sequence[str], decision_time: date
     import functools
 
     from ..advisor.input_adapter.betting_engine_adapter import adapt_live_batch
-    from ..betting_engine.bookmakers.winamax.catalogue import multisport_scan
+    from ..betting_engine.bookmakers.bookmaker_registry import MemoizingEventResolver
+    from ..betting_engine.bookmakers.winamax.catalogue import fetch_all_markets, multisport_scan
     from ..betting_engine.bookmakers.winamax.connector import WinamaxConnector
     from ..betting_engine.live_batch import evaluate_live_batch
     from ..betting_engine.live_coverage import evaluation_coverage_check
@@ -132,10 +133,18 @@ def _default_scan(window: TimeWindow, sports: Sequence[str], decision_time: date
     from ..gateway import gateway as sports_gateway
 
     connector = WinamaxConnector()
+    # LE MÊME résolveur que l'évaluation, par construction : décider quelles pages
+    # valent un appel avec un résolveur différent de celui qui évalue ferait
+    # écarter des rencontres parfaitement évaluables, sans que rien ne le signale.
+    # Mémorisé POUR CE RUN : chaque rencontre est désormais résolue deux fois —
+    # une fois pour décider si sa page de marchés vaut un appel réseau, une fois à
+    # l'évaluation. Mesuré : 502 résolutions pour 261 rencontres, 13,2 s sur 40.
+    resolveur = MemoizingEventResolver(build_event_resolver())
     compte: Counter = Counter()
     competitions: dict[str, set[str]] = {}
     vus_par_sport: dict[str, int] = {}
     pannes: dict[str, str] = {}
+    pannes_marches: dict[str, str] = {}
 
     def catalogue(conn):
         # Un sport dont la source tombe ne fait plus tomber les autres : sa panne
@@ -157,11 +166,33 @@ def _default_scan(window: TimeWindow, sports: Sequence[str], decision_time: date
             vus_par_sport[event.sport] = vus_par_sport.get(event.sport, 0) + 1
         retenus = [e for e in events if window.contains(e.start_time)]
         compte["dans_fenetre"] = len(retenus)
-        return retenus
+
+        # TOUS LES MARCHÉS, et seulement pour ce qui sera réellement évalué. La
+        # page catalogue n'en sert qu'un par rencontre : sans cette étape, le
+        # produit continuerait de ne voir que « qui gagne » et de le présenter
+        # comme l'offre du bookmaker.
+        #
+        # DEUX FILTRES, ET AUCUN N'EST COSMÉTIQUE. La fenêtre d'abord : payer une
+        # page pour un match de la semaine prochaine serait un appel réseau pour
+        # une rencontre qu'on n'évaluera pas. L'identité ensuite : une rencontre
+        # que le résolveur ne sait pas nommer n'atteindra aucun modèle, quels que
+        # soient ses deux cents marchés. Ces pages-là sont exactement celles qui
+        # ont valu un 403 au run précédent — 83 % des marchés téléchargés, zéro
+        # marché priceable en plus.
+        enrichissement = fetch_all_markets(
+            conn, retenus,
+            should_fetch=lambda e: resolveur.resolve_event(e).is_usable)
+        pannes_marches.update(enrichissement.failures)
+        compte["marches_avant"] = enrichissement.markets_before
+        compte["marches_apres"] = enrichissement.markets_after
+        compte["evenements_enrichis"] = enrichissement.enriched
+        compte["evenements_sans_page"] = enrichissement.skipped
+        compte["marches_declares_non_lus"] = enrichissement.skipped_declared_markets
+        return list(enrichissement.events)
 
     batch = evaluate_live_batch(
         connector, sports_gateway=sports_gateway,
-        event_resolver=build_event_resolver(), catalogue=catalogue,
+        event_resolver=resolveur, catalogue=catalogue,
         evaluate=functools.partial(evaluate_live_event,
                                    coverage_check=evaluation_coverage_check),
         now_fn=lambda: decision_time)
@@ -183,8 +214,73 @@ def _default_scan(window: TimeWindow, sports: Sequence[str], decision_time: date
         catalog_competitions={s: tuple(sorted(c)) for s, c in sorted(competitions.items())},
         events_seen_by_sport=dict(sorted(vus_par_sport.items())),
         scan_failures=dict(sorted(pannes.items())),
+        markets_from_catalog=compte["marches_avant"],
+        markets_after_event_pages=compte["marches_apres"],
+        events_market_enriched=compte["evenements_enrichis"],
+        events_without_market_page=compte["evenements_sans_page"],
+        declared_markets_not_fetched=compte["marches_declares_non_lus"],
+        market_fetch_failures=dict(sorted(pannes_marches.items())),
+        market_funnel=agreger_entonnoirs(batch.results),
     )
     return adapt_live_batch(batch), telemetrie, build_traces(batch.results)
+
+
+#: Motif d'exclusion d'un événement dont AUCUN marché n'a atteint l'étape prix.
+#: Préfixé par son statut d'évaluation : « aucun modèle » et « compétition non
+#: couverte » ne se réparent pas de la même façon.
+_EVENEMENT_NON_PRICE = "EVENT_NOT_PRICED"
+
+
+def agreger_entonnoirs(resultats):
+    """Les entonnoirs marché de tous les événements, en un seul.
+
+    LE DÉNOMINATEUR EST LE CATALOGUE, PAS LES SURVIVANTS. Un événement qui n'a
+    jamais atteint l'étape marché — sport sans modèle dérivé, compétition non
+    couverte, identité non résolue — a quand même des marchés, et les omettre
+    ferait porter tous les taux sur les seules rencontres qui ont réussi.
+    Mesuré : 1 164 marchés comptés contre 32 777 réellement rapportés, soit un
+    entonnoir qui décrivait 4 % du catalogue en se présentant comme complet.
+
+    Additionne des compteurs, jamais des taux : la moyenne de deux pourcentages
+    calculés sur des dénominateurs différents ne veut rien dire.
+    """
+    from ..betting_engine.markets.event_pricing import MarketFunnel
+
+    total = MarketFunnel()
+    for raw_event, resultat in resultats:
+        entonnoir = getattr(resultat, "market_funnel", None)
+        if entonnoir is None:
+            # Ses marchés existent : ils sont VUS, et écartés sous le motif de
+            # l'événement lui-même.
+            total.events_seen += 1
+            marches = len(getattr(raw_event, "markets", ()) or ())
+            total.markets_observed += marches
+            statut = getattr(getattr(resultat, "status", None), "value", "UNKNOWN")
+            total.exclusions[f"{_EVENEMENT_NON_PRICE}:{statut}"] += marches
+            continue
+        for champ in ("events_seen", "events_priced", "markets_observed",
+                      "markets_canonicalized", "markets_capability_available",
+                      "markets_priced", "markets_with_probability_low",
+                      "markets_freshness_measurable", "selections_priced"):
+            setattr(total, champ, getattr(total, champ) + getattr(entonnoir, champ))
+        total.exclusions.update(entonnoir.exclusions)
+    return total
+
+
+def _construire_review(batch, freshness_at, policy_evaluations=()):
+    """Le classement multi-marché du run, ou rien s'il ne peut pas être construit.
+
+    Une panne du classement ne doit pas coûter la recommandation : celle-ci est
+    déjà calculée quand on arrive ici, et l'échanger contre une vue additive
+    serait un mauvais marché. L'échec reste visible — `review` vaut `None`, et
+    `None` n'est pas un classement vide.
+    """
+    try:
+        from .market_review import construire_review
+        return construire_review(batch, freshness_at=freshness_at,
+                                 policy_evaluations=policy_evaluations)
+    except Exception:   # noqa: BLE001 — une vue ne casse jamais un run
+        return None
 
 
 def _default_configs() -> dict:
@@ -335,6 +431,15 @@ def run_recommendation(
         adapted_by_key={(e.event_id, e.market_id, e.selection): e
                         for e in batch.evaluations},
         internet_features=features,
+        # Le classement multi-marché du run. Construit depuis le MÊME batch que
+        # le pipeline money : les deux vues ne peuvent donc pas diverger sur un
+        # nombre. Il ne décide rien — aucune mise n'en sort.
+        #
+        # L'âge des cotes se mesure à la FIN DE L'ACQUISITION, pas au
+        # point-in-time du modèle : celui-ci précède le scan par construction, et
+        # une cote lui est donc toujours postérieure.
+        review=_construire_review(batch, scan_completed_at,
+                                  result.trace.policy_evaluations),
     )
 
     # Capture des prédictions — la boucle de retour. Sans elle, le moteur annonce
