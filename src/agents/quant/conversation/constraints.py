@@ -77,6 +77,25 @@ class UserBettingConstraints:
     bankroll: Decimal | None = None
     promotional_balances: tuple[PromotionalBalance, ...] = ()
     risk_profile: str = "balanced"
+    #: Probabilité minimale souhaitée, telle que l'utilisateur l'a dite (« environ
+    #: 90 % de chances »). N'est PAS un filtre : elle ordonne l'affichage de la
+    #: revue et rien d'autre. Aucune mise n'en dépend, aucun seuil du moteur n'est
+    #: touché — un candidat qui l'atteint reste non misable s'il l'était.
+    #:
+    #: Elle se compare à `probability_low`, la borne basse mesurée, JAMAIS à
+    #: `fair_probability` : l'utilisateur qui dit « 90 % » demande une garantie,
+    #: et une estimation ponctuelle n'en est pas une.
+    probability_target: Decimal | None = None
+    #: Objectif de cote / multiplicateur (« faire x2 », « entre 1,8 et 2,2 »).
+    #: `TargetOddsPreference` ou None. Comme la préférence de probabilité, elle
+    #: ORDONNE l'affichage et ne crée aucune recommandation.
+    #:
+    #: Elle est SUBORDONNÉE à la probabilité : une cote visée ne justifie jamais
+    #: de descendre sous le seuil de probabilité demandé. Le rendu sépare donc
+    #: « respecte les deux » de « respecte la probabilité seule » et de « proche
+    #: de la cote seulement », plutôt que de les fondre en un classement unique
+    #: où le prix rattraperait la prudence.
+    target_odds: Any = None
 
     # ── Ce qui manque encore pour construire un contrat ────────────────────────
     def missing(self) -> tuple[str, ...]:
@@ -115,6 +134,10 @@ class UserBettingConstraints:
                 for p in self.promotional_balances
             ],
             "risk_profile": self.risk_profile,
+            "probability_target": (None if self.probability_target is None
+                                   else str(self.probability_target)),
+            "target_odds": (None if self.target_odds is None
+                            else self.target_odds.describe()),
         }
 
 
@@ -178,15 +201,19 @@ def constraints_from_request(
     allow_combos: bool | None = None,
     allow_singles: bool | None = None,
     risk_profile: str | None = None,
+    probability_target: Decimal | None = None,
+    target_odds: Any = None,
 ) -> UserBettingConstraints:
     """Point d'entrée unique : arguments bruts d'un tour -> state fusionné."""
     return merge_constraints(
         previous,
+        target_odds=target_odds,
         sports=parse_scope(sports),
         competitions=parse_scope(competitions),
         markets=parse_scope(markets),
         time_window=time_window,
         bankroll=bankroll,
+        probability_target=probability_target,
         promotional_balances=(None if promotional_balances is None
                               else tuple(promotional_balances)),
         allow_combos=allow_combos,

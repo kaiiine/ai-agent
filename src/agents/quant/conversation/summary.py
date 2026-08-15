@@ -33,6 +33,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
+from ..betting_engine.markets.review_ranking import MATURITE_ACTIONABLE
 from .observability import NON_MESURE
 
 #: Ce que l'utilisateur voit en tête. Purement décoratif — aucun sport n'est
@@ -242,7 +243,206 @@ def _flottant_pct_signe(valeur) -> str:
     return f"{'+' if valeur >= 0 else ''}{valeur * 100:.2f} %"
 
 
-def render_marches_en_revue(review: Any, *, top: int = TOP_LISTE) -> list[str]:
+def population_de_revue(review: Any, cible: Any) -> list[Any]:
+    """Les candidats REVUE à considérer — et POURQUOI la population change.
+
+    Sans préférence exprimée, c'est le classement produit : un côté par marché,
+    celui au meilleur score. C'est le bon choix pour classer des opportunités.
+
+    Dès qu'une PROBABILITÉ est demandée, cette réduction devient fausse. Elle
+    garde le côté au meilleur score, c'est-à-dire orienté espérance : sur « buts
+    — seuil 5,5 » le côté conservé est le « Plus » à grosse cote, et le « Moins »
+    à 91 % de borne basse — exactement celui demandé — disparaît. Mesuré sur un
+    run réel : trois candidats atteignaient 91 %, un seul était affichable.
+
+    Les deux populations sortent du même moteur de classement et des mêmes
+    verdicts de politique. Ce qui change est le nombre de côtés retenus, jamais
+    un seuil ni un score.
+    """
+    if review is None:
+        return []
+    if cible is None:
+        return list(review.review)
+    return list(getattr(review, "review_tous_cotes", None) or review.review)
+
+
+def render_compteurs_revue(response: Any, review: Any, cible: Any,
+                           *, objectif: Any = None,
+                           top: int = TOP_LISTE) -> list[str]:
+    """Les quatre nombres qui disent si la réponse tient debout.
+
+    Ils existent parce qu'une sortie sans candidat était indistinguable d'une
+    sortie sans candidat À MONTRER : « 0 pari » se lisait « rien à voir » alors
+    que le moteur avait produit plus de mille probabilités. Affichés côte à côte,
+    `ACTIONABLE: 0` et `REVIEW_ELIGIBLE: 1174` ne peuvent plus se confondre.
+
+    Ils lisent la MÊME population que l'affichage : un compteur qui annonce trois
+    candidats au-dessus du seuil pendant que la section n'en montre qu'un est
+    précisément le défaut que ces nombres servent à rendre impossible.
+    """
+    if review is None:
+        return []
+    from .review_preference import partitionner
+
+    classes = population_de_revue(review, cible)
+    partition = partitionner(classes, cible)
+    if cible is None:
+        affiches = min(top, len(classes))
+        au_seuil = NON_MESURE                      # aucun seuil demandé
+    else:
+        affiches = min(top, len(partition.au_seuil) or len(partition.sous_seuil))
+        au_seuil = str(len(partition.au_seuil))
+
+    lignes = [
+        "",
+        f"ACTIONABLE: {len(response.portfolios)}",
+        f"REVIEW_ELIGIBLE: {len(classes)}",
+        f"REVIEW >= seuil demandé (probability_low): {au_seuil}",
+        f"REVIEW DISPLAYED: {affiches}",
+    ]
+    if objectif is not None:
+        from .review_preference import partitionner_par_objectifs
+
+        p = partitionner_par_objectifs(classes, cible, objectif)
+        lignes += [
+            f"REVIEW >= seuil ET proche de l'objectif de cote: {len(p.a_les_deux)}",
+            f"REVIEW proche de l'objectif mais sous le seuil: "
+            f"{len(p.c_proches_de_la_cote)}",
+        ]
+    return lignes
+
+
+def _fiche_candidat(r: Any, numero: Any = None) -> list[str]:
+    """La fiche COMPLÈTE d'un candidat de revue.
+
+    Tous les champs demandés y sont, y compris ceux qui manquent : une grandeur
+    non mesurée s'écrit `NON_MESURE`, jamais un zéro ni une valeur de repli. La
+    distinction porte une décision — `freshness=None` veut dire « on ne sait pas
+    quand », et l'écrire `0` en ferait « périmé », qui est une autre réponse.
+    """
+    c = r.candidate
+    tete = f"{numero if numero is not None else r.global_rank}. "
+    return [
+        f"{tete}{rencontre_du_candidat(c)}{_quand(c)}"
+        f"  ({_LIBELLE_SPORT.get(c.sport, c.sport)})",
+        f"   Marché : {libelle_marche(c)}",
+        f"   Sélection : {libelle_issue(c)}",
+        f"   Cote : {_valeur_ou_non_mesure(c.bookmaker_odds)}",
+        f"   Probabilité du modèle (fair) : {_flottant_pct(c.fair_probability)}",
+        f"   Probabilité basse mesurée (probability_low) : "
+        f"{_flottant_pct(c.probability_low)}",
+        f"   Probabilité sans marge (vig_adjusted) : "
+        f"{_flottant_pct(c.vig_adjusted_probability)}",
+        f"   Edge vs prix sans marge : {_flottant_pct_signe(c.edge)}"
+        f"  ·  edge prudent : {_flottant_pct_signe(c.edge_prudent)}",
+        f"   EV settlement-aware : {_flottant_pct_signe(c.expected_value)}"
+        f"  ·  EV prudente : {_flottant_pct_signe(r.expected_value_low)}",
+        f"   Qualité des données : {_valeur_ou_non_mesure(c.data_quality)}"
+        f"  ·  Fraîcheur : {_valeur_ou_non_mesure(c.freshness)}",
+        f"   Modèle / capacité : {_valeur_ou_non_mesure(c.model_name)} "
+        f"({_valeur_ou_non_mesure(c.model_version)})"
+        f"  ·  origine de la probabilité : {_valeur_ou_non_mesure(c.probability_origin)}",
+        f"   Maturité : {_valeur_ou_non_mesure(c.maturity)}",
+        f"   Statut : REVIEW / EXPERIMENTAL — aucune mise autorisée",
+        f"   Ce qui empêche ACTIONABLE : {_blocage_actionable(c)}",
+        "",
+    ]
+
+
+def _valeur_ou_non_mesure(valeur: Any) -> str:
+    """Une absence reste une absence. On n'invente jamais de valeur de repli."""
+    return NON_MESURE if valeur is None else str(valeur)
+
+
+def _blocage_actionable(c: Any) -> str:
+    """La raison EXACTE, lue sur le candidat — jamais une raison plausible.
+
+    L'ordre suit celui des portes réellement franchies : la politique
+    d'éligibilité s'exprime en premier si elle a parlé, la maturité ensuite.
+    """
+    if c.abstention_reasons:
+        return " ; ".join(str(motif) for motif in c.abstention_reasons)
+    if c.maturity and c.maturity != MATURITE_ACTIONABLE:
+        return (f"maturité {c.maturity} — le ledger CLV n'a validé aucune décision "
+                f"de support pour {_valeur_ou_non_mesure(c.model_version)}")
+    return NON_MESURE
+
+
+def _render_cote_seule(classes, objectif, top: int) -> list[str]:
+    """Un objectif de cote sans seuil de probabilité demandé."""
+    from .review_preference import plus_proches_de_la_cote
+
+    dans = [r for r in classes if objectif.contient(r.candidate.bookmaker_odds)]
+    lignes = ["", f"## Candidats proches de l'objectif — {objectif.describe()}", ""]
+    if not dans:
+        lignes += [
+            f"Aucun candidat évalué ne tombe dans la fourchette. Voici les "
+            f"{min(top, len(classes))} plus proches :", ""]
+        dans = plus_proches_de_la_cote(classes, objectif)
+    for i, r in enumerate(dans[:top], start=1):
+        lignes += _fiche_candidat(r, numero=i)
+    return lignes
+
+
+def _render_deux_objectifs(classes, seuil, objectif, top: int) -> list[str]:
+    """§9 — les deux préférences, en sections DISJOINTES.
+
+    Le point entier de ce rendu est de ne pas mélanger. Un classement unique
+    laisserait une grosse cote compenser une probabilité basse, et rendrait à
+    l'utilisateur le « x2 » qu'il demandait en lui retirant, sans le dire, la
+    prudence qu'il demandait aussi.
+    """
+    from .review_preference import partitionner_par_objectifs
+
+    p = partitionner_par_objectifs(classes, seuil, objectif)
+    pct = f"{seuil * 100:.0f} %"
+    lignes: list[str] = []
+
+    lignes += ["", f"## REVUE — respecte {pct} ET {objectif.describe()}", ""]
+    if p.a_les_deux:
+        lignes += [f"{len(p.a_les_deux)} candidat(s) satisfont les deux critères. "
+                   "Ils restent EXPERIMENTAL — aucune mise n'est autorisée.", ""]
+        for i, r in enumerate(p.a_les_deux[:top], start=1):
+            lignes += _fiche_candidat(r, numero=i)
+    else:
+        lignes += [
+            "**Aucun candidat ne satisfait simultanément ces deux critères.**",
+            "",
+            f"Aucun pari évalué ne présente à la fois une probabilité prudente "
+            f"estimée ≥ {pct} et une cote dans la fourchette visée. C'est attendu : "
+            "une probabilité élevée et une cote élevée sont deux demandes opposées, "
+            "et le moteur ne compense pas l'une par l'autre.",
+            "",
+            "Les deux objectifs sont donc présentés séparément ci-dessous.",
+            "",
+        ]
+
+    lignes += ["", f"## REVUE — respecte {pct}, mais cote hors objectif", ""]
+    if p.b_probabilite_seule:
+        for i, r in enumerate(p.b_probabilite_seule[:top], start=1):
+            lignes += _fiche_candidat(r, numero=i)
+    else:
+        lignes += [f"Aucun candidat n'atteint {pct} de probabilité prudente estimée.", ""]
+
+    proches = p.c_proches_de_la_cote or p.c_sous_le_seuil
+    lignes += ["", f"## REVUE — proche de l'objectif de cote, mais sous {pct}", ""]
+    if proches:
+        lignes += ["Ces candidats N'ATTEIGNENT PAS la probabilité demandée. Ils sont "
+                   "montrés parce que tu as exprimé un objectif de cote, jamais "
+                   "comme un substitut au seuil de probabilité.", ""]
+        for i, r in enumerate(proches[:top], start=1):
+            lignes += _fiche_candidat(r, numero=i)
+    else:
+        lignes += ["Aucun candidat évalué dans cette fourchette de cote.", ""]
+
+    if p.sans_borne_basse:
+        lignes += [f"{len(p.sans_borne_basse)} candidat(s) sans borne basse mesurée : "
+                   "ni au-dessus ni en dessous du seuil, donc non comparables.", ""]
+    return lignes
+
+
+def render_marches_en_revue(review: Any, *, top: int = TOP_LISTE,
+                            cible: Any = None, objectif: Any = None) -> list[str]:
     """§8 — les meilleures opportunités TOUS MARCHÉS, explicitement non misables.
 
     Cette section existe parce que la précédente répondait toujours « qui gagne » :
@@ -251,33 +451,66 @@ def render_marches_en_revue(review: Any, *, top: int = TOP_LISTE) -> list[str]:
     paramètre, l'issue.
 
     AUCUN NOMBRE N'EST CALCULÉ ICI. Chacun est lu sur le candidat classé, y
-    compris l'espérance prudente, qui vient du classement et non d'une seconde
-    formule écrite pour l'affichage.
+    compris l'espérance prudente et l'edge, qui sont des propriétés du domaine et
+    non des formules réécrites pour l'affichage.
+
+    `cible` est la probabilité demandée par l'utilisateur. Elle ORDONNE, elle ne
+    filtre pas : les candidats sous le seuil restent affichés dans leur propre
+    section. Répondre « aucun candidat n'atteint 90 % » puis se taire serait la
+    même impasse que de ne rien montrer du tout.
     """
     if review is None:
         return []
+    from .review_preference import partitionner
+
     lignes: list[str] = []
-    classes = list(review.review)[:top]
-    if classes:
+    classes = population_de_revue(review, cible)
+    if not classes:
+        return lignes
+
+    partition = partitionner(classes, cible)
+
+    if objectif is not None and partition.cible is not None:
+        return lignes + _render_deux_objectifs(classes, partition.cible, objectif, top)
+
+    if partition.cible is None:
+        if objectif is not None:
+            return lignes + _render_cote_seule(classes, objectif, top)
         lignes += ["", "## Meilleures opportunités en revue — NON MISABLES", ""]
-        for r in classes:
-            c = r.candidate
-            lignes += [
-                f"{r.global_rank}. {rencontre_du_candidat(c)}"
-                f"  ({_LIBELLE_SPORT.get(c.sport, c.sport)})",
-                f"   Marché : {libelle_marche(c)}",
-                f"   Sélection : {libelle_issue(c)}",
-                f"   Cote : {c.bookmaker_odds}",
-                f"   Probabilité du modèle : {_flottant_pct(c.fair_probability)}",
-                f"   Probabilité basse mesurée : {_flottant_pct(c.probability_low)}",
-                f"   Probabilité sans marge du bookmaker : "
-                f"{_flottant_pct(c.vig_adjusted_probability)}",
-                f"   Espérance prudente : {_flottant_pct_signe(r.expected_value_low)}",
-                "   Statut : REVIEW_ONLY — aucune mise",
-                f"   Bloqueur : maturité {c.maturity} (le ledger n'a validé aucune "
-                f"décision de support pour {c.model_version})",
-                "",
-            ]
+        for r in classes[:top]:
+            lignes += _fiche_candidat(r)
+    elif partition.atteint:
+        seuil = f"{partition.cible * 100:.0f} %"
+        lignes += [
+            "",
+            f"## Candidats atteignant {seuil} de probabilité prudente — NON MISABLES",
+            "",
+            f"{len(partition.au_seuil)} candidat(s) dont la borne basse mesurée "
+            f"atteint {seuil}. Ils restent EXPERIMENTAL : atteindre ta préférence "
+            "ne rend rien misable.",
+            "",
+        ]
+        for i, r in enumerate(partition.au_seuil[:top], start=1):
+            lignes += _fiche_candidat(r, numero=i)
+    else:
+        seuil = f"{partition.cible * 100:.0f} %"
+        lignes += [
+            "",
+            f"## Aucun candidat n'atteint {seuil} de probabilité prudente",
+            "",
+            f"Sur {partition.total} candidat(s) en revue : "
+            f"{len(partition.sous_seuil)} ont une borne basse mesurée sous {seuil}, "
+            f"et {len(partition.sans_borne_basse)} n'ont pas de borne basse mesurée "
+            "— ceux-là ne sont pas comparables à ton seuil, ni au-dessus ni en "
+            "dessous. La probabilité du modèle (`fair`) n'est PAS retenue comme "
+            "équivalente : tu demandes une garantie, elle n'en est pas une.",
+            "",
+            f"Voici néanmoins les {min(top, len(partition.sous_seuil))} meilleurs "
+            "candidats EXPERIMENTAL observés sous ce seuil :",
+            "",
+        ]
+        for i, r in enumerate(partition.sous_seuil[:top], start=1):
+            lignes += _fiche_candidat(r, numero=i)
 
     # Ce qui n'a PAS pu être comparé, et pourquoi. Un classement qui ne montre que
     # ses gagnants laisse croire que le reste a perdu.
@@ -292,6 +525,89 @@ def render_marches_en_revue(review: Any, *, top: int = TOP_LISTE) -> list[str]:
     if review.ecartes_par_politique:
         lignes.append(f"- écartés par la politique d'éligibilité : "
                       f"{len(review.ecartes_par_politique)}")
+    return lignes
+
+
+def _quand(candidat: Any) -> str:
+    """L'horaire, quand il est connu. Distingue deux rencontres des mêmes
+    équipes — une série de baseball en programme deux en deux jours."""
+    moment = getattr(candidat, "scheduled_at", None)
+    if moment is None:
+        return ""
+    from .window import to_paris
+
+    return f" ({to_paris(moment):%d/%m %H:%M})"
+
+
+def _maturite_du_combo(combo: Any) -> str:
+    """Un combiné hérite de la maturité la PLUS FAIBLE de ses jambes.
+
+    Prendre la meilleure ferait passer un combiné pour plus mûr que la moins
+    éprouvée des sélections qui le composent.
+    """
+    rang = {"EXPERIMENTAL": 0, "PROVISIONAL": 1, "SUPPORTED": 2}
+    maturites = [getattr(l, "maturity", None) for l in combo.legs]
+    connues = [m for m in maturites if m]
+    if not connues or len(connues) < len(maturites):
+        return NON_MESURE
+    return min(connues, key=lambda m: rang.get(m, -1))
+
+
+def render_combines_exploratoires(review: Any, contraintes: Any, cible: Any,
+                                  *, objectif: Any = None,
+                                  top: int = 3) -> list[str]:
+    """Les combinés EXPLORATOIRES — si l'utilisateur les demande, ou si son
+    objectif de cote n'est atteint par aucun pari simple.
+
+    §4 : un objectif de cote qu'aucun simple ne satisfait est une raison
+    légitime d'en chercher un. Ce n'est pas une suggestion spontanée — c'est la
+    seule réponse possible à la demande, et se taire reviendrait à répondre
+    « non » sans avoir cherché.
+    """
+    if review is None:
+        return []
+    population = population_de_revue(review, cible)
+    demande = getattr(contraintes, "allow_combos", False)
+    if not demande:
+        if objectif is None:
+            return []
+        # Aucun simple dans la fourchette -> le combiné devient la seule piste.
+        if any(objectif.contient(r.candidate.bookmaker_odds) for r in population):
+            return []
+
+    from .review_combos import construire
+
+    combines = construire(population, top=top, objectif=objectif)
+    if not combines:
+        return []
+
+    lignes = [
+        "",
+        "## Combinés exploratoires — EXPERIMENTAL, NON MISABLES",
+        "",
+        "Construits UNIQUEMENT sur des candidats de revue réellement évalués, avec "
+        "la règle de corrélation du chemin argent. Aucun n'est misable, et aucun "
+        "ne peut le devenir : un combiné hérite du statut le plus faible de ses "
+        "jambes, toutes EXPERIMENTAL ici.",
+        "",
+    ]
+    for i, combo in enumerate(combines, start=1):
+        lignes.append(f"{i}. Cote combinée : {combo.cote_combinee:.2f}"
+                      f"  ·  dépendance : {combo.dependance_lisible}"
+                      f"  ·  maturité : {_maturite_du_combo(combo)}")
+        for leg in combo.legs:
+            lignes.append(f"   · {rencontre_du_candidat(leg)}{_quand(leg)} — "
+                          f"{libelle_marche(leg)} / {libelle_issue(leg)} "
+                          f"@ {leg.bookmaker_odds}")
+        lignes.append(f"   Probabilité jointe : {combo.probabilite_lisible}")
+        lignes.append(f"   Probabilité jointe basse : "
+                      f"{_flottant_pct(combo.probabilite_jointe_basse)}")
+        lignes.append(f"   EV combinée : {combo.ev_lisible}")
+        motif = combo.motif_non_estimee
+        if motif:
+            lignes.append(f"   Pourquoi non estimée : {motif}")
+        lignes.append(f"   Statut : {combo.statut} — aucune mise")
+        lignes.append("")
     return lignes
 
 
@@ -546,12 +862,19 @@ def render_resume(run: Any, *, top_liste: int = TOP_LISTE,
                     f"({ligne_pf.legs[0].bookmaker}) — mise {ligne_pf.stake} €, "
                     f"gain net si gagné {ligne_pf.net_profit} €")
     else:
-        lignes.append("Aucun pari n'est encore validé pour une mise réelle.")
+        lignes.append("**Aucune mise validée actuellement.**")
 
     # Les marchés d'abord : la question de l'utilisateur est « quoi parier », et
     # la réponse n'est plus « qui gagne » par défaut.
     review = getattr(obs, "review", None) if obs is not None else None
-    lignes += render_marches_en_revue(review)
+    cible = getattr(contraintes, "probability_target", None)
+    objectif = getattr(contraintes, "target_odds", None)
+    lignes += render_compteurs_revue(response, review, cible, objectif=objectif,
+                                     top=top_liste)
+    lignes += render_marches_en_revue(review, top=top_liste, cible=cible,
+                                      objectif=objectif)
+    lignes += render_combines_exploratoires(review, contraintes, cible,
+                                            objectif=objectif)
     lignes += render_meilleur_par_rencontre(review)
 
     candidats = list(response.review_candidates or ())

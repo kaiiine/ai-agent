@@ -232,6 +232,27 @@ def test_chaque_nombre_du_rendu_provient_d_un_champ_structure():
             autorises.add(str(valeur))
             autorises.add(f"{(valeur * 100).quantize(Decimal('0.01'))}")
             autorises.add(f"{valeur.quantize(Decimal('0.0001'))}")
+    # La shortlist multi-marché lit un AUTRE objet du domaine : le
+    # `ReviewCandidate` du classement produit. Ses grandeurs sont admises au même
+    # titre — y compris `edge` et `edge_prudent`, qui sont des propriétés
+    # calculées SUR LE CANDIDAT à partir de deux de ses champs, et non des
+    # nombres composés par la couche de rendu. La distinction est tout l'objet de
+    # ce test : ce qui est interdit, c'est qu'un nombre naisse dans l'affichage.
+    revue = getattr(run.observability, "review", None)
+    for rang in (list(getattr(revue, "comparables", ()) or ())
+                 + list(getattr(revue, "global_ranking", ()) or ())):
+        rc = rang.candidate
+        for valeur in (rc.bookmaker_odds, rc.fair_probability, rc.probability_low,
+                       rc.vig_adjusted_probability, rc.implied_probability,
+                       rc.expected_value, rc.data_quality, rc.freshness,
+                       rc.edge, rc.edge_prudent, rang.expected_value_low):
+            if valeur is None:
+                continue
+            decimale = Decimal(str(valeur))
+            autorises.add(str(valeur))
+            autorises.add(f"{(decimale * 100).quantize(Decimal('0.01'))}")
+            autorises.add(f"{decimale.quantize(Decimal('0.0001'))}")
+
     adapte = run.observability.adapted_for(
         run.response.review_candidates[0].candidate)
     if adapte is not None and adapte.no_vig_probability is not None:

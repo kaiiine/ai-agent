@@ -90,6 +90,46 @@ class ReviewCandidate:
     #: l'utilisateur attend un nom de joueur.
     event_id: str | None = None
     participant_ids: tuple[str, ...] = ()
+    #: Coup d'envoi. N'entre dans AUCUN calcul — il sert à DISTINGUER deux
+    #: rencontres des mêmes équipes. Une série de baseball en programme deux en
+    #: deux jours : sans l'horaire, deux jambes de combiné parfaitement
+    #: distinctes s'affichent à l'identique, et la liste paraît boguée là où elle
+    #: est juste. L'horaire est LU sur l'évaluation, jamais dérivé de
+    #: `event_id` — un identifiant n'est pas une source de faits.
+    scheduled_at: datetime | None = None
+
+    @property
+    def edge(self) -> float | None:
+        """L'écart entre ce que le modèle croit et ce que le marché fait payer.
+
+        Mesuré contre `vig_adjusted_probability` quand elle existe — c'est le prix
+        du bookmaker DÉBARRASSÉ de sa marge, donc le seul contre lequel un écart
+        signifie quelque chose. Comparer à `implied_probability` compterait la
+        marge comme de l'avantage, et rendrait un edge positif sur un marché où le
+        modèle est en réalité d'accord avec le bookmaker.
+
+        `None` quand l'une des deux grandeurs manque : une absence ne se remplace
+        pas par l'autre référence, sinon deux candidats afficheraient sous le même
+        intitulé deux quantités différentes.
+        """
+        reference = (self.vig_adjusted_probability
+                     if self.vig_adjusted_probability is not None
+                     else None)
+        if reference is None or self.fair_probability is None:
+            return None
+        return self.fair_probability - reference
+
+    @property
+    def edge_prudent(self) -> float | None:
+        """Le même écart, pris depuis la BORNE BASSE de la probabilité.
+
+        C'est celui qui survit à l'incertitude du modèle. Il est plus petit que
+        `edge` par construction, et peut être négatif là où `edge` est positif —
+        auquel cas l'avantage n'est pas démontré, seulement estimé.
+        """
+        if self.vig_adjusted_probability is None or self.probability_low is None:
+            return None
+        return self.probability_low - self.vig_adjusted_probability
 
     @property
     def market_key(self) -> tuple:

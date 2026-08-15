@@ -30,6 +30,7 @@ from .evidence import EVIDENCE_KEY
 from .observability import collect_readiness
 from .recommend import COMPLETED, bankroll_decimal, run_recommendation
 from .renderer import render
+from .review_preference import cible_depuis_texte, objectif_de_cote
 from .window import resolve_window
 
 
@@ -52,6 +53,8 @@ def betting_recommend(
     markets: list[str] | None = None,
     allow_combos: bool = False,
     freebets: float | None = None,
+    probability_preference: str = "",
+    odds_preference: str = "",
     debug: bool = False,
     config: RunnableConfig = None,
 ) -> str:
@@ -81,6 +84,19 @@ def betting_recommend(
         allow_combos: autoriser les combinés (construits par le Combo Builder seul).
         freebets: montant de freebets déclaré. Restitué mais JAMAIS optimisé :
             un freebet n'est pas du cash et ses conditions ne sont pas modélisées.
+        probability_preference: la préférence de probabilité TELLE QUE DITE
+            ("environ 90 % de chances", "au moins 85 % de probabilité"). Elle
+            ORDONNE l'affichage de la revue et ne filtre rien : les candidats sous
+            le seuil restent montrés. Ne JAMAIS demander à l'utilisateur de
+            l'abaisser pour avoir le droit de voir des candidats — le rendu
+            s'occupe déjà de dire qu'aucun ne l'atteint et d'afficher les
+            meilleurs en dessous.
+        odds_preference: l'objectif de COTE ou de multiplicateur, tel que dit
+            ("faire x2", "autour de 2 de cote", "entre 1.8 et 2.2", "doubler ma
+            mise"). Toujours SUBORDONNÉ à la préférence de probabilité : ne
+            propose jamais une cote plus élevée en descendant sous le seuil de
+            probabilité demandé. Ne confonds pas un montant avec une cote —
+            "doubler 10 €" vise x2, pas x10.
         debug: rendu complet — catalogue intégral, chemin de décision de chaque
             événement, readiness des modèles, provenance. À activer quand
             l'utilisateur demande pourquoi, pas par défaut.
@@ -104,6 +120,8 @@ def betting_recommend(
         bankroll=bankroll_decimal(bankroll) if bankroll else None,
         promotional_balances=soldes,
         allow_combos=allow_combos or None,
+        probability_target=cible_depuis_texte(probability_preference),
+        target_odds=objectif_de_cote(odds_preference),
     )
     if contraintes.time_window is None:
         contraintes = constraints_from_request(

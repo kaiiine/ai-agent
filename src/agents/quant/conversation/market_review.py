@@ -118,6 +118,7 @@ def candidat_depuis_evaluation(evaluation: Any, *, freshness_at: datetime) -> Re
         bookmaker=evaluation.bookmaker,
         event_id=evaluation.event_id,
         participant_ids=tuple(evaluation.participant_ids),
+        scheduled_at=getattr(evaluation, "scheduled_at", None),
     )
 
 
@@ -135,11 +136,34 @@ class MarketReview:
     #: compter est ce qui distingue « aucune opportunité » de « des opportunités
     #: dont la politique n'a pas voulu ».
     ecartes_par_politique: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    #: TOUS les candidats comparables, AVANT la réduction à un côté par marché.
+    #:
+    #: `global_ranking` ne garde qu'un côté de chaque marché — celui au meilleur
+    #: score, c'est-à-dire orienté espérance. C'est le bon choix pour classer des
+    #: opportunités, et le mauvais dès que l'utilisateur demande une PROBABILITÉ :
+    #: sur « Moins de 5,5 buts » à 1.11, le côté conservé était le « Plus » à
+    #: grosse cote, et le côté à 91 % de borne basse — précisément celui demandé —
+    #: disparaissait de l'affichage. Mesuré sur un run réel : trois candidats à
+    #: 91 % existaient, un seul était montrable.
+    #:
+    #: Ce champ ne sert QU'À L'AFFICHAGE d'une préférence utilisateur. Aucune
+    #: décision d'argent ne le lit, et le classement reste inchangé.
+    comparables: tuple[RankedCandidate, ...] = ()
 
     @property
     def review(self) -> tuple[RankedCandidate, ...]:
         """Les comparables NON misables. Aucune mise ne sort d'ici."""
         return tuple(r for r in self.global_ranking if r.status is ProductStatus.REVIEW)
+
+    @property
+    def review_tous_cotes(self) -> tuple[RankedCandidate, ...]:
+        """Les REVIEW comparables, LES DEUX CÔTÉS de chaque marché conservés.
+
+        À n'utiliser que pour répondre à une préférence de probabilité. Retomber
+        sur `review` quand le champ est vide garde les appelants anciens corrects.
+        """
+        source = self.comparables or self.global_ranking
+        return tuple(r for r in source if r.status is ProductStatus.REVIEW)
 
     @property
     def actionable(self) -> tuple[RankedCandidate, ...]:
@@ -218,8 +242,10 @@ def construire_review_depuis(candidats: Sequence[ReviewCandidate], *, profil=Non
     classement = classement_global(candidats, profil=profil)
     par_evenement = best_market_per_event(candidats, profil=profil)
     from ..betting_engine.markets.review_ranking import evaluer as evaluer_candidats
+    evalues = evaluer_candidats(candidats, profil=profil)
     non_comparables = tuple(
-        r for r in evaluer_candidats(candidats, profil=profil)
-        if r.comparability is Comparability.NOT_COMPARABLE)
+        r for r in evalues if r.comparability is Comparability.NOT_COMPARABLE)
+    comparables = tuple(
+        r for r in evalues if r.comparability is Comparability.COMPARABLE)
     return MarketReview(tuple(classement), par_evenement, non_comparables,
-                        ecartes_par_politique)
+                        ecartes_par_politique, comparables)

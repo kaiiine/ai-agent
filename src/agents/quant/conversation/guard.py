@@ -202,6 +202,51 @@ _TROMPEUR = re.compile(
     r"|argent\s+facile|rendement\s+garanti"
     r")\b")
 
+#: §10 — une borne basse élevée reste une ESTIMATION.
+#:
+#: « sûr à 90 % », « 90 % certain », « une certitude de 90 % » transforment une
+#: probabilité prudente en promesse — exactement le glissement que
+#: `probability_low` existe pour empêcher. Motif SÉPARÉ de `_TROMPEUR` parce que
+#: ces formes se terminent par `%`, qui n'est pas un caractère de mot : la borne
+#: `\b` finale du motif principal ne peut pas s'y appliquer.
+#:
+#: Le vocabulaire autorisé est « probabilité prudente estimée » — il dit la même
+#: grandeur sans promettre l'issue.
+_CERTITUDE_CHIFFREE = re.compile(
+    r"(?i)("
+    r"\d{1,3}\s*%\s*(?:de\s+)?(?:certain|s[ûu]re?s?|garanti|certitude)"
+    r"|s[ûu]re?s?\s+à\s+\d{1,3}\s*%"
+    r"|certitude\s+(?:de\s+|à\s+)?\d{1,3}\s*%"
+    r"|garanti\s+à\s+\d{1,3}\s*%"
+    r")")
+
+
+#: Promesses sur le FONCTIONNEMENT du produit, qu'aucune mesure ne soutient.
+#:
+#: Catégorie distincte du « pari sûr » : ces phrases ne promettent pas un gain,
+#: elles promettent un PROCESSUS — des modèles réentraînés chaque jour, une
+#: équipe qui veille, une fenêtre plus courte qui ferait apparaître des paris
+#: validés. Relevées sur de vraies réponses, elles sont d'autant plus nocives
+#: qu'elles sonnent raisonnables : l'utilisateur attend, ou rétrécit sa demande,
+#: pour un résultat que rien ne fera venir.
+#:
+#: Aucune n'est vraie ici. Les modèles ne se réentraînent pas tout seuls, aucune
+#: équipe ne les met à jour, et la maturité dépend du ledger CLV — pas de la
+#: largeur de la fenêtre. Une fenêtre plus courte réduit le nombre de candidats,
+#: elle n'en promeut aucun.
+_PROMESSE_INFONDEE = re.compile(
+    r"(?i)("
+    r"[ée]quipes?\s+de\s+recherche"
+    r"|(?:mod[èe]les?|algorithmes?)\s+(?:sont\s+)?(?:mis\s+à\s+jour|réentraîn\w+|"
+    r"actualis\w+)\s+(?:chaque|tous\s+les)\s+jours?"
+    r"|mise\s+à\s+jour\s+quotidienne\s+des\s+mod[èe]les"
+    r"|(?:limiter|r[ée]duire|restreindre|raccourcir)\s+la\s+fen[êe]tre[^.]{0,60}"
+    r"(?:augmente|am[ée]liore|maximise)"
+    r"|(?:augmente|am[ée]liore|maximise)[^.]{0,60}(?:trouver|obtenir)\s+"
+    r"(?:des\s+)?paris\s+valid[ée]s"
+    r"|reviens\s+(?:demain|plus\s+tard)[^.]{0,40}(?:validé|actionnable|misable)"
+    r")")
+
 
 @dataclass(frozen=True)
 class GuardVerdict:
@@ -225,8 +270,53 @@ def _claims(text: str) -> dict[str, bool]:
         "ev_positive": bool(_EV_POSITIVE.search(text)),
         "combo_pricing": bool(_COMBO_PRICING.search(text)),
         "recommande": bool(_RECOMMANDE.search(text)),
-        "trompeur": bool(_TROMPEUR.search(text)),
+        "trompeur": bool(_TROMPEUR.search(text) or _CERTITUDE_CHIFFREE.search(text)),
+        "promesse_infondee": bool(_PROMESSE_INFONDEE.search(text)),
     }
+
+
+#: Identité d'ÉVÉNEMENT citée dans une réponse. Majuscules et `+` inclus : elle
+#: porte un horodatage ISO (`…:2026-08-13T20:45:00Z:home=…`), et s'arrêter avant
+#: le `T` n'en rapporterait qu'un fragment tronqué.
+#:
+#: SEULEMENT les événements, et c'est mesuré. Le contrôle a d'abord couvert
+#: `competition:`, `team:` et `player:` — il a immédiatement bloqué la sortie
+#: LÉGITIME du renderer, qui cite `competition:tennis:atp:tour` et
+#: `player:tennis:atp:*`. Ces identités existent, mais dans des registres
+#: DISPERSÉS (compétitions football en YAML, joueurs tennis dans le module
+#: tennis, équipes NBA ailleurs) : il n'existe aucune source unique de vérité, et
+#: une liste blanche incomplète bloque des réponses correctes. Un garde qui
+#: censure le vrai est pire que pas de garde.
+#:
+#: Une identité d'événement, elle, ne vit dans AUCUN registre : elle naît du scan.
+#: `evidence.event_ids` en est donc la liste EXHAUSTIVE, et la vérification est
+#: exacte — pas heuristique.
+_IDENTIFIANT_EVENEMENT = re.compile(r"\bevent:[A-Za-z0-9_.:|=+\-]{3,}")
+
+
+def identifiants_fabriques(text: str, evidence: BettingResponseEvidence | None) -> list[str]:
+    """Identités d'événement citées que le scan courant n'a pas produites.
+
+    Sur un PSG–Aston Villa (compétition européenne, non onboardée), la réponse a
+    proposé `event:football:eng:premier_league:…home=psg|away=aston_villa`. Cet
+    événement n'a jamais existé, et le PSG ne joue pas en Premier League. Une
+    identité inventée ressemble à une preuve : c'est ce qui la rend dangereuse.
+
+    PORTÉE ASSUMÉE : ce contrôle ne voit pas une compétition RÉELLE mal appliquée
+    (`competition:football:eng:premier_league` existe bel et bien). Cette
+    faute-là est sémantique ; ce sont les libellés de refus et les conseils
+    corrigés qui en suppriment l'incitation.
+    """
+    du_scan = frozenset(getattr(evidence, "event_ids", ()) or ())
+    fabriques: list[str] = []
+    for brut in _IDENTIFIANT_EVENEMENT.findall(text or ""):
+        identifiant = brut.rstrip(".,;:)")
+        # Un préfixe ou une troncature d'affichage d'un événement réel reste légitime.
+        if any(e.startswith(identifiant) or identifiant.startswith(e) for e in du_scan):
+            continue
+        if identifiant not in fabriques:
+            fabriques.append(identifiant)
+    return fabriques
 
 
 def _asserts_opportunity(signaux: dict[str, bool]) -> bool:
@@ -268,6 +358,19 @@ def enforce(
     signaux = _claims(text)
     prouve = evidence is not None or has_structured_output
 
+    # Avant tout le reste : une identité inventée est une preuve fabriquée. Elle
+    # ne dépend pas de l'existence d'une evidence — au contraire, c'est quand le
+    # moteur n'a RIEN pu résoudre que la tentation de combler est la plus forte.
+    inventes = identifiants_fabriques(text, evidence)
+    if inventes:
+        return GuardVerdict(False, _identites_inventees(inventes), "FABRICATED_IDENTIFIER")
+
+    # Une promesse sur le fonctionnement du produit est fausse avec preuve comme
+    # sans : elle ne parle pas du run, elle parle d'un avenir que rien ne mesure.
+    # Elle est donc contrôlée AVANT la séparation par evidence.
+    if signaux["promesse_infondee"]:
+        return GuardVerdict(False, _promesse_infondee(), "UNFOUNDED_PROCESS_CLAIM")
+
     if evidence is None:
         if signaux["trompeur"]:
             return GuardVerdict(False, _sans_preuve(signaux), "MISLEADING_LANGUAGE")
@@ -294,6 +397,40 @@ def enforce(
 
 
 # ── Remplacements déterministes ───────────────────────────────────────────────
+def _promesse_infondee() -> str:
+    """Remplace la promesse par l'état RÉEL du moteur et de la collecte.
+
+    Le texte dit ce qui débloquerait réellement une mise, parce que c'est
+    l'information que la promesse remplaçait — et la seule qui permette à
+    l'utilisateur de décider s'il attend ou non.
+    """
+    return (
+        "**Réponse retirée — affirmation non fondée sur le fonctionnement du produit.**\n\n"
+        "Ce qui a été affirmé n'est mesuré nulle part. L'état réel :\n\n"
+        "- les modèles ne sont pas réentraînés automatiquement, et aucune équipe "
+        "ne les met à jour — leur version est figée jusqu'à un déploiement ;\n"
+        "- rétrécir la fenêtre ne rend aucun candidat misable : cela réduit le "
+        "nombre de rencontres examinées, sans toucher à leur maturité ;\n"
+        "- ce qui autorise une mise est la maturité au ledger CLV, laquelle exige "
+        "des rencontres indépendantes clôturées ET une borne de confiance "
+        "strictement positive. Aucun délai ne l'accorde par défaut.\n\n"
+        "Consulte l'état par capacité avec `axon clv-status`."
+    )
+
+
+def _identites_inventees(identifiants: list[str]) -> str:
+    liste = "\n".join(f"  · `{i}`" for i in identifiants[:5])
+    return (
+        "**FABRICATED_IDENTIFIER** — réponse bloquée : elle cite une ou plusieurs "
+        "identités d'événement que le scan courant n'a pas produites.\n\n"
+        f"{liste}\n\n"
+        "Une identité inventée ressemble à une preuve, et envoie chercher un "
+        "problème là où il n'est pas. Si une compétition n'est pas onboardée, "
+        "c'est cela qu'il faut dire — pas fabriquer l'identifiant qu'elle aurait "
+        "si elle l'était."
+    )
+
+
 def _sans_preuve(signaux: dict[str, bool]) -> str:
     faits = [nom for nom in ("provenance", "cote", "mise", "ev_positive", "recommande")
              if signaux[nom]]
