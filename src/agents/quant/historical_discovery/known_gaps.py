@@ -111,6 +111,41 @@ def besoins_mesures() -> tuple[HistoricalDataNeed, ...]:
                     "entites_totales": 17,
                     "cause": "aucune archive libre de volley EN SALLE identifiée",
                     "mesure_le": MESURE_LE}),
+        # ── SCORES : le manque qui bloque les marchés de total et de handicap ─
+        #
+        # Ces besoins ne portent PAS sur des rencontres manquantes : les
+        # rencontres sont là, complètes, et leurs modèles de vainqueur tournent.
+        # Ce qui manque est le SCORE, c'est-à-dire la seule quantité dont un
+        # total ou un handicap puisse sortir.
+        HistoricalDataNeed(
+            sport="hockey", entity_type="team", entity_ids=("nhl:*",),
+            data_type="scores", reason="NO_SCORE_IN_CORPUS",
+            minimum_required_evidence=1, observed_evidence=0,
+            competition_id="competition:hockey:usa:nhl",
+            detail={"corpus": 4522, "rencontres_avec_score": 0,
+                    "champs_disponibles": ["id", "date", "home", "away", "o"],
+                    "cause": "le corpus NHL ne porte que l'ISSUE (`o` = home/away), "
+                             "aucun nombre de buts. Le moneyline et le modèle "
+                             "Davidson 3-way s'en contentent ; un total de buts ou "
+                             "un écart de buts n'en sortiront jamais.",
+                    "marches_bloques": ["TOTALS", "HANDICAP"],
+                    "classe": "STOP DATA",
+                    "mesure_le": "2026-08-15"}),
+        HistoricalDataNeed(
+            sport="volleyball", entity_type="team", entity_ids=("ita_a1:*",),
+            data_type="scores", reason="SET_SCORE_ONLY_NO_POINTS",
+            minimum_required_evidence=1, observed_evidence=0,
+            competition_id="competition:volleyball:ita:superlega",
+            detail={"corpus": 624, "rencontres_avec_sets": 624,
+                    "rencontres_avec_points": 0,
+                    "champs_disponibles": ["id", "date", "home", "away", "hs", "as"],
+                    "cause": "le corpus porte le score en SETS (3-1) mais aucun "
+                             "score en points. Un total de sets serait dérivable ; "
+                             "un total de points ne l'est pas.",
+                    "marches_bloques": ["TOTALS(points)", "HANDICAP(points)"],
+                    "marches_derivables_si_offerts": ["TOTALS(sets)", "HANDICAP(sets)"],
+                    "classe": "STOP DATA",
+                    "mesure_le": "2026-08-15"}),
     )
 
 

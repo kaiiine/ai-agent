@@ -222,8 +222,14 @@ BALLDONTLIE = SourceClassification(
     identity_compatible=AxeMesure(Axe.UNKNOWN, ""),
     point_in_time_capable=AxeMesure(Axe.UNKNOWN, ""),
     auth_required=True,
-    notes="AUTH_REQUIRED. Non poursuivie : la couverture NBA d'AXON est déjà à "
-          "0,9696 — aucun besoin ouvert ne la justifie.")
+    notes="TIER GRATUIT INSUFFISANT, mesuré le 2026-08-15 sur la documentation "
+          "publique. Le tableau des tiers donne, endpoint par endpoint : Teams / "
+          "Players / Games = « Yes » en gratuit, mais « Game Player Stats » = "
+          "« No » — c'est-à-dire exactement la seule chose dont un modèle de prop "
+          "a besoin. Le box score par joueur est au tier ALL-STAR, 9,99 $/mois et "
+          "PAR SPORT ; le gratuit est en outre limité à 5 requêtes/minute. Une clé "
+          "gratuite ne débloquerait donc rien : il n'y a pas de credential à "
+          "demander, il y a un abonnement à refuser.")
 
 BEACH_VOLLEY = SourceClassification(
     source="BigTimeStats/beach-volleyball",

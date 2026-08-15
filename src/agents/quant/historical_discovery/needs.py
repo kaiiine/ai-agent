@@ -26,7 +26,13 @@ ENTITY_TYPES = frozenset({"team", "player", "competition"})
 
 #: Nature de l'observation manquante. Distinguer permet de ne pas confondre
 #: « je n'ai pas ses matchs » et « je n'ai pas son classement ».
-DATA_TYPES = frozenset({"matches", "results", "rankings", "lineups", "odds"})
+#:
+#: `scores` n'est PAS `results`, et la nuance a un coût réel : le corpus NHL
+#: d'AXON contient 4 522 rencontres avec leur VAINQUEUR et aucun but. Il suffit
+#: pour un moneyline et ne permet aucun total ni aucun handicap. Sans ce type,
+#: le besoin se serait formulé « il manque des matchs de hockey » — ce qui est
+#: faux, et enverrait chercher là où il n'y a rien à trouver.
+DATA_TYPES = frozenset({"matches", "results", "scores", "rankings", "lineups", "odds"})
 
 
 @dataclass(frozen=True)
