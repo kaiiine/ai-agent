@@ -244,10 +244,135 @@ def _capacites_derivees_football() -> list[ModelCapability]:
     return capacites
 
 
+# ── Marchés de SCORE : basket et football américain ──────────────────────────
+#
+# MESURÉ sur le catalogue réel (3 événements par sport, 1 393 marchés basket et
+# 194 NFL). Le `betType` est le SEUL discriminant de portée : la mi-temps et le
+# quart-temps portent la même famille canonique et les mêmes paramètres, et ne se
+# distinguent que là.
+#
+#     basket  2766  « Nombre de points »            rencontre entière
+#             3826  « Écart de points (handicap) »  rencontre entière
+#             2532  mi-temps · 2511 1er quart-temps · 3493 mi-temps handicap
+#     NFL     2767  « Nombre de points »            rencontre entière
+#             3827  « Écart de points »             rencontre entière
+#
+# LES TOTAUX D'ÉQUIPE SONT COUVERTS, après correction d'une erreur de lecture.
+# Ils avaient d'abord été refusés au motif que leur `betType` changeait avec
+# l'équipe (2877 vu sur Dallas Wings, 2474 sur Indiana Fever). Une seconde
+# affiche a montré que 2877 suivait le SECOND COMPÉTITEUR et non les Wings :
+# l'identifiant désigne le CAMP. Mesuré sur 40 marchés et trois sports, sans
+# exception. Le modèle les price, et le benchmark valide dix lignes sur dix.
+BET_TYPES_SCORE_RENCONTRE: dict = {
+    2: {MarketFamily.TOTALS: 2766, MarketFamily.HANDICAP: 3826},    # basketball
+    16: {MarketFamily.TOTALS: 2767, MarketFamily.HANDICAP: 3827},   # american_football
+}
+
+#: Totaux d'ÉQUIPE, par sport et par camp. La table de `families` dit quel camp
+#: chaque `betType` désigne ; celle-ci dit lesquels sont couverts par un modèle.
+BET_TYPES_TOTAL_EQUIPE: dict = {2: (2474, 2877), 16: (2475, 2878)}
+
+#: Support RÉELLEMENT évalué en walk-forward, par (sport, famille) : (min, max).
+#: Hors de ces bornes, la loi n'a pas été confrontée à l'historique — et
+#: extrapoler une distribution au-delà de son domaine de validation est
+#: exactement ce que la masse hors grille du football interdit déjà.
+SUPPORT_VALIDE_SCORE: dict = {
+    (2, MarketFamily.TOTALS): (206.5, 248.5),
+    (2, MarketFamily.HANDICAP): (-21.5, 21.5),
+    (16, MarketFamily.TOTALS): (30.5, 58.5),
+    (16, MarketFamily.HANDICAP): (-14.5, 14.5),
+}
+
+
+def _score_rencontre(sport_id: int, famille: MarketFamily, parametres: Mapping) -> bool:
+    """Marché de SCORE de la rencontre entière, sur une ligne validée.
+
+    Trois conditions, toutes structurelles : le `betType` exact de la rencontre,
+    aucune clé de portée ou de sujet, et une DEMI-LIGNE dans le support
+    réellement évalué. Un handicap nul est refusé en prime — le signe de `hcp` ne
+    désignerait plus aucun camp, et le règlement d'une égalité exacte serait à
+    deviner.
+    """
+    attendu = BET_TYPES_SCORE_RENCONTRE.get(sport_id, {}).get(famille)
+    if attendu is None or parametres.get("source_family_id") != attendu:
+        return False
+    if not _plein_match(parametres):
+        return False
+    cle = "line" if famille is MarketFamily.TOTALS else "handicap"
+    valeur = parametres.get(cle)
+    if not isinstance(valeur, (int, float)) or float(valeur) % 1 != 0.5:
+        return False
+    if famille is MarketFamily.HANDICAP and float(valeur) == 0:
+        return False
+    bas, haut = SUPPORT_VALIDE_SCORE[(sport_id, famille)]
+    return bas <= float(valeur) <= haut
+
+
+def _total_equipe(sport_id: int, parametres: Mapping) -> bool:
+    """Total d'un CAMP de la rencontre entière, sur une demi-ligne validée."""
+    if parametres.get("source_family_id") not in BET_TYPES_TOTAL_EQUIPE.get(sport_id, ()):
+        return False
+    if parametres.get("side") not in ("slot_1", "slot_2"):
+        return False
+    if any(cle in parametres for cle in (*CLES_DE_PORTEE, *CLES_DE_SUJET)):
+        return False
+    ligne = parametres.get("line")
+    if not isinstance(ligne, (int, float)) or float(ligne) % 1 != 0.5:
+        return False
+    bas, haut = SUPPORT_VALIDE_TOTAL_EQUIPE[sport_id]
+    return bas <= float(ligne) <= haut
+
+
+#: Support évalué en walk-forward pour les totaux d'ÉQUIPE, par sport.
+SUPPORT_VALIDE_TOTAL_EQUIPE: dict = {2: (106.5, 120.5), 16: (17.5, 27.5)}
+
+
+def _capacites_score() -> list[ModelCapability]:
+    """Les marchés de score validés, un par (sport, famille).
+
+    UNE capacité par famille et non par ligne, contrairement au football — et la
+    différence est mesurée, pas stylistique. Les Plus/Moins football sont sept
+    projections distinctes d'une matrice discrète, dont l'une (0.5) échoue
+    séparément. Ici, toutes les lignes d'une famille sortent de la MÊME loi
+    continue, paramétrée par une espérance et un écart-type : le benchmark balaie
+    son support à ±3 écarts-types et les vingt-quatre cibles battent leur
+    baseline. Ce qui est validé est donc la FORME de la loi, sur son support.
+    """
+    from .families import MarketFamily as _F
+
+    capacites = []
+    for sport_id, familles in sorted(BET_TYPES_SCORE_RENCONTRE.items()):
+        nom_sport = {2: "basketball", 16: "american_football"}[sport_id]
+        for famille in sorted(familles, key=lambda f: f.value):
+            etiquette = "totals" if famille is _F.TOTALS else "spread"
+            bas, haut = SUPPORT_VALIDE_SCORE[(sport_id, famille)]
+            capacites.append(ModelCapability(
+                winamax_sport_id=sport_id, family=famille,
+                model_name=f"{nom_sport}_score",
+                model_version=f"{nom_sport}.score.{etiquette}.normal.v0",
+                methodology="sequential_offense_defense_ratings + normal",
+                accepts=(lambda p, s=sport_id, f=famille: _score_rencontre(s, f, p)),
+                domain=(f"{etiquette}, rencontre entière, demi-ligne dans "
+                        f"[{bas}, {haut}] (support évalué en walk-forward)")))
+    for sport_id in sorted(BET_TYPES_TOTAL_EQUIPE):
+        nom_sport = {2: "basketball", 16: "american_football"}[sport_id]
+        bas, haut = SUPPORT_VALIDE_TOTAL_EQUIPE[sport_id]
+        capacites.append(ModelCapability(
+            winamax_sport_id=sport_id, family=MarketFamily.TEAM_TOTALS,
+            model_name=f"{nom_sport}_score",
+            model_version=f"{nom_sport}.score.team_totals.normal.v0",
+            methodology="sequential_offense_defense_ratings + normal",
+            accepts=(lambda p, s=sport_id: _total_equipe(s, p)),
+            domain=(f"total d'un camp, rencontre entière, demi-ligne dans "
+                    f"[{bas}, {haut}]")))
+    return capacites
+
+
 #: Registre EXTENSIBLE. Ajouter une famille = ajouter une capacité ici (ou
 #: l'enregistrer à chaud), pas modifier `resolve_model`.
 CAPABILITIES: list[ModelCapability] = (
-    list(_capacites_des_modeles_valides()) + _capacites_derivees_football())
+    list(_capacites_des_modeles_valides()) + _capacites_derivees_football()
+    + _capacites_score())
 
 
 def register(capability: ModelCapability) -> None:

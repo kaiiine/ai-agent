@@ -38,13 +38,31 @@ def _registry() -> dict[str, SportModule]:
         from .football.market_models.derived import FootballDerivedPricer
         return (FootballDerivedPricer(),)
 
+    def _pricers_de_score(sport: str):
+        """Les pricers de score d'un sport, s'il en a un de validé.
+
+        Le baseball en déclare un aussi : sa configuration porte `law=None`, donc
+        il s'abstient avec le motif du STOP statistique. Le brancher plutôt que
+        l'omettre rend le refus VISIBLE dans l'entonnoir, au lieu de le confondre
+        avec « ce sport n'intéresse personne ».
+        """
+        def _fabrique():
+            from .score_pricer import ScorePricer
+            return (ScorePricer(sport),)
+        return _fabrique
+
+    from dataclasses import replace as _replace
+
     return {
         "football": SportModule("football", build_event_feature_set, OneXTwoModel(),
                                 entities=_football_teams,
                                 market_pricers=_football_pricers),
-        "basketball": BASKETBALL_MODULE,
-        "baseball": BASEBALL_MODULE,
-        "american_football": NFL_MODULE,
+        "basketball": _replace(BASKETBALL_MODULE,
+                               market_pricers=_pricers_de_score("basketball")),
+        "baseball": _replace(BASEBALL_MODULE,
+                             market_pricers=_pricers_de_score("baseball")),
+        "american_football": _replace(NFL_MODULE,
+                                      market_pricers=_pricers_de_score("american_football")),
         "volleyball": VOLLEYBALL_MODULE,
         "hockey": HOCKEY_MODULE,
         "tennis": TENNIS_MODULE,

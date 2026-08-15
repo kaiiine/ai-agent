@@ -214,6 +214,53 @@ def _paires_football_par_cible() -> dict:
     return dict(paires)
 
 
+#: Capacités de SCORE (basket, football américain) -> (sport, famille). Séparées
+#: du football parce qu'elles se mesurent autrement : là-bas chaque ligne est une
+#: projection distincte d'une matrice discrète et porte sa propre table ; ici
+#: toutes les lignes d'une famille sortent de la MÊME loi continue, et leurs
+#: couples (probabilité, issue) se mutualisent par TRANCHE DE PROBABILITÉ — la
+#: même convention que l'ECE, qui pool déjà toutes les issues d'un marché.
+_CAPACITES_SCORE: dict[str, tuple[str, str]] = {
+    "basketball.score.totals.normal.v0": ("basketball", "TOTALS"),
+    "basketball.score.spread.normal.v0": ("basketball", "SPREAD"),
+    "american_football.score.totals.normal.v0": ("american_football", "TOTALS"),
+    "american_football.score.spread.normal.v0": ("american_football", "SPREAD"),
+    "basketball.score.team_totals.normal.v0": ("basketball", "TEAM_TOTALS"),
+    "american_football.score.team_totals.normal.v0": ("american_football", "TEAM_TOTALS"),
+}
+
+
+@functools.lru_cache(maxsize=8)
+def _paires_score(sport: str) -> dict:
+    """Rejoue le walk-forward de score du sport et rend ses couples par famille.
+
+    Un seul passage : les deux familles d'un sport sortent des mêmes notes, donc
+    de la même distribution par rencontre.
+    """
+    from collections import defaultdict
+
+    from .sports.american_football.score_markets import NFL_SCORE_CONFIG
+    from .sports.basketball.score_markets import NBA_SCORE_CONFIG
+    from .sports.score_markets import cibles_du_corpus
+    from .sports.score_distribution import run_score_walk_forward
+
+    config = {"basketball": NBA_SCORE_CONFIG,
+              "american_football": NFL_SCORE_CONFIG}[sport]
+    jeux = config.load()
+    cibles = cibles_du_corpus(jeux)
+    run = run_score_walk_forward(jeux, params=config.params, targets=cibles,
+                                 law=config.law or "NORMAL",
+                                 competition_id=config.competition_id)
+    paires: dict[str, list] = defaultdict(list)
+    for cible in cibles:
+        cible_run = run.runs[cible.key]
+        for probs, reel in cible_run.predictions:
+            for classe in cible.classes:
+                paires[cible.family].append(
+                    (probs[classe], 1.0 if classe == reel else 0.0))
+    return dict(paires)
+
+
 @functools.lru_cache(maxsize=32)
 def bins_for_capability(model_version: str, confiance: float = 0.95) -> CalibrationBins | None:
     """Table de calibration d'UNE capacité multi-marché football.
@@ -222,6 +269,15 @@ def bins_for_capability(model_version: str, confiance: float = 0.95) -> Calibrat
     pas un sport. Deux capacités du même sport et de la même loi ont des bornes
     différentes parce qu'elles répondent à des questions différentes.
     """
+    score = _CAPACITES_SCORE.get(model_version)
+    if score is not None:
+        sport, famille = score
+        try:
+            paires = _paires_score(sport).get(famille, [])
+        except Exception:   # noqa: BLE001 — l'incertitude ne casse jamais une prédiction
+            return None
+        return build_bins(paires, confiance=confiance) if paires else None
+
     cibles = _CIBLES_PAR_CAPACITE.get(model_version)
     if cibles is None:
         return None
