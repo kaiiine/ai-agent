@@ -11,7 +11,12 @@ from typing import Optional
 from src.agents.coding.task_decomposer import decompose, Phase
 
 # Marqueurs d'échec détectables dans le résultat du specialist (FR + EN)
+# La sentinelle fait foi ; les phrases ne sont qu'un filet pour l'existant.
+# Une reformulation suffisait à rendre la détection aveugle.
+from src.agents.coding.specialist import ECHEC_PREFIXE
+
 _PHASE_FAILED_MARKERS = (
+    ECHEC_PREFIXE.lower(),
     "impossible d'invoquer le modèle",
     "contexte trop volumineux",
     "cannot invoke the model",
@@ -34,16 +39,21 @@ _PHASE_ITER_BUDGET = {
 # ── Pre-scaffold : détection framework + exécution hors LLM ──────────────────
 
 # Commande pnpm create à lancer pour chaque framework détecté.
-# Le projet est scaffoldé dans .scaffold/ pour préserver spec.md et autres fichiers.
+# Scaffold dans un sous-dossier de transit pour préserver spec.md, puis fusion
+# à la racine. Le nom doit être un nom de paquet npm VALIDE : `.scaffold` était
+# refusé (« name cannot start with a period »), et les cinq commandes échouaient.
+# Nom de paquet npm valide : ni point ni underscore en tête.
+SCAFFOLD_DIRNAME = "axon-scaffold"
+
 _FRAMEWORK_SCAFFOLD_CMD = {
-    "next":       "pnpm create next-app@latest .scaffold --yes --typescript --tailwind --app --src-dir --import-alias @/*",
-    "vite-react": "pnpm create vite@latest .scaffold --template react-ts && cd .scaffold && pnpm install",
-    "svelte":     "pnpm create svelte@latest .scaffold -- --template skeleton --types typescript --no-prettier --no-eslint && cd .scaffold && pnpm install",
-    "astro":      "pnpm create astro@latest .scaffold -- --template minimal --typescript strict --git false --install --no-git",
-    "vue":        "pnpm create vue@latest .scaffold -- --ts --router --pinia --no-eslint --no-prettier && cd .scaffold && pnpm install",
+    "next":       "pnpm create next-app@latest axon-scaffold --yes --typescript --tailwind --app --src-dir --import-alias @/*",
+    "vite-react": "pnpm create vite@latest axon-scaffold --template react-ts && cd axon-scaffold && pnpm install",
+    "svelte":     "pnpm create svelte@latest axon-scaffold -- --template skeleton --types typescript --no-prettier --no-eslint && cd axon-scaffold && pnpm install",
+    "astro":      "pnpm create astro@latest axon-scaffold -- --template minimal --typescript strict --git false --install --no-git",
+    "vue":        "pnpm create vue@latest axon-scaffold -- --ts --router --pinia --no-eslint --no-prettier && cd axon-scaffold && pnpm install",
 }
 
-# Fichiers existants à ne jamais écraser lors du merge .scaffold/ → project_dir
+# Fichiers existants à ne jamais écraser lors du merge <transit>/ → project_dir
 _SCAFFOLD_PRESERVE = {"spec.md", "readme.md", ".git", ".axon", "build-state.json"}
 
 
@@ -97,7 +107,7 @@ def _run_prescaffold(
     accent: str,
 ) -> bool:
     """
-    Exécute le scaffold CLI dans project_dir/.scaffold/, puis merge dans project_dir.
+    Exécute le scaffold CLI dans project_dir/<transit>/, puis merge dans project_dir.
     Retourne True si le scaffold a réussi, False sinon (le specialist prend la main).
     """
     from rich.text import Text
@@ -106,7 +116,7 @@ def _run_prescaffold(
     if not cmd:
         return False
 
-    scaffold_dir = project_dir / ".scaffold"
+    scaffold_dir = project_dir / SCAFFOLD_DIRNAME
 
     # Ne pas re-scaffolder si un scaffold ou package.json existe déjà
     if (project_dir / "package.json").exists() or (project_dir / "node_modules").exists():
@@ -147,7 +157,7 @@ def _run_prescaffold(
             console.print(Text(f"      {err[:200]}", style="dim red"))
         return False
 
-    # Scaffold réussi : merge .scaffold/ dans project_dir
+    # Scaffold réussi : merge du dossier de transit dans project_dir
     if scaffold_dir.exists():
         _merge_scaffold_into_project(scaffold_dir, project_dir)
 
@@ -240,22 +250,133 @@ def _load_axon_context(project_dir: Path) -> str:
     return "\n\n".join(parts)
 
 
-def _compress_spec_for_phase(spec_text: str, phases: list[Phase], current: Phase) -> str:
-    """Phase 1 reçoit la spec complète. Phases suivantes : intro + liste ultra-compacte."""
+def _compress_spec_for_phase(spec_text: str, phases: list[Phase], current: Phase,
+                             echouees: set[int] | None = None) -> str:
+    """Phase 1 reçoit la spec complète. Phases suivantes : intro + liste compacte.
+
+    UNE PHASE ANTÉRIEURE ÉCHOUÉE EST DITE ÉCHOUÉE. Le statut se déduisait du
+    seul numéro — « ✓ faite » pour tout ce qui précède — si bien qu'une phase
+    morte deux fois était annoncée comme livrée à la suivante. Mesuré sur un vrai
+    build : la phase 4 « Polish & finalisation » a vérifié et validé une page que
+    la phase 3 n'avait jamais écrite, et le build s'est terminé sur un squelette
+    annoncé comme fini.
+
+    Le travail manquant est alors nommé : la phase suivante peut le signaler, ou
+    le reprendre si son scope le permet, au lieu de polir du vide.
+    """
     if current.index == 1:
         return spec_text[:6000]
+    echouees = echouees or set()
     intro = spec_text[:500]
+
+    def _statut(p: Phase) -> str:
+        if p.index in echouees:
+            return "✗ ÉCHOUÉE — son travail N'EXISTE PAS"
+        return "✓ faite" if p.index < current.index else "à venir"
+
     others = "\n".join(
-        f"  Phase {p.index} ({p.title}) : {'✓ faite' if p.index < current.index else 'à venir'}"
+        f"  Phase {p.index} ({p.title}) : {_statut(p)}"
         for p in phases if p.index != current.index
     )
-    return f"{intro}\n\nAutres phases :\n{others}"
+    bloc = f"{intro}\n\nAutres phases :\n{others}"
+    manquantes = sorted(i for i in echouees if i < current.index)
+    if manquantes:
+        bloc += (
+            f"\n\n⚠ Les phases {manquantes} ont ÉCHOUÉ : leurs livrables sont "
+            "absents. Ne les considère jamais comme présents, et ne valide pas "
+            "un résultat qui en dépend."
+        )
+    return bloc
+
+
+_EXPORT = __import__("re").compile(
+    r"^export\s+(?:default\s+)?(?:async\s+)?"
+    r"(?:function|const|class|interface|type)\s+([A-Za-z_$][\w$]*)", __import__("re").M)
+
+_IGNORES = {"node_modules", ".next", ".git", "dist", "build", ".axon", "__pycache__"}
+_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".svelte", ".vue", ".py", ".css"}
+
+
+def _inventaire_du_projet(project_dir: Path, max_fichiers: int = 60) -> str:
+    """Ce qui existe déjà, avec ce que chaque fichier EXPORTE.
+
+    C'est la correction du vrai coût du build. Une phase recevait son scope mais
+    aucune idée de ce que les phases précédentes avaient produit : pour écrire
+    une page composant Header, Button et Container, l'agent devait d'abord lire
+    ces fichiers un par un. Mesuré sur un vrai build : sept à douze `read_file`
+    par phase, avant la moindre écriture — et le détecteur de boucle y voyait une
+    répétition.
+
+    Lister les exports coûte quelques centaines de tokens et remplace la
+    quasi-totalité de ces lectures : l'agent sait que `Button.tsx` exporte
+    `Button` et `LinkButton` sans avoir à l'ouvrir. Il garde le droit de lire,
+    mais n'en a plus BESOIN pour connaître la surface du projet.
+    """
+    if not project_dir.is_dir():
+        return ""
+    lignes: list[str] = []
+    for chemin in sorted(project_dir.rglob("*")):
+        if len(lignes) >= max_fichiers:
+            lignes.append("  … (inventaire tronqué)")
+            break
+        if not chemin.is_file() or chemin.suffix not in _EXTENSIONS:
+            continue
+        if any(part in _IGNORES for part in chemin.parts):
+            continue
+        relatif = chemin.relative_to(project_dir)
+        try:
+            contenu = chemin.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        exports = _EXPORT.findall(contenu)
+        n = len(contenu.splitlines())
+        detail = f" → {', '.join(dict.fromkeys(exports))}" if exports else ""
+        lignes.append(f"  {relatif} ({n} l.){detail}")
+    return "\n".join(lignes)
+
+
+def _capacites_mcp() -> str:
+    """Les serveurs MCP connectés, annoncés à la phase.
+
+    Brancher les outils ne suffit pas. Le specialist ne lie que les huit outils
+    les plus proches de sa requête : si la tâche ne parle jamais de 3D, les
+    outils Blender ne sont jamais sélectionnés — présents, joignables, et
+    invisibles. Les nommer dans la tâche fait deux choses à la fois : le modèle
+    SAIT qu'il les a, et le texte rapproche la requête de leur description.
+
+    Le `capabilities_hint` de la config sert de description : c'est déjà ce qui
+    route les outils côté MCP, et le dupliquer autrement les ferait diverger.
+    """
+    try:
+        from src.mcp_client.runtime import mcp_runtime
+        runtime = mcp_runtime()
+        outils = {t.name for t in runtime.tools}
+        lignes = []
+        for nom, cfg in runtime.servers().items():
+            if not getattr(cfg, "enabled", True):
+                continue
+            hint = (getattr(cfg, "capabilities_hint", "") or "").strip()
+            lignes.append(f"  · {nom} — {hint or 'capacités non décrites'}")
+    except Exception:                                            # noqa: BLE001
+        return ""
+    if not lignes:
+        return ""
+    return (
+        "OUTILS MCP CONNECTÉS (utilisables directement, comme tes autres outils) :\n"
+        + "\n".join(lignes)
+        + f"\n  ({len(outils)} outils exposés au total)\n"
+        "Si le scope de la phase relève d'une de ces capacités, PASSE PAR L'OUTIL "
+        "plutôt que d'écrire du code qui la réimplémente.\n\n"
+    )
 
 
 def _build_phase_task(phase: Phase, spec_text: str, project_name: str,
-                      project_dir: Path, phases: list[Phase]) -> str:
+                      project_dir: Path, phases: list[Phase],
+                      echec_precedent: str = "",
+                      echouees: set[int] | None = None) -> str:
     axon_ctx = _load_axon_context(project_dir)
-    spec_part = _compress_spec_for_phase(spec_text, phases, phase)
+    spec_part = _compress_spec_for_phase(spec_text, phases, phase, echouees)
+    inventaire = _inventaire_du_projet(project_dir)
     task = (
         f"[Phase {phase.index}/{len(phases)} — {phase.title}]\n"
         f"Projet : {project_name}\n\n"
@@ -264,12 +385,33 @@ def _build_phase_task(phase: Phase, spec_text: str, project_name: str,
         f"même si tu sais la faire. Ne jamais anticiper sur les phases suivantes.\n\n"
         f"SPEC (référence) :\n{spec_part}\n\n"
     )
+    if inventaire:
+        task += (
+            "FICHIERS DÉJÀ PRÉSENTS (avec leurs exports) :\n"
+            f"{inventaire}\n\n"
+            "Cet inventaire est À JOUR : tu connais déjà la surface du projet. "
+            "N'ouvre un fichier que si tu as besoin de son CONTENU — pas pour "
+            "savoir s'il existe ni ce qu'il exporte.\n\n"
+        )
+    task += _capacites_mcp()
     if axon_ctx:
         task += f"CONTEXTE PROJET (sessions précédentes) :\n{axon_ctx}\n\n"
+    if echec_precedent:
+        # Un retry qui renvoie la tâche identique reproduit l'échec identique.
+        # Mesuré : phase 3 morte deux fois de suite sur la même exploration.
+        task += (
+            "⚠ TENTATIVE PRÉCÉDENTE ÉCHOUÉE\n"
+            f"Motif : {echec_precedent}\n"
+            "Ne recommence pas la même approche. Tu as l'inventaire ci-dessus : "
+            "commence par ÉCRIRE un fichier du scope, puis lis seulement ce qui "
+            "te manque ensuite.\n\n"
+        )
     task += (
         "Instructions :\n"
         "- Réalise UNIQUEMENT le scope défini ci-dessus.\n"
         "- Les phases précédentes ont déjà été exécutées — ne pas re-scaffolder.\n"
+        "- ÉCRIS TÔT. Une phase qui n'a produit aucun fichier n'a rien livré : "
+        "l'exploration ne compte pas comme du travail.\n"
         "- Plan COURT obligatoire : dev_plan avec 4 à 6 steps max. Chaque step = une action atomique.\n"
         "  Exemple de bons steps : 'Scaffolder avec create-next-app', 'Installer les dépendances',\n"
         "  'Configurer tailwind.config.js + globals.css', 'Créer la structure de dossiers'.\n"
@@ -287,7 +429,31 @@ def _phase_failed(result: str) -> bool:
     return any(marker in lower for marker in _PHASE_FAILED_MARKERS)
 
 
-_LOOP_DETECTION_LIMIT = 8   # même tool répété N fois sans écrire de fichier → boucle
+_LOOP_DETECTION_LIMIT = 8   # même appel IDENTIQUE répété N fois → boucle
+_WRITE_EVENTS = ("propose_file_change", "edit_file")
+
+#: Lectures distinctes tolérées avant d'exiger une écriture. Explorer n'est pas
+#: boucler — mais explorer indéfiniment non plus.
+_EXPLORATION_MAX = 14
+
+
+def _cible_de(event: str, data: dict) -> str:
+    """Ce sur QUOI porte l'appel — chemin, motif ou commande.
+
+    C'est la correction du défaut central du détecteur : il comptait les appels
+    par NOM D'OUTIL. Lire sept fichiers DIFFÉRENTS avant d'écrire une page qui
+    les compose était donc traité comme une boucle, et la phase tuée.
+    Mesuré sur un vrai build : les phases 3 et 4 sont mortes ainsi, deux fois
+    chacune, et le site est resté un squelette.
+
+    Lire sept fois le MÊME fichier reste une boucle. La différence tient
+    entièrement à l'argument, jamais au nom de l'outil.
+    """
+    for cle in ("path", "file_path", "name", "pattern", "query", "cmd", "command"):
+        valeur = data.get(cle)
+        if valeur:
+            return f"{event}:{str(valeur)[:120]}"
+    return event
 
 def _make_build_callback(console, accent: str = "color(214)"):
     """Factory : retourne un callback /build avec visibilité et détection de boucle."""
@@ -317,7 +483,7 @@ def _make_build_callback(console, accent: str = "color(214)"):
             t.append("    $  ", style=f"dim {accent}")
             t.append(cmd, style="dim")
             console.print(t)
-            _recent_tools.append("shell_run")  # UNE entrée par invocation
+            _recent_tools.append(_cible_de("shell_run", data))  # UNE entrée par invocation
 
         elif event == "shell_run":
             # data = args, result = {"exit_code": N, "stdout": ..., "stderr": ...}
@@ -338,7 +504,7 @@ def _make_build_callback(console, accent: str = "color(214)"):
             t.append("  ◆  plan : ", style=f"bold {accent}")
             t.append(", ".join(steps[:4]) + ("…" if len(steps) > 4 else ""), style="dim")
             console.print(t)
-            _recent_tools.append("dev_plan_create")
+            _recent_tools.append(_cible_de("dev_plan_create", data))
 
         elif event == "dev_plan_step_done":
             res = result if isinstance(result, dict) else {}
@@ -374,13 +540,13 @@ def _make_build_callback(console, accent: str = "color(214)"):
             t.append(f"  ∙  {event.split('_', 1)[1]}  ", style="dim")
             t.append(path, style="dim")
             console.print(t)
-            _recent_tools.append(event)
+            _recent_tools.append(_cible_de(event, data))
 
-        elif event not in ("propose_file_change",) and event not in _LOOP_IGNORED:
-            _recent_tools.append(event)
+        elif event not in _WRITE_EVENTS and event not in _LOOP_IGNORED:
+            _recent_tools.append(_cible_de(event, data))
 
-        # ── Auto-accept propose_file_change ───────────────────────────────────
-        if event != "propose_file_change":
+        # ── Auto-accept des écritures ─────────────────────────────────────────
+        if event not in _WRITE_EVENTS:
             # Détection de boucle : même outil LLM trop répété sans fichier écrit
             if not _aborted[0] and len(_recent_tools) >= _LOOP_DETECTION_LIMIT:
                 counts = Counter(_recent_tools[-_LOOP_DETECTION_LIMIT:])
@@ -396,17 +562,25 @@ def _make_build_callback(console, accent: str = "color(214)"):
                     _abort_phase()
             return None
 
-        path = data.get("path", "")
-        content = data.get("content", "")
-        desc = data.get("description", "")[:60]
-        if not path or not content:
+        # Un appel en erreur n'a rien déposé : dépiler écrirait la proposition
+        # précédente sous le chemin d'une autre.
+        if isinstance(result, dict) and result.get("status") == "error":
             return None
+
+        # Le contenu vient de la pile, jamais des arguments : `edit_file` ne passe
+        # qu'un fragment, et c'est l'outil qui a calculé le fichier complet.
+        from src.agents.coding.pending import pending_changes as _pending, snapshots as _snaps
+        change = _pending.pop_latest()
+        if change is None:
+            return None
+        path, desc = change.path, (data.get("description") or change.description)[:60]
 
         try:
             from pathlib import Path as _Path
             p = _Path(path)
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(content, encoding="utf-8")
+            _snaps.save(path, change.original)
+            p.write_text(change.proposed, encoding="utf-8")
             _files_written.append(path)
             _recent_tools.clear()  # reset loop counter après un vrai fichier
             t = Text()
@@ -515,7 +689,10 @@ def run_build(project_name: str, console) -> None:
         if detected_framework and _is_scaffold_phase(phase):
             prescaffold_done = _run_prescaffold(project_dir, detected_framework, console, ACCENT)
 
-        task = _build_phase_task(phase, spec_text, project_name, project_dir, phases)
+        # La tâche est reconstruite à CHAQUE tentative : l'inventaire a pu
+        # changer (la tentative précédente a peut-être écrit), et le motif
+        # d'échec doit y entrer.
+        motif_echec = ""
 
         if prescaffold_done:
             task = (
@@ -535,6 +712,9 @@ def run_build(project_name: str, console) -> None:
             reset_specialist_state()
             set_phase_max_iterations(phase_iter_budget)
             set_progress_callback(_make_build_callback(console, ACCENT))
+            task = _build_phase_task(phase, spec_text, project_name, project_dir,
+                                     phases, echec_precedent=motif_echec,
+                                     echouees=set(build_state["failed"]))
             try:
                 result = run_coding_task(task)
                 if _phase_failed(result):
@@ -542,6 +722,7 @@ def run_build(project_name: str, console) -> None:
                 success = True
                 break
             except Exception as exc:
+                motif_echec = str(exc)[:200]
                 if attempt == 0:
                     t = Text()
                     t.append("  ⚠  ", style="bold yellow")
