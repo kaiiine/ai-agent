@@ -1,6 +1,8 @@
 """Coding agent tools — repo discovery, HITL file proposals, dev plan."""
 from __future__ import annotations
 
+import json as _json_module
+import re as _re_module
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, List
@@ -502,6 +504,56 @@ from src.skills.tools import make_load_skill
 load_skill = make_load_skill("coding")
 
 
+#: Une balise ouvrante en tête d'un contenu qui ne devrait pas en avoir. C'est la
+#: signature d'un backend qui a sérialisé une structure en XML au lieu de la
+#: rendre telle quelle.
+_BALISE_EN_TETE = _re_module.compile(r"^\s*<[a-zA-Z][\w.-]*>")
+
+
+def _contenu_invalide(p: Path, content: str) -> str:
+    """Refuse un contenu que son extension rend manifestement faux.
+
+    Relevé sur un vrai build : `public/config.json` a été écrit avec
+    `<demoUrl>https://demo.axon.ai/run</demoUrl><license>MIT</license>` — du XML
+    sous un nom `.json`. Le backend avait sérialisé la structure en balises au
+    lieu de rendre la chaîne. L'agent a ensuite brûlé une dizaine d'étapes en
+    `xxd` et `cat -A` à chercher un problème d'encodage, avant de renoncer et de
+    déplacer la config dans un module TypeScript.
+
+    Le coût n'est pas l'écriture ratée — c'est l'enquête qu'elle déclenche. Un
+    refus IMMÉDIAT qui NOMME la cause épargne les dix étapes : l'agent sait
+    quoi corriger au lieu de devoir le déduire.
+
+    On ne valide que ce qui se valide sans ambiguïté. Un `.md` ou un `.tsx`
+    accepte à peu près tout ; un `.json` non analysable est faux, sans discussion.
+    """
+    suffixe = p.suffix.lower()
+
+    if suffixe == ".json":
+        try:
+            _json_module.loads(content)
+        except ValueError as exc:
+            indice = ""
+            if _BALISE_EN_TETE.match(content):
+                indice = (" Le contenu commence par une balise : ton backend a "
+                          "probablement sérialisé la structure en XML. Rends le "
+                          "JSON comme une CHAÎNE de caractères, littéralement.")
+            return (f"Contenu refusé : {p.name} porte l'extension .json mais "
+                    f"n'est pas du JSON analysable ({exc}).{indice} "
+                    "Rien n'a été écrit.")
+
+    # Une balise en tête d'un fichier de code est le même symptôme, sans
+    # analyseur pour le prouver. On le signale sans bloquer : un `.tsx` peut
+    # légitimement commencer par du JSX.
+    if suffixe in (".py", ".ts", ".js", ".css", ".yaml", ".yml", ".toml", ".env"):
+        if _BALISE_EN_TETE.match(content):
+            return (f"Contenu refusé : {p.name} commence par une balise XML, ce "
+                    "qu'un fichier de ce type ne fait pas. Ton backend a "
+                    "probablement sérialisé le contenu au lieu de le rendre tel "
+                    "quel. Rien n'a été écrit.")
+    return ""
+
+
 @tool("propose_file_change")
 def propose_file_change(path: str, content: str, description: str) -> Dict[str, Any]:
     """
@@ -524,6 +576,11 @@ def propose_file_change(path: str, content: str, description: str) -> Dict[str, 
         }
 
     p = Path(path)
+
+    refus = _contenu_invalide(p, content)
+    if refus:
+        return {"status": "error", "error": refus}
+
     original = ""
     if p.exists() and p.is_file():
         try:
