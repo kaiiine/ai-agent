@@ -8,7 +8,7 @@ aliases: [ng]
 
 ⚠️  SCAFFOLD — TOUJOURS VIA CLI, JAMAIS À LA MAIN :
 
-    shell_run("npx @angular/cli new <nom> --style=scss --routing --standalone --skip-git")
+    shell_run("pnpm dlx @angular/cli new <nom> --style=scss --routing --standalone --skip-git")
     Puis shell_cd("<nom>")
     ❌ JAMAIS créer angular.json / tsconfig / package.json à la main.
 
@@ -35,3 +35,8 @@ STYLE :
     • SCSS avec variables CSS custom properties dans styles.scss.
     • Angular Material si composants UI complexes : ng add @angular/material.
     • Tailwind : ng add @ngneat/tailwind ou config manuelle via postcss.
+
+⚠ GESTIONNAIRE DE PAQUETS — une seule famille par projet :
+  pnpm dlx <pkg> (jamais npx) · pnpm add (jamais npm install) · pnpm <script> (jamais npm run).
+  Projet EXISTANT avec package-lock.json et sans pnpm-lock.yaml → c'est npm :
+  utiliser npx / npm install / npm run. Vérifier avec shell_ls, ne jamais supposer.

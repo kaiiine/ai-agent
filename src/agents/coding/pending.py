@@ -12,6 +12,11 @@ _ANALYSIS_TOOLS: frozenset[str] = frozenset({
     "web_research_report", "web_search_news", "url_fetch", "dev_explain",
 })
 
+# Outils dont une acceptation vaut « ce chemin a été écrit sur le disque ».
+_WRITE_TOOLS: frozenset[str] = frozenset({
+    "propose_file_change", "edit_file", "notebook_insert_cell",
+})
+
 
 class RecentToolsStore:
     """Tracks tool outcomes since the last dev_plan_step_done for real proof validation."""
@@ -30,7 +35,7 @@ class RecentToolsStore:
             path = (args or {}).get("path", "")
 
             # File accepted (HITL or auto)
-            if tool_name in ("propose_file_change", "notebook_insert_cell") and status == "accepted" and path:
+            if tool_name in _WRITE_TOOLS and status == "accepted" and path:
                 self._written_paths.add(path)
 
             # Notebook cell accepted
@@ -125,6 +130,10 @@ class DevPlanStore:
 
     def create(self, steps: List[str]) -> None:
         self._steps = [PlanStep(label=s) for s in steps]
+
+    def replace(self, steps: List[str], done_count: int) -> None:
+        """Réécrit le plan en gardant cochées les `done_count` premières étapes."""
+        self._steps = [PlanStep(label=s, done=i < done_count) for i, s in enumerate(steps)]
 
     def check(self, index: int) -> bool:
         """Mark step at index as done. Returns False if already done or out of range."""

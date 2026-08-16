@@ -17,7 +17,10 @@ class Settings(BaseSettings):
     ollama_cloud_model: str = "gpt-oss:120b-cloud"
 
     # Coding specialist (delegated coding tasks)
-    coding_model: str = "qwen3-coder:480b-cloud"
+    # Même valeur que `configs/base.yaml`. Les deux avaient divergé : le défaut
+    # Python ne sert que si le YAML manque, donc l'écart ne se voyait jamais —
+    # jusqu'au jour où le YAML manque.
+    coding_model: str = "minimax-m3:cloud"
     coding_model_local: str = "qwen2.5-coder:7b"
     coding_num_ctx_local: int = 16_384   # KV cache local — ajuster selon VRAM GPU (.env: CODING_NUM_CTX_LOCAL=8192)
     ollama_api_key: str | None = None
@@ -107,7 +110,7 @@ def _merge_yaml_into_settings() -> Settings:
         cli_thread_id=yml.get("cli", {}).get("thread_id", "1"),
         groq_model=yml.get("groq", {}).get("model", "openai/gpt-oss-20b"),
         llm_backend=yml.get("llm_backend", "ollama_cloud"),
-        coding_model=yml.get("coding_model", "qwen3-coder:480b-cloud"),
+        coding_model=yml.get("coding_model", "minimax-m3:cloud"),
         gemini_model=yml.get("gemini", {}).get("model", "gemini-2.5-flash"),
         gemini_coding_model=yml.get("gemini", {}).get("coding_model", "gemini-2.5-flash"),
         mistral_model=yml.get("mistral", {}).get("model", "mistral-small-2603"),

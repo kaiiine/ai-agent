@@ -47,33 +47,44 @@ _FALLBACK_PHASES = [
 ]
 
 
+def _phases_depuis(raw: str) -> list[Phase]:
+    cleaned = re.sub(r"```(?:json)?\s*", "", raw).replace("```", "").strip()
+    m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if not m:
+        return []
+    data = json.loads(m.group())
+    return [Phase(index=i, title=p.get("title", f"Phase {i}"), scope=p.get("scope", ""))
+            for i, p in enumerate(data.get("phases", []), start=1)]
+
+
 def decompose(spec_text: str, backend: str) -> list[Phase]:
-    """Appelle le LLM pour décomposer spec_text en phases. Fallback sur 4 phases génériques."""
-    try:
-        from src.llm.models import make_llm_ollama_cloud, make_llm_gemini, make_llm_mistral
-        from langchain_core.messages import SystemMessage, HumanMessage
-        # groq exclu : service défaillant — utilise ollama_cloud en fallback
-        _factories = {
-            "ollama_cloud": make_llm_ollama_cloud,
-            "gemini": make_llm_gemini,
-            "mistral": make_llm_mistral,
-        }
-        llm = _factories.get(backend, make_llm_ollama_cloud)()
-        budget = _BACKEND_BUDGET.get(backend, _BACKEND_BUDGET["ollama_cloud"])
-        resp = llm.invoke([
-            SystemMessage(content=_DECOMPOSE_SYSTEM.format(budget=budget)),
-            HumanMessage(content=f"Spec du projet :\n\n{spec_text[:8000]}"),
-        ])
-        raw = resp.content if hasattr(resp, "content") else str(resp)
-        cleaned = re.sub(r"```(?:json)?\s*", "", raw).replace("```", "").strip()
-        m = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if not m:
-            return _FALLBACK_PHASES
-        data = json.loads(m.group())
-        phases = [
-            Phase(index=i, title=p.get("title", f"Phase {i}"), scope=p.get("scope", ""))
-            for i, p in enumerate(data.get("phases", []), start=1)
-        ]
-        return phases if phases else _FALLBACK_PHASES
-    except Exception:
-        return _FALLBACK_PHASES
+    """Décompose la spec en phases. Repli sur 4 phases génériques si tout échoue.
+
+    Passe par la rotation de clés : sans elle, un simple 429 sur CE seul appel
+    faisait retomber tout le `/build` sur les phases génériques — en silence, et
+    quelles que soient les autres clés configurées.
+    """
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from src.llm import rotation
+    from src.llm.models import make_coding_llm_with_key
+
+    budget = _BACKEND_BUDGET.get(backend, _BACKEND_BUDGET["ollama_cloud"])
+    messages = [SystemMessage(content=_DECOMPOSE_SYSTEM.format(budget=budget)),
+                HumanMessage(content=f"Spec du projet :\n\n{spec_text[:8000]}")]
+
+    for fournisseur, cle, llm in rotation.clients(backend, make_coding_llm_with_key):
+        try:
+            resp = llm.invoke(messages)
+        except Exception as exc:   # noqa: BLE001
+            if rotation.vaut_la_peine_de_reessayer(exc):
+                rotation.marquer_echec(fournisseur, cle, exc)
+                continue
+            break
+        try:
+            phases = _phases_depuis(resp.content if hasattr(resp, "content") else str(resp))
+        except Exception:   # noqa: BLE001 — JSON illisible : un autre modèle fera mieux
+            continue
+        if phases:
+            return phases
+    return _FALLBACK_PHASES

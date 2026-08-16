@@ -255,16 +255,12 @@ def _format_event(event: str, data: dict) -> str:
         return f"↺ {data.get('from')} → {data.get('to')}\n"
     if event == "specialist:compress":
         return "⟳ Compression contexte…\n"
-    if event == "specialist:rate_limit":
-        wait = data.get("wait", 0)
-        exhausted = data.get("all_exhausted", False)
-        return f"⏳ Rate limit {'(toutes clés épuisées) ' if exhausted else ''}— attente {wait}s…\n"
     if event == "dev_plan_create":
         steps = data.get("steps", [])
         return "📋 Plan :\n" + "".join(f"  ○ {s}\n" for s in steps)
     if event == "dev_plan_step_done":
         return f"  ✓ {data.get('label', '')}\n"
-    if event == "propose_file_change":
+    if event in ("propose_file_change", "edit_file"):
         return f"  ✎ {data.get('path', '')}\n"
     if event == "shell_run":
         return f"  $ {str(data.get('command', ''))[:80]}\n"

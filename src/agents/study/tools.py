@@ -66,29 +66,39 @@ def save_study_file(
 
         try:
             from src.infra.settings import settings
-            from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini, make_llm_mistral
+            from src.llm.models import make_orchestrator_llm_with_key
+            from src.llm.rotation import (
+                clients, marquer_echec, vaut_la_peine_de_reessayer,
+            )
             from langchain_core.messages import HumanMessage
-
-            _factories = {
-                "ollama": make_llm,
-                "groq": make_llm_groq,
-                "ollama_cloud": make_llm_ollama_cloud,
-                "gemini": make_llm_gemini,
-                "mistral": make_llm_mistral
-            }
-            llm = _factories.get(settings.llm_backend, make_llm_ollama_cloud)()
 
             from src.llm.prompts import _LANG_INSTRUCTIONS
             lang_instruction = _LANG_INSTRUCTIONS.get("fr", "")
             if file_type == "exo":
-                from src.ui.streaming import _EXO_PROMPT
-                prompt = _EXO_PROMPT.format(content=content_text, type_exo="Mélange de QCM (60%) et questions ouvertes (40%).", lang_instruction=lang_instruction)
+                from src.ui.templates import charger
+                prompt = charger("exo", content=content_text, lang=lang_instruction,
+                                 type_exo="Mélange de QCM (60%) et questions ouvertes (40%).")
             else:
-                from src.ui.streaming import _FICHE_PROMPT
-                prompt = _FICHE_PROMPT.format(content=content_text, lang_instruction=lang_instruction)
+                from src.ui.templates import charger
+                prompt = charger("fiche", content=content_text, lang=lang_instruction)
 
-            response = llm.invoke([HumanMessage(content=prompt)])
-            html = response.content if isinstance(response.content, str) else str(response.content)
+            # Une clé épuisée ne doit pas coûter la commande : on parcourt les
+            # clés du backend, puis celles des fournisseurs de repli.
+            html, derniere = "", None
+            for fournisseur, cle, llm in clients(settings.llm_backend,
+                                                 make_orchestrator_llm_with_key):
+                try:
+                    reponse = llm.invoke([HumanMessage(content=prompt)])
+                    html = (reponse.content if isinstance(reponse.content, str)
+                            else str(reponse.content))
+                    break
+                except Exception as exc:   # noqa: BLE001 — clé suivante
+                    derniere = exc
+                    marquer_echec(fournisseur, cle, exc)
+                    if not vaut_la_peine_de_reessayer(exc):
+                        break
+            if not html:
+                raise RuntimeError(derniere or "aucun fournisseur n'a répondu")
         except Exception as e:
             return {"status": "error", "error": f"Erreur génération : {e}"}
 

@@ -13,6 +13,11 @@ aliases: [next, next.js, app router]
     Puis shell_cd("<nom>") → customise par-dessus ce que le CLI a généré.
     ❌ JAMAIS créer package.json / tsconfig / next.config.ts / globals.css manuellement.
     ❌ JAMAIS pnpm install avant le scaffold — le CLI le fait.
+    ⚠ VERSION : `create next-app@latest` installe la DERNIÈRE (Next 16 + Tailwind 4 +
+      React 19 à ce jour). Si la spec impose une version, downgrader IMMÉDIATEMENT
+      après le scaffold, avant d'écrire le moindre composant :
+        shell_run("pnpm add next@14 react@18 react-dom@18 && pnpm add -D tailwindcss@3 postcss autoprefixer")
+      Écrire des composants d'abord puis downgrader casse la config déjà produite.
     Si dossier déjà existant et pollué (node_modules/dist/build sans spec) :
       → shell_run("rm -rf node_modules .next pnpm-lock.yaml") d'abord.
     Si dossier contient des fichiers utilisateur (spec.md, README, assets…) :
@@ -22,6 +27,16 @@ aliases: [next, next.js, app router]
            shell_run("cp -r .scaffold/. . && rm -rf .scaffold")
          → spec.md reste intacte, le projet est opérationnel dans le dossier courant.
 
+GESTIONNAIRE DE PAQUETS — UNE SEULE FAMILLE PAR PROJET :
+    Le scaffold utilise pnpm, donc TOUT le projet reste en pnpm. Mélanger les
+    familles crée un second lockfile et un arbre de dépendances divergent.
+      exécuter un binaire distant   pnpm dlx <pkg>     (jamais npx)
+      installer                     pnpm add <pkg>     (jamais npm install)
+      lancer un script              pnpm <script>      (jamais npm run)
+    Si le projet EXISTANT a un package-lock.json et pas de pnpm-lock.yaml,
+    c'est npm : utiliser alors npx / npm install / npm run. Vérifier avec
+    shell_ls avant la première commande, ne jamais le supposer.
+
 POST-SCAFFOLD (nouveau projet) — DANS CET ORDRE :
     1. shell_cd("<nom>")
     2. dev_explain("Scaffold terminé. Je vais maintenant installer les libs et configurer le design system.")
@@ -30,8 +45,8 @@ POST-SCAFFOLD (nouveau projet) — DANS CET ORDRE :
        shell_run("pnpm add framer-motion lenis")                                 ← CONDITIONNEL
        ❌ Si spec dit "no animations" / "pas de framer-motion" → ne pas installer
     5. shell_run("pnpm add @radix-ui/react-slot")                              ← TOUJOURS
-    6. shell_run("npx shadcn@latest init -d", timeout=180)                  ← TOUJOURS
-       shell_run("npx shadcn@latest add button card input textarea select badge dialog sheet separator", timeout=120)
+    6. shell_run("pnpm dlx shadcn@latest init -d", timeout=180)             ← TOUJOURS
+       shell_run("pnpm dlx shadcn@latest add button card input textarea select badge dialog sheet separator", timeout=120)
     ⚠ Exception : si spec dit "no UI library" / "Pas de shadcn/ui" / "custom components only" :
        → Sauter les étapes 5 et 6.
        ❌ JAMAIS importer depuis @/components/ui/ dans AUCUN fichier si shadcn n'est pas installé.
@@ -71,11 +86,11 @@ PROJET EXISTANT — VÉRIFIER ET COMPLÉTER LE SETUP :
     • framer-motion absent  → shell_run("pnpm add framer-motion")
     • lenis absent          → shell_run("pnpm add lenis")
     • lucide-react absent   → shell_run("pnpm add lucide-react clsx tailwind-merge")
-    • shadcn non initialisé → shell_run("npx shadcn@latest init -d", timeout=180)
+    • shadcn non initialisé → shell_run("pnpm dlx shadcn@latest init -d", timeout=180)
 
     Pour un projet avec des COMPOSANTS UI :
     • Ajouter les composants shadcn nécessaires :
-      shell_run("npx shadcn@latest add button input textarea select card badge", timeout=120)
+      shell_run("pnpm dlx shadcn@latest add button input textarea select card badge", timeout=120)
 
     ❌ Ne JAMAIS supposer que les libs sont installées — toujours lire package.json d'abord.
     ❌ Ne JAMAIS sauter cette étape même si le projet semble "déjà configuré".
@@ -283,7 +298,7 @@ COUNTER :
 ━━ SHADCN/UI — CONVENTIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Ajouter seulement les composants nécessaires :
-    npx shadcn@latest add button input textarea select card badge separator
+    pnpm dlx shadcn@latest add button input textarea select card badge separator
 
 Utilisation :
     <Button size="lg" variant="default">CTA principal</Button>

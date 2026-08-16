@@ -12,7 +12,8 @@ from rich.panel import Panel
 from rich.pretty import Pretty
 from rich.console import Console
 from prompt_toolkit import PromptSession
-from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.history import FileHistory, InMemoryHistory
 from prompt_toolkit.styles import Style
 from prompt_toolkit.key_binding import KeyBindings
 
@@ -24,6 +25,7 @@ from .render import update_live_markdown, finalize_live
 from .commands import debug_state
 from .attachments import AttachmentStore, open_file_picker, get_clipboard_image, build_message_with_attachments
 from .completer import SlashCompleter
+from .suggest import HistorySuggest
 
 console = Console()
 _attachments = AttachmentStore()
@@ -32,6 +34,19 @@ _BORDER = f"dim {ACCENT}"
 _DEBOUNCE = 0.03
 _REFRESH_RATE = 20
 _THINKING_WAIT = 0.4
+_ARRET_ANIMATION = 1.0
+
+#: Nom du nœud d'outils de l'orchestrateur (`build_orchestrator`).
+#:
+#: Sortir du générateur `graph.stream()` pour afficher le questionnaire ABANDONNE
+#: le run : le superstep `tools` est bien commité, mais le suivant n'est jamais
+#: planifié — `get_state().next` vaut `()`. Une reprise avec `None` ne fait alors
+#: RIEN, en silence. `update_state(..., as_node="tools")` réinscrit la mise à jour
+#: comme venant de ce nœud, ce qui replanifie `chatbot` et rend la reprise réelle.
+#:
+#: Un renommage du nœud casserait la reprise sans erreur ; le test
+#: `test_le_noeud_outils_de_l_ui_existe_dans_l_orchestrateur` l'attrape.
+_NOEUD_OUTILS = "tools"
 
 
 def _safe_stop(live, stop_event: threading.Event | None = None,
@@ -40,7 +55,7 @@ def _safe_stop(live, stop_event: threading.Event | None = None,
     if stop_event is not None:
         stop_event.set()
     if thread is not None:
-        thread.join(timeout=0.3)
+        thread.join(timeout=_ARRET_ANIMATION)
     try:
         live.update(Text(""))
     except Exception:
@@ -70,6 +85,11 @@ def _make_thinking_loop(stop_event: threading.Event, live: "Live",
                 pass
             i += 1
             stop_event.wait(_THINKING_WAIT)
+        # Effacer sa propre frame : sinon l'arrêt du Live la grave.
+        try:
+            live.update(Text(""))
+        except Exception:
+            pass
     return _loop
 
 _pt_style = Style.from_dict({
@@ -85,11 +105,42 @@ _pt_style = Style.from_dict({
     "completion-menu.meta.completion.current": "bg:#1e1e1e #606060",
     "scrollbar.background":                    "bg:#1a1a1a",
     "scrollbar.button":                        "bg:#404040",
+    # Suggestion de saisie — délibérément plus sombre que tout le reste : elle
+    # doit se lire comme une ombre, jamais se confondre avec ce qui est tapé.
+    "auto-suggestion":                         "#4a4a4a",
 })
+
+
+@Condition
+def _suggestion_affichee() -> bool:
+    """Une suggestion est-elle visible et acceptable à cet instant ?
+
+    Filtre de la liaison Tab. Quand il rend faux, prompt_toolkit retombe sur la
+    liaison par défaut — Tab redevient la complétion du menu. C'est ce qui permet
+    aux deux mécanismes de partager la touche sans se marcher dessus : le menu
+    garde `/commande` et `@fichier`, la suggestion prend le reste.
+    """
+    from prompt_toolkit.application import get_app
+
+    try:
+        buf = get_app().current_buffer
+    except Exception:
+        return False
+    return (buf.suggestion is not None
+            and bool(buf.suggestion.text)
+            and buf.complete_state is None
+            and buf.document.is_cursor_at_the_end)
 
 
 def _make_keybindings() -> KeyBindings:
     kb = KeyBindings()
+
+    @kb.add("tab", filter=_suggestion_affichee)
+    def _kb_accepter_suggestion(event):
+        """Tab écrit la suggestion — le seul geste qui l'insère jamais."""
+        buf = event.current_buffer
+        if buf.suggestion:
+            buf.insert_text(buf.suggestion.text)
 
     @kb.add("c-o")
     def _kb_attach(event):
@@ -154,14 +205,46 @@ def _prompt_tokens():
     return ANSI(sep + "\n" + indicator)
 
 
-_session: PromptSession = PromptSession(
-    history=InMemoryHistory(),
-    style=_pt_style,
-    mouse_support=False,
-    key_bindings=_make_keybindings(),
-    completer=SlashCompleter(),
-    complete_while_typing=True,
-)
+def _historique():
+    """Historique de saisie, persistant entre les sessions.
+
+    Une suggestion tirée d'un historique en mémoire ne servirait à rien : elle
+    n'existerait qu'après avoir déjà retapé la phrase dans la MÊME session. Le
+    fichier vit dans `~/.axon/`, avec la base de threads — il contient donc tout
+    ce qui a été saisi, en clair, et se supprime sans conséquence.
+
+    Un disque en lecture seule ou un `$HOME` absent retombe en mémoire : la
+    saisie doit démarrer même sans persistance.
+    """
+    try:
+        chemin = Path.home() / ".axon" / "input_history"
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        return FileHistory(str(chemin))
+    except Exception:
+        return InMemoryHistory()
+
+
+def build_session(**overrides) -> PromptSession:
+    """Fabrique la session de saisie — un seul endroit la configure.
+
+    Les `overrides` servent aux tests, qui rejouent des frappes sur une session
+    identique à celle du produit avec une entrée/sortie factice. Sans cette
+    fabrique, la liaison Tab ne serait vérifiable que manuellement.
+    """
+    options = dict(
+        history=_historique(),
+        style=_pt_style,
+        mouse_support=False,
+        key_bindings=_make_keybindings(),
+        completer=SlashCompleter(),
+        complete_while_typing=True,
+        auto_suggest=HistorySuggest(),
+    )
+    options.update(overrides)
+    return PromptSession(**options)
+
+
+_session: PromptSession = build_session()
 
 
 def _attachment_hint() -> str:
@@ -208,385 +291,7 @@ def _debug_prompt(state: dict, graph, cfg: SessionConfig):
         console.print(f"[dim]debug error: {e}[/dim]")
 
 
-_FICHE_PROMPT = """\
-INSTRUCTION PRIORITAIRE : Réponds UNIQUEMENT avec le code HTML complet. Aucun texte avant ou après, aucun bloc markdown, aucune explication.
-LANGUE : {lang_instruction} Aucun caractère non-latin parasite (pas de chinois, japonais, arabe ou autre).
 
-Tu es un expert pédagogique. Génère une fiche de révision complète et visuellement soignée à partir du ou des documents fournis.
-
-━━ ÉTAPE 0 — ANALYSE OBLIGATOIRE (mentale, ne pas écrire hors HTML) ━━
-
-Avant de générer le moindre HTML, parcours intégralement le document et extrait :
-1. Tous les chapitres et sous-chapitres, dans l'ordre
-2. Toutes les définitions, même celles données en passant
-3. Tous les modèles, méthodes, étapes, protocoles, frameworks
-4. Toutes les distinctions importantes (X ≠ Y, A vs B)
-5. Tous les exemples, cas pratiques, illustrations, schémas commentés
-6. Tous les pièges d'examen identifiables (confusions courantes, cas limites)
-7. Tout quiz, exercice ou question pratique présent dans le document
-8. Les notions qui reviennent plusieurs fois ou que l'auteur souligne = prioritaires
-
-Cette analyse détermine le contenu de la fiche. Ne l'écris pas comme texte libre — intègre-la directement dans les sections HTML.
-
-━━ OBJECTIF ━━
-
-La meilleure fiche possible pour réviser un partiel : complète, dense, orientée examen.
-Couvrir toutes les notions explicitement présentes ou fortement structurantes du document, en priorisant les notions examinables.
-Page unique, défilement vertical. Les éléments interactifs (accordéons, flip cards) sont bienvenus quand ils aident à mémoriser, mais jamais obligatoires.
-
-━━ STRUCTURE DU CONTENU ━━
-
-1. HEADER STICKY : titre de la matière + badge + bouton Imprimer (window.print())
-
-2. CHIFFRES CLÉS & FAITS ESSENTIELS (si applicable) :
-   - Grid de cards avec les chiffres, dates, statistiques incontournables
-   - Ce que l'examinateur attend qu'on sache par cœur
-
-3. CONCEPTS & DÉFINITIONS :
-   - Toutes les définitions importantes, précises, dans des cards (border-left teal)
-   - Acronymes développés et expliqués
-   - Mémotechniques pour les listes longues
-
-4. FORMULES, RÈGLES, THÉORÈMES :
-   - Cards border-left violet, formule en monospace bien lisible
-   - Conditions d'application, cas particuliers
-
-5. CHAPITRES (dans l'ordre du document, tous couverts) :
-   - Chaque chapitre = section h2 avec tout son contenu
-   - Tableaux comparatifs pour les éléments similaires (ex: types A/B/C)
-   - Listes structurées et denses — pas de paraphrase vague
-   - Accordéons JS optionnels pour les sous-sections très longues
-   GUIDE PAR CHAPITRE — si le contenu s'y prête, inclure :
-     • un exemple concret ou cas pratique (seulement s'il existe dans le document)
-     • un piège ou distinction (seulement s'il y en a un réel)
-     Ne pas inventer d'éléments absents du document — mieux vaut un chapitre court et juste qu'un chapitre long et fabriqué.
-   RÈGLE SLIDES — si le document contient des quiz, exemples ou cas pratiques :
-     les reprendre explicitement, jamais les ignorer.
-
-6. DISTINCTIONS SUBTILES & PIÈGES :
-   - Cards border-left rouge pour les confusions fréquentes
-   - "X ≠ Y" clairement formulé
-   - Erreurs classiques d'examen
-
-7. CE QUI PEUT TOMBER AU PARTIEL (section obligatoire) :
-   - Types d'exercices probables déduits du document (QCM définitions, schéma à compléter, cas pratique, étude de cas…)
-   - Notions à connaître par cœur (liste priorisée)
-   - Pièges classiques sur ce cours
-   - 3 à 5 mini-exemples de questions possibles avec réponse courte
-
-8. CHECKLIST ANTI-OUBLI (section obligatoire, en fin de fiche) :
-   Tableau ou liste cochée confirmant que les grands blocs du cours sont couverts.
-   Déduis les blocs directement des chapitres identifiés à l'étape 0.
-   Blocs universels à toujours inclure : Définitions · Modèles/Méthodes · Exemples concrets · Distinctions/Pièges · Tableaux comparatifs · Cas pratiques
-   Ajoute les blocs spécifiques au document (noms des chapitres principaux).
-
-9. SYNTHÈSE & RÉCAP FINAL :
-   - Tableau récapitulatif des concepts essentiels (tout en une vue)
-   - Acronymes et points à retenir absolument
-
-━━ DESIGN — AXON SLATE GLASS ━━
-
-CSS entièrement embarqué dans le <style>. Aucune dépendance externe.
-JS vanilla embarqué. Mode LIGHT par défaut, toggle dark/light dans le header.
-
-━━ SYSTÈME DE THÈME DARK/LIGHT ━━
-
-Implémente un système de thème complet avec CSS custom properties redéfinies par classe.
-HTML : <html> sans classe par défaut = LIGHT MODE (parchemin chaud).
-La classe .dark sur <html> active le dark mode.
-Toggle JS : document.documentElement.classList.toggle('dark')
-Persister dans localStorage : localStorage.setItem('theme', isDark ? 'dark' : 'light')
-Au chargement : lire localStorage et appliquer la classe avant tout rendu (dans <head> avec script inline).
-
-Variables :root (LIGHT par défaut — parchemin chaud) :
-  --bg-base:      #f0e6d0
-  --bg-grad:      linear-gradient(150deg, #f5edd8 0%, #ede0c4 40%, #f2e8d0 70%, #e8d8b8 100%)
-  --bg-vignette:  radial-gradient(ellipse at 50% 100%, rgba(120,70,20,0.12) 0%, transparent 60%)
-  --surface:      rgba(255,255,255,0.45)
-  --surface-border: rgba(160,110,40,0.22)
-  --header-bg:    #f0e6d0
-  --accent:       #b45309
-  --accent-dim:   rgba(180,83,9,0.12)
-  --accent-glow:  rgba(180,83,9,0.20)
-  --text:         #292010
-  --text-strong:  #1a1208
-  --muted:        #7a6040
-  --concept:      #0f766e
-  --concept-bg:   rgba(15,118,110,0.10)
-  --formula:      #6d28d9
-  --formula-bg:   rgba(109,40,217,0.10)
-  --example:      #1d4ed8
-  --example-bg:   rgba(29,78,216,0.10)
-  --danger:       #991b1b
-  --danger-bg:    rgba(153,27,27,0.10)
-  --success:      #166534
-  --success-bg:   rgba(22,101,52,0.10)
-  --scrollbar-track: rgba(160,110,40,0.15)
-  --scrollbar-thumb: rgba(180,83,9,0.40)
-
-Variables html.dark (dark mode — slate sombre) :
-  --bg-base:      #0d1117
-  --bg-grad:      linear-gradient(150deg, #0d1117 0%, #111520 40%, #0f1319 70%, #090d13 100%)
-  --bg-vignette:  radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.08) 0%, transparent 65%)
-  --surface:      rgba(255,255,255,0.05)
-  --surface-border: rgba(255,255,255,0.10)
-  --header-bg:    #0d1117
-  --accent:       #f59e0b
-  --accent-dim:   rgba(245,158,11,0.15)
-  --accent-glow:  rgba(245,158,11,0.30)
-  --text:         #e2d9c8
-  --text-strong:  #f0e8d8
-  --muted:        #7a7060
-  --concept:      #5eead4
-  --concept-bg:   rgba(94,234,212,0.10)
-  --formula:      #c4b5fd
-  --formula-bg:   rgba(196,181,253,0.10)
-  --example:      #93c5fd
-  --example-bg:   rgba(147,197,253,0.10)
-  --danger:       #fca5a5
-  --danger-bg:    rgba(252,165,165,0.10)
-  --success:      #86efac
-  --success-bg:   rgba(134,239,172,0.10)
-  --scrollbar-track: rgba(0,0,0,0.2)
-  --scrollbar-thumb: rgba(245,158,11,0.35)
-
-Règles globales :
-  html, body {{ overflow-x: hidden; }}
-  * {{ box-sizing: border-box; }}
-  html {{ background: var(--bg-base); scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }}
-  body {{ background: var(--bg-grad); min-height: 100vh; color: var(--text); font-family: system-ui, "Segoe UI", sans-serif; font-size: 15px; line-height: 1.75; position: relative; }}
-  body::before {{ content:""; position:fixed; inset:0; background:var(--bg-vignette); pointer-events:none; z-index:0; }}
-  .container {{ max-width: 960px; margin: 0 auto; padding: 0 1.5rem 5rem; position: relative; z-index: 1; }}
-
-  ANTI SCROLL HORIZONTAL — règles obligatoires :
-  - Ne JAMAIS mettre min-width sur les tables
-  - Entourer chaque table d'un div.table-wrapper {{ overflow-x: auto; width: 100%; border-radius: 10px; }}
-  - Grids : grid-template-columns: repeat(auto-fit, minmax(160px, 1fr))
-  - Tout élément enfant : max-width: 100%
-
-Floating header — FIXE, détaché du bord, toujours visible :
-  Structure HTML OBLIGATOIRE : <header><div class="header-inner">...</div></header>
-  Le header est un élément DIRECT de <body>, AVANT .container.
-
-  CSS header :
-    position: fixed
-    top: 12px
-    left: 50%
-    transform: translateX(-50%)
-    width: calc(100% - 48px)
-    max-width: 920px
-    z-index: 100
-    pointer-events: none  (laisse passer les clics sur les bords extérieurs)
-
-  CSS .header-inner :
-    pointer-events: auto
-    background: var(--header-bg)
-    backdrop-filter: blur(24px)
-    -webkit-backdrop-filter: blur(24px)
-    border: 1px solid var(--surface-border)
-    border-radius: 16px
-    padding: 0.65rem 1.2rem
-    display: flex
-    justify-content: space-between
-    align-items: center
-    gap: 1rem
-    box-shadow: 0 4px 24px rgba(0,0,0,0.22)
-
-  body : padding-top: 72px  (compense la hauteur du header fixe)
-
-  Titre h1 : font-size 1rem, font-weight 700, color var(--text-strong), margin 0
-  Badge matière : background var(--accent), color white, border-radius 5px, padding 0.2em 0.7em, font-size 0.75rem, font-weight 700
-  Zone boutons (flex, gap 0.5rem) :
-    Bouton toggle thème : texte "☀ Clair" en dark / "◑ Sombre" en light
-    Bouton imprimer : "⎙ Imprimer"
-    Style commun : background var(--accent-dim), border 1.5px solid var(--accent), border-radius 8px,
-      padding 0.3rem 0.8rem, font-size 0.8rem, font-weight 600, color var(--accent), cursor pointer
-      hover : background var(--accent), color white (ou #1a0e00 en dark)
-
-Sections h2 :
-  color: var(--accent), font-size 0.78rem, font-weight 700, letter-spacing 0.14em, text-transform uppercase
-  border-bottom: 2px solid var(--accent), padding-bottom 0.3rem, margin-top 2.5rem, margin-bottom 1.2rem
-
-Cards (glassmorphism — marche en dark ET en light grâce aux variables) :
-  background: var(--surface)
-  backdrop-filter: blur(16px), -webkit-backdrop-filter: blur(16px)
-  border: 1px solid var(--surface-border)
-  border-radius: 12px, padding: 1.2rem 1.3rem, margin-bottom: 1rem
-  box-shadow: 0 2px 16px rgba(0,0,0,0.12)
-  position: relative, overflow: hidden
-
-Cards sémantiques (border-left + fond via variable) :
-  .card-concept : border-left 3px solid var(--concept), background var(--concept-bg), backdrop-filter blur(16px)
-  .card-formula : border-left 3px solid var(--formula), background var(--formula-bg), backdrop-filter blur(16px)
-  .card-example : border-left 3px solid var(--example), background var(--example-bg), backdrop-filter blur(16px)
-  .card-danger  : border-left 3px solid var(--danger),  background var(--danger-bg),  backdrop-filter blur(16px)
-  .card-mnemo   : border-left 3px solid var(--success), background var(--success-bg), backdrop-filter blur(16px)
-
-Labels pill (haut à droite, position absolute) :
-  font-size 0.65rem, font-weight 700, text-transform uppercase, border-radius 4px, padding 0.12em 0.5em
-  Concept : color var(--concept), background var(--concept-bg), border 1px solid var(--concept)
-  Formule : color var(--formula), background var(--formula-bg), border 1px solid var(--formula)
-  Exemple : color var(--example), background var(--example-bg), border 1px solid var(--example)
-  Piège   : color var(--danger),  background var(--danger-bg),  border 1px solid var(--danger)
-
-Chiffres clés :
-  grid repeat(auto-fit, minmax(160px, 1fr)), gap 1rem, margin-bottom 1.5rem
-  Chaque card : background var(--surface), backdrop-filter blur(16px), border 1px solid var(--surface-border)
-    border-radius 12px, padding 1.2rem 1rem, text-align center
-  Chiffre : font-size 2.2rem, font-weight 800, color var(--accent)
-  Label : font-size 0.78rem, color var(--muted), margin-top 0.25rem
-
-Code inline : background var(--formula-bg), color var(--formula), border 1px solid var(--formula), border-radius 4px, padding 0.1em 0.4em, font-family monospace
-Code bloc : background rgba(0,0,0,0.25), backdrop-filter blur(8px), border 1px solid var(--surface-border), border-radius 10px, padding 1rem, font-family monospace, overflow-x auto
-
-Tableaux (dans div.table-wrapper overflow-x auto) :
-  table : border-collapse collapse, width 100%
-  th : background var(--accent-dim), color var(--accent), font-weight 700, padding 0.7rem 1rem, border-bottom 2px solid var(--accent), text-align left
-  td : padding 0.6rem 1rem, border-bottom 1px solid var(--surface-border), color var(--text)
-  tr:nth-child(even) : background var(--surface)
-
-Mémotechniques : background var(--success-bg), border-left 3px solid var(--success), border-radius 10px, padding 0.9rem 1.1rem
-  .mnemo-label : color var(--success), font-size 0.72rem, font-weight 700, display block, margin-bottom 0.3rem
-
-@media print :
-  header, .header-inner {{ display: none }}
-  body background white !important, color #1c1917 !important
-  .card {{ background #f9f6f0 !important; border 1px solid #d0c8b8 !important; backdrop-filter none !important; }}
-  h2 {{ color #8b5e3c !important; border-color #8b5e3c !important; }}
-
-━━ JS THÈME ━━
-
-Script dans <head> (avant tout rendu, évite le flash) :
-  const saved = localStorage.getItem('axon-theme');
-  if (saved === 'dark') document.documentElement.classList.add('dark');
-  // pas de classe = light (défaut)
-
-Bouton toggle dans le header — texte initial "◑ Sombre" (car on est en light par défaut) :
-  onclick :
-    const isDark = document.documentElement.classList.toggle('dark');
-    localStorage.setItem('axon-theme', isDark ? 'dark' : 'light');
-    this.textContent = isDark ? '☀ Clair' : '◑ Sombre';
-
-━━ CONTENU ━━
-
-Fusionne intelligemment si plusieurs documents.
-Inclure des mémotechniques quand les listes sont longues (acronymes, phrases).
-Les tableaux comparatifs sont préférables aux listes pour les éléments similaires.
-
-CONTRÔLE QUALITÉ (vérification mentale avant de produire le HTML — ne pas écrire hors du HTML) :
-Avant de clore le </body>, valide mentalement :
-  ✓ Ai-je couvert chaque chapitre identifié à l'étape 0 ?
-  ✓ Ai-je inclus toutes les définitions, même celles données brièvement ?
-  ✓ Ai-je inclus les notions qui revenaient plusieurs fois dans le document ?
-  ✓ Ai-je inclus les pièges et distinctions ?
-  ✓ Ai-je inclus des exemples concrets pour chaque concept majeur ?
-  ✓ La section "CE QUI PEUT TOMBER AU PARTIEL" est-elle présente et utile ?
-  ✓ La CHECKLIST ANTI-OUBLI confirme-t-elle la couverture complète ?
-Si une case n'est pas cochée → ajouter le contenu manquant avant de fermer le HTML.
-
-━━ DOCUMENTS À ANALYSER ━━
-{content}
-"""
-
-_EXO_PROMPT = """\
-INSTRUCTION PRIORITAIRE : Réponds UNIQUEMENT avec le code HTML complet. Aucun texte avant ou après, aucun bloc markdown.
-LANGUE : {lang_instruction} Aucun caractère non-latin parasite (pas de chinois, japonais, arabe ou autre).
-
-Tu es un expert pédagogique. Génère un fichier d'exercices interactifs complet à partir du ou des documents fournis.
-
-━━ ÉTAPE 0 — ANALYSE DU DOCUMENT (mentale, ne pas écrire hors HTML) ━━
-
-Avant de générer les exercices, analyse le document et identifie :
-1. Les chapitres et notions clés à tester
-2. Les quiz, questions ou exercices déjà présents dans les slides → reprends-les en priorité
-3. Le type de contenu pour adapter les exercices au document :
-   - Si le document contient des processus/étapes → exercices de mise en ordre
-   - Si le document contient des définitions/concepts → associations terme↔définition, QCM
-   - Si le document contient des cas pratiques/scénarios → mini-cas à analyser
-   - Si le document contient des formules/règles → application numérique ou vrai/faux
-4. Les distinctions subtiles et pièges → en faire des vrai/faux ou QCM avec distracteurs proches
-
-━━ TYPE D'EXERCICES ━━
-{type_exo}
-
-Complète automatiquement avec les types adaptés au document détectés à l'étape 0.
-Mélange obligatoire selon la richesse du document :
-  • QCM (4 choix, distracteurs plausibles et proches — pas évidents)
-  • Vrai/Faux (cibler les confusions et pièges identifiés)
-  • Association terme ↔ définition (glisser-déposer ou sélection)
-  • Mise en ordre d'étapes (Kill Chain, PDCA, algorithme…) si pertinent
-  • Mini-cas pratique : scénario court → identifier l'attaque, la clause, la faille, le pattern
-
-━━ STRUCTURE ━━
-
-1. En-tête : titre du cours, nombre de questions, score en temps réel
-2. Barre de progression (trait fin accent orange)
-3. Questions (une par écran) :
-   - QCM : 4 choix, clic → feedback immédiat + explication complète de la bonne réponse
-   - Vrai/Faux : 2 boutons avec feedback + explication systématique
-   - Question ouverte : textarea + bouton "Voir la réponse" qui révèle la réponse modèle
-   - Mini-cas : énoncé court + champ de réponse + corrigé détaillé
-4. Navigation : Précédent / Suivant, compteur "X / Y"
-5. Score final : pourcentage, liste des questions ratées avec corrections complètes, bouton Rejouer
-
-━━ JAVASCRIPT ━━
-
-Vanilla JS embarqué. Logique :
-- État de session (réponses, score)
-- Feedback visuel immédiat, réponse verrouillée après validation
-- Résumé final complet
-- Bouton Rejouer
-
-━━ DESIGN — AXON DARK ━━
-
-CSS entièrement embarqué. Aucune dépendance externe.
-
-Palette stricte :
-  --bg:         #0f0f13
-  --surface:    #16161d
-  --border:     rgba(255, 175, 0, 0.15)
-  --accent:     #ffaf00
-  --accent-dim: rgba(255, 175, 0, 0.08)
-  --text:       #e2e8f0
-  --muted:      #888
-  --correct:    #22c55e
-  --wrong:      #ef4444
-  --reveal:     #3b82f6
-
-Règles :
-- body : background --bg, color --text, font-family "JetBrains Mono", "Fira Code", monospace, font-size 15px
-- max-width 720px centré, padding 2rem
-- En-tête : titre color --accent, compteur color --muted
-- Barre de progression : height 2px, background --border, fill --accent, transition smooth
-- Card question : background --surface, border 1px solid --border, border-radius 6px, padding 1.5rem
-- Choix QCM : boutons full-width, background transparent, border 1px solid --border, color --text, hover → border-color --accent background --accent-dim
-- Correct → border --correct, background rgba(34,197,94,0.08), color --correct
-- Incorrect → border --wrong, background rgba(239,68,68,0.08), color --wrong
-- Révélation → border --reveal, background rgba(59,130,246,0.08)
-- Explication : font-size 0.85rem, color --muted, margin-top 0.75rem, border-left 2px solid --accent, padding-left 0.75rem
-- Boutons nav : background --accent-dim, border 1px solid --border, color --accent, border-radius 4px, hover → background --accent color #0f0f13
-- Textarea : background #0a0a10, border 1px solid --border, color --text, border-radius 4px
-- Transitions : 150ms ease sur couleurs et opacité
-- Scrollbar thin, track --bg, thumb --accent
-
-━━ CONTENU ━━
-
-Génère entre 12 et 25 questions selon la richesse du document.
-Couvre tous les chapitres identifiés à l'étape 0 — aucun chapitre sans au moins une question.
-Reprends en priorité les quiz et exercices déjà présents dans les slides.
-Distracteurs QCM : plausibles, proches de la bonne réponse, ciblant les confusions réelles.
-Questions ouvertes : cibler les définitions, les étapes de processus, les distinctions.
-
-CONTRÔLE QUALITÉ (vérification mentale avant de clore le HTML) :
-  ✓ Ai-je couvert tous les chapitres du document ?
-  ✓ Ai-je repris les exercices/quiz présents dans les slides ?
-  ✓ Ai-je inclus les pièges et distinctions comme vrai/faux ou QCM ?
-  ✓ Les distracteurs sont-ils vraiment piégeux (pas évidents) ?
-  ✓ Y a-t-il au moins un mini-cas pratique si le domaine s'y prête ?
-
-━━ DOCUMENTS À ANALYSER ━━
-{content}
-"""
 
 
 def _build_pdf_content(attachments) -> str:
@@ -650,7 +355,9 @@ def _handle_fiche(graph, state: dict, cfg: "SessionConfig") -> None:
     from src.orchestrator.graph import get_lang_pref
     from src.llm.prompts import _LANG_INSTRUCTIONS
     lang_instruction = _LANG_INSTRUCTIONS.get(get_lang_pref(), _LANG_INSTRUCTIONS["fr"])
-    prompt = _FICHE_PROMPT.format(content=content[:60_000], lang_instruction=lang_instruction)
+    from src.ui.templates import charger as _charger_template
+    prompt = _charger_template("fiche", content=content[:60_000],
+                               lang=lang_instruction)
     result = _run_letter_stream(graph, prompt, [], cfg)
     if result:
         try:
@@ -698,7 +405,9 @@ def _handle_exo(graph, state: dict, cfg: "SessionConfig") -> None:
     from src.orchestrator.graph import get_lang_pref
     from src.llm.prompts import _LANG_INSTRUCTIONS
     lang_instruction = _LANG_INSTRUCTIONS.get(get_lang_pref(), _LANG_INSTRUCTIONS["fr"])
-    prompt = _EXO_PROMPT.format(content=content[:60_000], type_exo=type_exo, lang_instruction=lang_instruction)
+    from src.ui.templates import charger as _charger_template
+    prompt = _charger_template("exo", content=content[:60_000],
+                               lang=lang_instruction, type_exo=type_exo)
     result = _run_letter_stream(graph, prompt, [], cfg)
     if result:
         try:
@@ -903,16 +612,17 @@ def _collect_multiline(prompt_text: str, icon: str = "📋") -> str | None:
 
 def _run_letter_stream(graph, prompt_text: str, attachments, cfg: SessionConfig) -> str:
     """Lance le stream pour une lettre, retourne le texte généré.
-    Appelle le LLM directement (pas via le graph) pour éviter le overhead
-    du system prompt + tools descriptions qui ferait exploser le contexte.
+
+    Appelle le LLM directement (pas via le graph) pour éviter le overhead du
+    system prompt + tools descriptions qui ferait exploser le contexte. La
+    contrepartie est que ce chemin n'hérite d'aucune reprise : d'où la rotation
+    de clés explicite ci-dessous.
     """
     from langchain_core.messages import HumanMessage
-    from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq
     from src.infra.settings import settings
-    _factories = {"ollama": make_llm, "groq": make_llm_groq, "ollama_cloud": make_llm_ollama_cloud}
-    factory = _factories.get(settings.llm_backend, make_llm_ollama_cloud)
+    from src.llm.models import make_orchestrator_llm_with_key
+    from src.llm.rotation import clients, marquer_echec, vaut_la_peine_de_reessayer
 
-    # Construire le message avec pièces jointes
     if attachments:
         from .attachments import build_message_with_attachments
         msg_dict = build_message_with_attachments(prompt_text, attachments)
@@ -920,37 +630,52 @@ def _run_letter_stream(graph, prompt_text: str, attachments, cfg: SessionConfig)
     else:
         human_msg = HumanMessage(content=prompt_text)
 
-    llm = factory()
-    stop_thinking = threading.Event()
-
-    response_content = ""
-    try:
-        with Live(live_panel_initial(), console=console, refresh_per_second=_REFRESH_RATE, vertical_overflow="crop") as live:
+    def _un_essai(llm) -> str:
+        """Un stream complet avec son panneau. Lève si le fournisseur refuse."""
+        stop_thinking = threading.Event()
+        texte = ""
+        with Live(live_panel_initial(), console=console,
+                  refresh_per_second=_REFRESH_RATE, vertical_overflow="crop") as live:
             saw_any_token = False
             deb = {"DEBOUNCE": _DEBOUNCE, "last_update": 0.0}
             t0 = perf_counter()
-
-            t = threading.Thread(target=_make_thinking_loop(stop_thinking, live), daemon=True)
-            t.start()
-
-            for chunk in llm.stream([human_msg]):
-                chunk_text = chunk.content or "" if hasattr(chunk, "content") else str(chunk)
-                if not chunk_text:
-                    continue
+            fil = threading.Thread(target=_make_thinking_loop(stop_thinking, live),
+                                   daemon=True)
+            fil.start()
+            try:
+                for chunk in llm.stream([human_msg]):
+                    chunk_text = chunk.content or "" if hasattr(chunk, "content") else str(chunk)
+                    if not chunk_text:
+                        continue
+                    stop_thinking.set()
+                    saw_any_token = True
+                    texte += chunk_text
+                    update_live_markdown(live, texte, deb, cursor=True)
+            finally:
                 stop_thinking.set()
-                saw_any_token = True
-                response_content += chunk_text
-                update_live_markdown(live, response_content, deb, cursor=True)
-
-            stop_thinking.set()
-            footer = fmt_ms(perf_counter() - t0)
             if saw_any_token:
-                finalize_live(live, response_content, footer, console=console)
-    except Exception as e:
-        console.print(command_panel(f"erreur : {e}", error=True))
+                finalize_live(live, texte, fmt_ms(perf_counter() - t0), console=console)
+        return texte
 
-    return response_content
+    def _annonce(fournisseur: str, cle: str) -> None:
+        console.print(Text(f"  🔑 {fournisseur} — clé suivante ({cle[:10]}…)",
+                           style=f"dim {ACCENT}"))
 
+    derniere: Exception | None = None
+    for fournisseur, cle, llm in clients(settings.llm_backend,
+                                         make_orchestrator_llm_with_key,
+                                         notifier=_annonce):
+        try:
+            return _un_essai(llm)
+        except Exception as exc:   # noqa: BLE001 — on essaie la clé suivante
+            derniere = exc
+            marquer_echec(fournisseur, cle, exc)
+            if not vaut_la_peine_de_reessayer(exc):
+                break
+
+    if derniere is not None:
+        console.print(command_panel(f"erreur : {derniere}", error=True))
+    return ""
 
 def _export_letter(response_content: str) -> None:
     """Génère DOCX + PDF depuis le texte de la lettre."""
@@ -1295,6 +1020,40 @@ def _prune_after_compression(graph, config: dict) -> None:
         pass
 
 
+def _dernier_texte_du_modele(messages: list) -> str:
+    """Le dernier texte RÉDIGÉ par le modèle, en remontant la conversation.
+
+    Prendre `messages[-1]` aveuglément affichait le dernier message quel qu'il
+    soit. Après un questionnaire, ce message est le résultat d'outil qui porte les
+    réponses : l'utilisateur voyait `{"answers": {"Bankroll ?": "20"}}` à la place
+    d'une réponse. Un résultat d'outil n'est jamais une réponse — il en est la
+    matière première.
+
+    La remontée S'ARRÊTE au message de l'utilisateur : au-delà commence le tour
+    précédent, et en ressortir une vieille réponse serait pire que n'en afficher
+    aucune — elle passerait pour la réponse d'aujourd'hui.
+    """
+    for m in reversed(messages or []):
+        if isinstance(m, dict):
+            role = m.get("type") or m.get("role") or ""
+            contenu = m.get("content", "")
+        else:
+            role = getattr(m, "type", "") or ""
+            contenu = getattr(m, "content", "")
+        # `type` pour les objets LangChain, `role` pour les messages en dict :
+        # les deux vocabulaires coexistent dans l'état.
+        if role in ("human", "user"):
+            break
+        if role in ("tool", "system"):
+            continue
+        if isinstance(contenu, list):   # gemini : liste de blocs
+            contenu = "".join(p.get("text", "") if isinstance(p, dict) else str(p)
+                              for p in contenu)
+        if isinstance(contenu, str) and contenu.strip():
+            return contenu
+    return ""
+
+
 def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     try:
         user_message = _session.prompt(_prompt_tokens).strip()
@@ -1562,7 +1321,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         # Stop thinking animation before any output
         stop_thinking.set()
         if _thinking_thread:
-            _thinking_thread[0].join(timeout=0.2)
+            _thinking_thread[0].join(timeout=_ARRET_ANIMATION)
         try:
             live.update(Text(""))
         except Exception:
@@ -1582,13 +1341,10 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         # ── Specialist start → show model + stacks ────────────────────────────
         if tool_name == "specialist:start":
             model = (args or {}).get("model", "?")
-            stacks = (args or {}).get("stacks", [])
             t = Text()
             t.append("  ⚙ ", style=f"bold {ACCENT}")
             t.append("Agent code : ", style="dim white")
             t.append(model, style=f"bold {ACCENT}")
-            if stacks:
-                t.append(f"  [{' · '.join(stacks)}]", style="dim")
             console.print(t)
             _resume_thinking()
             return None
@@ -1611,12 +1367,26 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             _resume_thinking()
             return None
 
-        # ── Rate limit → inform user ──────────────────────────────────────────
-        if tool_name == "specialist:rate_limit":
-            wait = (args or {}).get("wait", 30)
+        # ── Rotation de clé / bascule de fournisseur ─────────────────────────
+        # Émis par le specialist et affichés nulle part jusqu'ici.
+        if tool_name == "specialist:key_rotate":
             t = Text()
-            t.append("  ⏳ ", style=f"bold {ACCENT}")
-            t.append(f"Rate limit — nouvelle tentative dans {wait}s", style="dim white")
+            t.append("  🔑 ", style=f"bold {ACCENT}")
+            raison = (args or {}).get("raison", "quota atteint")
+            t.append(f"{(args or {}).get('provider', '?')} — {raison}, "
+                     f"clé suivante ({(args or {}).get('key', '')})", style="dim white")
+            console.print(t)
+            _resume_thinking()
+            return None
+
+        if tool_name == "specialist:backend_switch":
+            depuis = (args or {}).get("from", "?")
+            vers = (args or {}).get("to", "?")
+            t = Text()
+            t.append("  ⇄  ", style="bold yellow")
+            t.append(f"{depuis} épuisé — bascule sur ", style="dim white")
+            t.append(vers, style=f"bold {ACCENT}")
+            t.append("  (le backend courant devient celui-ci)", style="dim")
             console.print(t)
             _resume_thinking()
             return None
@@ -1687,7 +1457,15 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             console.print(t)
 
         # ── Plan ──────────────────────────────────────────────────────────────
-        elif tool_name == "dev_plan_step_done":
+        elif tool_name in ("dev_plan_step_done", "dev_plan_update"):
+            if tool_name == "dev_plan_update":
+                raison = (args or {}).get("reason", "")
+                t = Text()
+                t.append("  ↻  ", style=f"bold {ACCENT}")
+                t.append("plan révisé", style="dim white")
+                if raison:
+                    t.append(f" — {raison[:90]}", style="dim")
+                console.print(t)
             from src.agents.coding.pending import render_plan
             render_plan(console)
 
@@ -1704,8 +1482,53 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                     padding=(0, 2),
                 ))
 
+        # ── Question à l'utilisateur, SANS quitter le run ─────────────────────
+        # Même canal que la revue de fichier : on bloque, on interroge, on rend
+        # les réponses à la boucle. Une question en texte libre terminait le run.
+        elif tool_name == "ask_clarification":
+            # Le terminal se bloque ici : c'est ici que le format doit être prouvé.
+            from src.agents.coding.tools import normaliser_questions
+            try:
+                _questions = normaliser_questions((args or {}).get("questions"))
+            except ValueError as _err:
+                return {"status": "error", "reason": str(_err)}
+            # Libérer le terminal : le Live de Rich capterait le clavier.
+            try:
+                live.update(Text(""))
+                live.stop()
+            except Exception:
+                pass
+            from .review import ask_user_questions
+            try:
+                _answers = ask_user_questions(_questions)
+            except (KeyboardInterrupt, EOFError):
+                _answers = {}
+            except Exception as _qe:
+                console.print(Text(f"  erreur questionnaire : {_qe}", style="red"))
+                _answers = {}
+            try:
+                live.start(refresh=False)
+            except Exception:
+                pass
+            _resume_thinking()
+            if not _answers:
+                return {"status": "no_answer",
+                        "message": ("L'utilisateur n'a pas répondu. Choisis l'option la plus "
+                                    "raisonnable, signale-la dans dev_explain, et CONTINUE "
+                                    "le plan — ne repose pas la question.")}
+            return {
+                "status": "answered",
+                "answers": _answers,
+                "message": ("Réponses obtenues. Applique-les MAINTENANT et poursuis le plan "
+                            "en cours — ne repose pas ces questions, ne recommence rien."),
+            }
+
         # ── File change (HITL) ────────────────────────────────────────────────
-        elif tool_name == "propose_file_change":
+        elif tool_name in ("propose_file_change", "edit_file"):
+            # Sans proposition déposée, la revue trouverait la pile vide et
+            # fabriquerait un refus que l'utilisateur n'a jamais donné.
+            if isinstance(result, dict) and result.get("status") == "error":
+                return None
             _file_path = args.get("path", "") if args else ""
             _is_internal = ".axon/" in _file_path or _file_path.endswith("AXON.md")
 
@@ -1775,6 +1598,16 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                         "path": args.get("path", ""),
                         "message": "L'utilisateur a refusé ce changement. N'écris pas ce fichier en l'état.",
                     }
+                elif action == "nothing":
+                    # Rien à relire : l'agent doit corriger son appel, pas deviner.
+                    override = {
+                        "status": "error",
+                        "path": args.get("path", ""),
+                        "error": ("Aucune proposition n'est arrivée jusqu'à la revue — "
+                                  "l'appel propose_file_change n'a rien déposé. "
+                                  "Vérifie son résultat : un plan est-il actif "
+                                  "(dev_plan_create) ? L'utilisateur n'a RIEN refusé."),
+                    }
                 elif action == "refine" and refinement:
                     override = {
                         "status": "needs_refinement",
@@ -1782,7 +1615,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                         "feedback": refinement,
                         "message": (
                             f"L'utilisateur demande des modifications : {refinement}. "
-                            "Prends en compte ce feedback et rappelle propose_file_change avec le contenu corrigé."
+                            f"Prends en compte ce feedback et rappelle {tool_name} corrigé."
                         ),
                     }
 
@@ -1832,6 +1665,14 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                     override = {
                         "status": "rejected",
                         "message": "L'utilisateur a refusé ce changement. Ne modifie pas cette cellule en l'état.",
+                    }
+                elif action == "nothing":
+                    # Rien à relire : l'agent doit corriger son appel, pas deviner.
+                    override = {
+                        "status": "error",
+                        "error": ("Aucune proposition n'est arrivée jusqu'à la revue — "
+                                  "notebook_edit_cell n'a rien déposé. "
+                                  "L'utilisateur n'a RIEN refusé."),
                     }
                 elif action == "refine" and refinement:
                     override = {
@@ -1941,7 +1782,10 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                                 name="ask_clarification",
                                 id=_real_id,
                             )
-                            graph.update_state(config, {"messages": [updated]})
+                            # `as_node` n'est PAS cosmétique : sans lui la reprise ne
+                            # replanifie aucun nœud et le tour meurt sans un mot.
+                            graph.update_state(config, {"messages": [updated]},
+                                               as_node=_NOEUD_OUTILS)
                             # `add_messages` ne REMPLACE que si l'id correspond à un
                             # message DÉJÀ dans l'état ; sinon il AJOUTE. Le placeholder
                             # `{"awaiting_input": true}` restait alors présent À CÔTÉ des
@@ -1967,6 +1811,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                                     graph.update_state(
                                         config,
                                         {"messages": [_RM(id=m.id) for m in _stale if m.id]},
+                                        as_node=_NOEUD_OUTILS,
                                     )
                                     _after = graph.get_state(config)
                                     _same = [
@@ -1986,6 +1831,15 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                                         f"  ⚠ réponses mal injectées ({len(_same)} message(s), "
                                         f"answers={_ok}) — le modèle risque de reposer "
                                         f"les questions", style="yellow"))
+                                # Les réponses peuvent être PARFAITEMENT injectées et
+                                # n'être jamais lues : sans nœud replanifié, la reprise
+                                # ne réveille personne. C'est la panne muette qu'on
+                                # refuse de laisser passer sans le dire.
+                                if not _after.next:
+                                    console.print(Text(
+                                        "  ⚠ reprise non planifiée après le questionnaire — "
+                                        "les réponses n'atteindront pas le modèle",
+                                        style="yellow"))
                             except Exception as _ve:
                                 console.print(Text(
                                     f"  ⚠ vérification d'injection impossible : {_ve}",
@@ -2011,7 +1865,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                         # Stop coding-specialist thinking thread, restart for orchestrator response
                         stop_thinking.set()
                         if _thinking_thread:
-                            _thinking_thread[0].join(timeout=0.2)
+                            _thinking_thread[0].join(timeout=_ARRET_ANIMATION)
                         compile_mode.clear()
                         stop_thinking.clear()
                         new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
@@ -2061,7 +1915,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                         last_node = "chatbot"
                         stop_thinking.set()
                         if _thinking_thread:
-                            _thinking_thread[0].join(timeout=0.2)
+                            _thinking_thread[0].join(timeout=_ARRET_ANIMATION)
                         # Efface le panel sans stop/start — évite de committer le contenu
                         # partiel dans le scrollback à chaque appel d'outil.
                         # Le stop/start (re-ancrage) n'est nécessaire que pour run_coding_agent
@@ -2111,9 +1965,16 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             safe = _guard_sanitize(enforce_lang_output(response_content, user_lang))
             finalize_live(live, safe, footer, console=console)
         else:
-            final_state = graph.invoke(current_state, config=config)
-            last = final_state["messages"][-1]
-            text = last["content"] if isinstance(last, dict) else getattr(last, "content", "")
+            # `_stream_input`, PAS `current_state` : après un questionnaire, la
+            # question de l'utilisateur est déjà dans l'état et la reprise vaut
+            # `None`. Réinjecter le message d'origine relançait le tour depuis zéro
+            # — le modèle reposait alors les questions auxquelles on venait de
+            # répondre, et sans passer par l'affichage du questionnaire.
+            final_state = graph.invoke(_stream_input, config=config)
+            text = _dernier_texte_du_modele(final_state.get("messages") or [])
+            if not text.strip():
+                text = ("_Le modèle n'a rien rédigé pour ce tour. Relance ta "
+                        "demande — rien n'a été perdu de la conversation._")
             safe = _guard_sanitize(enforce_lang_output(text, user_lang))
             finalize_live(live, safe, footer, console=console)
         live.stop()

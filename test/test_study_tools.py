@@ -186,7 +186,9 @@ def _pdf_mode_patches(tmp_path, html_content, pdf_text="Course content"):
         patch("src.ui.attachments._extract_pdf", return_value=pdf_text),
         patch("src.agents.study.tools._output_dir", return_value=tmp_path),
         patch("src.agents.study.tools._open_browser"),
-        patch("src.llm.models.make_llm_ollama_cloud", return_value=fake_llm),
+        # Le chemin passe désormais par la rotation de clés : c'est la fabrique
+        # PAR CLÉ qu'il faut intercepter, plus la fabrique globale.
+        patch("src.llm.models.make_orchestrator_llm_with_key", return_value=fake_llm),
         patch("src.infra.settings.settings", mock_settings),
     ]
 

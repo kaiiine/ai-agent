@@ -162,8 +162,8 @@ aliases: [react, vite, frontend]
    ✅ Remplacer par HTML natif + Tailwind :
       <button className="px-4 py-2 bg-[--primary] text-white rounded-lg hover:opacity-90">
 
-   npx shadcn@latest init -d
-   npx shadcn@latest add button card input textarea select badge dialog sheet separator
+   pnpm dlx shadcn@latest init -d
+   pnpm dlx shadcn@latest add button card input textarea select badge dialog sheet separator
 
    UTILISATION OBLIGATOIRE pour :
    • Boutons CTA → <Button size="lg" variant="default"> / <Button variant="outline">
@@ -230,3 +230,8 @@ aliases: [react, vite, frontend]
        — pas juste installé dans package.json mais réellement câblé sur les éléments visibles
    [ ] Au moins 1 effet visuel avancé présent : glassmorphisme OU glow OU gradient text
    [ ] browser_screenshot confirme que la page n'est pas blanche
+
+⚠ GESTIONNAIRE DE PAQUETS — une seule famille par projet :
+  pnpm dlx <pkg> (jamais npx) · pnpm add (jamais npm install) · pnpm <script> (jamais npm run).
+  Projet EXISTANT avec package-lock.json et sans pnpm-lock.yaml → c'est npm :
+  utiliser npx / npm install / npm run. Vérifier avec shell_ls, ne jamais supposer.

@@ -32,5 +32,10 @@ NUXT (si projet SSR/fullstack) :
     • Metadata : useHead({ title, meta }) ou definePageMeta({ layout, middleware }).
 
 TAILWIND AVEC VUE/NUXT :
-    Vue  : pnpm add -D tailwindcss postcss autoprefixer && npx tailwindcss init -p
+    Vue  : pnpm add -D tailwindcss postcss autoprefixer && pnpm dlx tailwindcss init -p
     Nuxt : pnpm add -D @nuxtjs/tailwindcss puis modules: ['@nuxtjs/tailwindcss'] dans nuxt.config.ts
+
+⚠ GESTIONNAIRE DE PAQUETS — une seule famille par projet :
+  pnpm dlx <pkg> (jamais npx) · pnpm add (jamais npm install) · pnpm <script> (jamais npm run).
+  Projet EXISTANT avec package-lock.json et sans pnpm-lock.yaml → c'est npm :
+  utiliser npx / npm install / npm run. Vérifier avec shell_ls, ne jamais supposer.

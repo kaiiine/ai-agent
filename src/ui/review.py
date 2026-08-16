@@ -225,12 +225,14 @@ def review_single_latest() -> Tuple[str, str | None]:
 
     Returns:
         ("apply",  None)       — approved and written to disk
-        ("reject", None)       — skipped
+        ("reject", None)       — l'utilisateur a REELLEMENT refusé
         ("refine", "<text>")   — user wants adjustments
+        ("nothing", None)      — rien à relire : personne n'a rien décidé
     """
     change = pending_changes.pop_latest()
     if change is None:
-        return ("reject", None)
+        # Jamais ("reject") ici : l'utilisateur n'a rien vu, donc rien refusé.
+        return ("nothing", None)
 
     console.print(Rule(characters="·", style=f"dim {ACCENT}"))
     _render_diff(change)
@@ -454,11 +456,13 @@ def _render_cell_diff(change: CellChange) -> None:
 def review_latest_cell_change() -> Tuple[str, str | None]:
     """
     HITL review for a single notebook cell change.
-    Returns ("apply", None), ("reject", None), or ("refine", "<text>").
+    Returns ("apply", None), ("reject", None), ("refine", "<text>")
+    ou ("nothing", None) quand il n'y a rien à relire.
     """
     change = pending_cell_changes.pop_latest()
     if change is None:
-        return ("reject", None)
+        # Jamais ("reject") ici : l'utilisateur n'a rien vu, donc rien refusé.
+        return ("nothing", None)
 
     console.print(Rule(characters="·", style=f"dim {ACCENT}"))
     _render_cell_diff(change)

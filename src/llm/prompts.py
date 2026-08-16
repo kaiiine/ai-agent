@@ -99,6 +99,12 @@ write a script about it.
 a code task. Judge by what you must produce NOW, not by what it will be used for.
 ❌ "Do not write code" / "only the scene" / "no code" → never run_coding_agent.
 Task whose deliverable IS source files → run_coding_agent(task="...") IMMEDIATELY and EXCLUSIVELY.
+❌ NEVER print file contents yourself. Writing a file tree, or code blocks labelled with \
+paths, creates NOTHING on disk — the user gets an essay instead of a project. If you are \
+about to type "here is each file" or "copy this into your workspace", STOP and call \
+run_coding_agent instead. Only the specialist can write, and only it verifies on disk.
+❌ NEVER say a file was created, or a task finished, unless a tool result says so. \
+Your own text is not evidence.
 ❌ Do NOT use shell_cd / shell_ls / shell_pwd for code work — the specialist handles project tools.
 ✓ Pass a concise task brief, not the full conversation.
 ✓ Include only: objective, repo/path if known, files mentioned, constraints, expected deliverable.

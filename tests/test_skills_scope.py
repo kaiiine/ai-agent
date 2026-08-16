@@ -80,15 +80,40 @@ def test_le_catalogue_du_tool_respecte_la_portee(retriever_patche):
     assert "nextjs" in make_load_skill("coding").description
 
 
-def test_le_fallback_est_injecte_pas_importe(retriever_patche):
-    """src/skills/ ne sait rien de l'agent coding."""
+def test_un_skill_hors_portee_est_refuse_franchement(retriever_patche):
+    """Il exista un repli vers des copies Python des guides ; elles ont divergé des
+    .md sans que personne ne le voie. Un refus net vaut mieux qu'un guide périmé."""
     from src.skills.tools import make_load_skill
 
-    avec_repli = make_load_skill("orchestrator", fallback=lambda s: f"REPLI {s}")
-    assert avec_repli.invoke({"stack": "nextjs"}) == "REPLI nextjs"
+    reponse = make_load_skill("orchestrator").invoke({"stack": "nextjs"})
 
-    sans_repli = make_load_skill("orchestrator")
-    assert "non disponible" in sans_repli.invoke({"stack": "nextjs"})
+    assert "non disponible" in reponse
+
+
+def test_aucune_description_ne_contient_de_clause_negative():
+    """Une clause « ne pas utiliser pour X » marche chez les agents qui LISENT la
+    description. Ici elle est le page_content d'un Document Chroma : elle est
+    embarquée, et un embedding ne représente pas la négation. Mesuré sur
+    nomic-embed-text, ajouter « ne pas utiliser pour une présentation » à la
+    description de nextjs augmente sa similarité à une requête PowerPoint de 71 %
+    (0.374 → 0.640) — soit exactement l'inverse du but recherché.
+
+    Ce qui filtre réellement ici, c'est `scope`, et il est déterministe.
+    """
+    import pathlib
+    import re
+
+    negations = re.compile(
+        r"\bne (?:pas|jamais)\b|\bn'utilise\b|\bdo not use\b|\bdon't use\b|\bnever use\b",
+        re.IGNORECASE)
+
+    fautifs = []
+    for fichier in sorted(pathlib.Path("skills").glob("*.md")):
+        entete = fichier.read_text(encoding="utf-8").split("---")[1:2]
+        if entete and negations.search(entete[0]):
+            fautifs.append(fichier.name)
+
+    assert not fautifs, f"clause négative dans le frontmatter (elle attire au lieu de repousser) : {fautifs}"
 
 
 def test_les_ancres_viennent_des_descriptions(retriever_patche):

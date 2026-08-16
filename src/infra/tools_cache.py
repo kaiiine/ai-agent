@@ -33,6 +33,7 @@ _INVALIDATES: dict[str, tuple[str, ...]] = {
     "shell_run":          _FILESYSTEM_CACHES,
     # Writing a file via the coding specialist must bust the read cache immediately
     "propose_file_change": _FILESYSTEM_CACHES,
+    "edit_file": _FILESYSTEM_CACHES,
 }
 
 

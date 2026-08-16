@@ -7,7 +7,7 @@ aliases: [express, nestjs, node]
 ━━ STACK DÉTECTÉ : NODE.JS BACKEND ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 SCAFFOLDING :
-   NestJS   → npx @nestjs/cli new <nom>
+   NestJS   → pnpm dlx @nestjs/cli new <nom>
    Express  → pnpm init && pnpm add express && pnpm add -D typescript @types/express ts-node-dev
    Fastify  → pnpm create fastify@latest <nom>
 
@@ -37,5 +37,10 @@ ASYNC :
    • Wrapper global d'erreurs pour éviter les unhandled rejections.
 
 VÉRIFICATION :
-   pnpm run build   ou   npx tsc --noEmit
+   pnpm run build   ou   pnpm exec tsc --noEmit
    pnpm test
+
+⚠ GESTIONNAIRE DE PAQUETS — une seule famille par projet :
+  pnpm dlx <pkg> (jamais npx) · pnpm add (jamais npm install) · pnpm <script> (jamais npm run).
+  Projet EXISTANT avec package-lock.json et sans pnpm-lock.yaml → c'est npm :
+  utiliser npx / npm install / npm run. Vérifier avec shell_ls, ne jamais supposer.

@@ -2,7 +2,8 @@
 """Appeler le LLM, et survivre à ses échecs.
 
 Une seule question : cet appel a échoué, que fait-on ? Quatre réponses possibles,
-de la moins à la plus dégradée — réessayer, changer de clé ou de provider,
+de la moins à la plus dégradée — réessayer, changer de clé (jamais de
+fournisseur : le backend choisi fait foi),
 réduire le contexte, renoncer aux outils. L'ordre compte : appliquer une
 stratégie coûteuse à une panne bénigne fait perdre plus que l'incident.
 
@@ -118,6 +119,15 @@ def invoke_with_recovery(
     try:
         from src.llm.key_pool import get_pool
         key = get_pool().next_healthy(backend) or ""
+        if not key:
+            # JAMAIS de clé vide quand des clés sont configurées. Un client sans
+            # clé n'échoue pas : chez Ollama il s'authentifie avec l'identité
+            # machine `~/.ollama/id_ed25519`, donc sur un compte qui n'est pas
+            # celui qu'on croit et dont personne ne surveille le quota. Toutes
+            # les clés « en cooldown » valent mieux que ça : un cooldown est une
+            # mémoire locale de quelques dizaines de minutes, pas une preuve.
+            _configurees = get_pool().keys_for(backend) or []
+            key = _configurees[0] if _configurees else ""
     except Exception:
         key = ""
 
@@ -127,21 +137,47 @@ def invoke_with_recovery(
     summary = None
     origine = list(working)
 
+    #: Clés déjà tentées DANS CET APPEL — borne la rotation sans dépendre du
+    #: cooldown, qui peut être obsolète.
+    _essayees: set[str] = set()
+
     def _rebind(nouveau_llm):
         return nouveau_llm if force_text else nouveau_llm.bind_tools(selected_tools)
 
     def _basculer() -> bool:
-        """Passe à la clé ou au provider suivant. `False` si aucun n'est libre."""
-        nonlocal provider, key, llm
+        """Passe à la clé suivante DU MÊME fournisseur. `False` si aucune n'est libre.
+
+        LE BACKEND CHOISI FAIT FOI. Cette fonction changeait auparavant de
+        FOURNISSEUR — et réécrivait `settings.llm_backend` au passage. Deux
+        conséquences vécues : le modèle qui répondait n'était plus celui demandé
+        (une question posée à `ollama_cloud` recevait une réponse de Gemini,
+        sans que rien ne le signale), et `/config` affichait un backend que
+        l'utilisateur n'avait pas choisi.
+
+        Avoir plusieurs clés sert à traverser un quota, pas à changer de modèle.
+        Quand toutes les clés du fournisseur sont épuisées, on le dit et on
+        s'arrête : c'est à l'utilisateur d'arbitrer avec `/backend`.
+        """
+        nonlocal key, llm
         try:
-            from src.llm.key_pool import get_fallback_order, get_pool, note_auto_fallback
-            suivant = get_pool().next_provider_and_key(provider, key, get_fallback_order())
-            if not suivant:
+            from src.llm.key_pool import get_pool
+            pool = get_pool()
+            pool.mark_rate_limited(provider, key)
+            _essayees.add(key)
+            suivante = pool.next_healthy(provider)
+            if suivante in _essayees:
+                suivante = ""
+            if not suivante:
+                # Aucune clé « saine », mais le cooldown se compte en dizaines de
+                # minutes et se déclenche aussi sur une panne passagère. Avant de
+                # renoncer, on essaie celles qu'on n'a PAS ENCORE tentées dans cet
+                # appel — mesuré : deux clés parfaitement valides restaient
+                # inutilisées parce qu'un incident les avait toutes marquées.
+                suivante = next((k for k in (pool.keys_for(provider) or [])
+                                 if k not in _essayees), "")
+            if not suivante:
                 return False
-            precedent = provider
-            provider, key = suivant
-            settings.llm_backend = provider
-            note_auto_fallback(precedent, provider)   # bascule réversible au tour suivant
+            key = suivante
             llm = _rebind(make_orchestrator_llm_with_key(provider, key))
             return True
         except Exception:
@@ -173,7 +209,8 @@ def invoke_with_recovery(
             if genre == "rate_limit":
                 precedent = provider
                 if _basculer():
-                    _log_failure(precedent, exc, "provider_switch", True)
+                    notify(f"quota atteint sur {provider} — clé suivante…")
+                    _log_failure(precedent, exc, "key_rotate", True)
                     continue
                 _log_failure(provider, exc, "none", False)
                 raise
@@ -187,9 +224,9 @@ def invoke_with_recovery(
                     degraded = True
                     precedent = provider
                     if _basculer():
-                        notify(f"{precedent} a échoué ({type(exc).__name__}) — "
-                               f"bascule sur {provider}…")
-                        _log_failure(precedent, exc, "provider_switch", True)
+                        notify(f"{provider} a échoué ({type(exc).__name__}) — "
+                               f"clé suivante…")
+                        _log_failure(precedent, exc, "key_rotate", True)
                         continue
 
                 if not stripped_tools and not force_text:

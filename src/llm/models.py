@@ -5,6 +5,29 @@ from ..infra.settings import settings
 
 _REQUEST_TIMEOUT = 180.0
 _OLLAMA_CLIENT_KWARGS = {"timeout": _REQUEST_TIMEOUT}
+
+
+def _ollama_cloud_kwargs(key: str) -> dict:
+    """Options client pour ollama.com, AVEC la clé d'API réellement transmise.
+
+    `ChatOllama` déclare `extra="ignore"` : un `headers=...` passé à son
+    constructeur est SILENCIEUSEMENT jeté. Aucune erreur, aucun avertissement —
+    et chaque requête retombait alors sur l'identité machine
+    `~/.ollama/id_ed25519`, c'est-à-dire TOUJOURS le même compte, quel que soit
+    le nombre de clés du pool.
+
+    Mesuré : sur cinq clés de cinq comptes différents, une seule était jamais
+    sollicitée — celle de la machine — et son quota hebdomadaire saturait
+    pendant que les quatre autres restaient à 0 %. Une clé volontairement bidon
+    passait tout de même, ce qui prouvait qu'elle n'était pas lue.
+
+    Le seul chemin qui arrive jusqu'à la requête est `client_kwargs`, transmis
+    tel quel à `ollama.Client(**kwargs)` puis à httpx.
+    """
+    kwargs = dict(_OLLAMA_CLIENT_KWARGS)
+    if key:
+        kwargs["headers"] = {"Authorization": f"Bearer {key}"}
+    return kwargs
 _OLLAMA_NUM_CTX = 131_072
 _CLIENT_MAX_RETRIES = 2
 
@@ -19,39 +42,40 @@ def make_llm():
     )
 
 
-def make_llm_ollama_cloud():
-    """
-    Ollama Cloud — utilise le key pool si disponible, sinon clé unique legacy.
+def cle_ollama_cloud() -> str:
+    """La clé à employer pour ollama.com, dans l'ordre de préférence.
+
+    Le dernier recours est la PREMIÈRE clé configurée, même en cooldown — jamais
+    la chaîne vide. Un client sans clé ne lève aucune erreur : le paquet `ollama`
+    signe alors la requête avec l'identité machine `~/.ollama/id_ed25519`, donc
+    sur le compte auquel le poste est connecté. On croyait tourner sur cinq
+    comptes, tout partait sur un seul, et son quota saturait pendant que les
+    autres restaient intacts.
+
+    Un cooldown est une mémoire locale de quelques dizaines de minutes, pas une
+    preuve : mieux vaut une clé peut-être fatiguée qu'un compte qu'on ne
+    surveille pas.
     """
     try:
         from src.llm.key_pool import get_pool
-        key = get_pool().next_healthy("ollama_cloud")
-        if key:
-            model = settings.ollama_cloud_model.removesuffix("-cloud")
-            return ChatOllama(
-                model=model,
-                base_url="https://ollama.com",
-                headers={"Authorization": f"Bearer {key}"},
-                temperature=settings.temperature,
-                num_ctx=_OLLAMA_NUM_CTX,
-                client_kwargs=_OLLAMA_CLIENT_KWARGS,
-            )
+        pool = get_pool()
+        return (pool.next_healthy("ollama_cloud")
+                or settings.ollama_api_key
+                or next(iter(pool.keys_for("ollama_cloud") or []), "")
+                or "")
     except Exception:
-        pass
+        return settings.ollama_api_key or ""
 
-    # Fallback : clé unique depuis settings
-    if settings.ollama_api_key:
-        model = settings.ollama_cloud_model.removesuffix("-cloud")
-        return ChatOllama(
-            model=model,
-            base_url="https://ollama.com",
-            headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
-            temperature=settings.temperature,
-            num_ctx=_OLLAMA_NUM_CTX,
-            client_kwargs=_OLLAMA_CLIENT_KWARGS,
-        )
-    return ChatOllama(model=settings.ollama_cloud_model, temperature=settings.temperature,
-                      num_ctx=_OLLAMA_NUM_CTX, client_kwargs=_OLLAMA_CLIENT_KWARGS)
+
+def make_llm_ollama_cloud():
+    """Ollama Cloud — clé issue du pool, jamais l'identité machine par défaut."""
+    return ChatOllama(
+        model=settings.ollama_cloud_model.removesuffix("-cloud"),
+        base_url="https://ollama.com",
+        client_kwargs=_ollama_cloud_kwargs(cle_ollama_cloud()),
+        temperature=settings.temperature,
+        num_ctx=_OLLAMA_NUM_CTX,
+    )
 
 
 def _ollama_unload(model: str, base_url: str = "http://localhost:11434") -> None:
@@ -84,10 +108,9 @@ def make_coding_llm_with_key(provider: str, key: str):
         return ChatOllama(
             model=coding_model,
             base_url="https://ollama.com",
-            headers={"Authorization": f"Bearer {key}"},
+            client_kwargs=_ollama_cloud_kwargs(key),
             temperature=0.0,
             num_ctx=_OLLAMA_NUM_CTX,
-            client_kwargs=_OLLAMA_CLIENT_KWARGS,
         )
     elif provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
@@ -136,6 +159,11 @@ def make_coding_llm():
         from src.llm.key_pool import get_pool
         pool = get_pool()
         key = pool.next_healthy(settings.llm_backend)
+        if not key:
+            # Aucune clé « saine » : on prend quand même la première configurée.
+            # Le repli legacy ci-dessous construit sinon un client SANS clé, qui
+            # s'authentifie avec l'identité machine et masque le vrai compte.
+            key = next(iter(pool.keys_for(settings.llm_backend) or []), "")
         if key:
             return make_coding_llm_with_key(settings.llm_backend, key)
     except Exception:
@@ -176,10 +204,9 @@ def make_coding_llm():
             return ChatOllama(
                 model=coding_model.removesuffix("-cloud"),
                 base_url="https://ollama.com",
-                headers={"Authorization": f"Bearer {settings.ollama_api_key}"},
+                client_kwargs=_ollama_cloud_kwargs(settings.ollama_api_key),
                 temperature=0.0,
                 num_ctx=_OLLAMA_NUM_CTX,
-                client_kwargs=_OLLAMA_CLIENT_KWARGS,
             )
         return ChatOllama(model=coding_model, temperature=0.0,
                           num_ctx=_OLLAMA_NUM_CTX, client_kwargs=_OLLAMA_CLIENT_KWARGS)
@@ -198,10 +225,9 @@ def make_orchestrator_llm_with_key(provider: str, key: str):
         return ChatOllama(
             model=model,
             base_url="https://ollama.com",
-            headers={"Authorization": f"Bearer {key}"},
+            client_kwargs=_ollama_cloud_kwargs(key),
             temperature=settings.temperature,
             num_ctx=_OLLAMA_NUM_CTX,
-            client_kwargs=_OLLAMA_CLIENT_KWARGS,
         )
     elif provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI

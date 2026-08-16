@@ -124,43 +124,51 @@ def test_extract_args_defaults_to_empty_dict():
     assert result["args"] == {}
 
 
-# ── prompt contract (via build_system_prompt) ─────────────────────────────────
-# These tests check that the right content ends up in the assembled prompt
-# for each relevant stack. We build with explicit stacks for determinism.
+# ── Contrat du prompt système ────────────────────────────────────────────────
+# Le specialist injecte BASE_PROMPT seul ; les guides par stack arrivent par
+# load_skill, depuis skills/*.md. Un assembleur build_system_prompt a existé,
+# mais rien ne l'appelait : ces tests portent sur ce qui est réellement envoyé.
 
-def _full_prompt(*stacks: str) -> str:
-    from src.agents.coding.prompts import build_system_prompt
-    return build_system_prompt(list(stacks))
+def _base() -> str:
+    from src.agents.coding.prompts import BASE_PROMPT
+    return BASE_PROMPT
 
 
-def test_system_prompt_contains_dev_plan_first_rule():
-    prompt = _full_prompt()
+def _skill(nom: str) -> str:
+    from src.skills import get_skill
+    return get_skill(nom, scope="coding")
+
+
+def test_le_prompt_de_base_impose_le_plan_et_les_outils_d_ecriture():
+    prompt = _base()
     assert "dev_plan_create" in prompt
-    assert "OBLIGATOIRE" in prompt
+    assert "propose_file_change" in prompt
+    assert "edit_file" in prompt
 
 
-def test_system_prompt_mentions_propose_file_change():
-    assert "propose_file_change" in _full_prompt()
+def test_le_prompt_de_base_renvoie_vers_la_recherche_et_la_verification_visuelle():
+    prompt = _base()
+    assert "web_research_report" in prompt
+    assert "browser_screenshot" in prompt
 
 
-def test_system_prompt_mentions_browser_screenshot():
-    assert "browser_screenshot" in _full_prompt("frontend")
+def test_le_skill_frontend_porte_les_regles_de_design_system():
+    frontend = _skill("frontend")
+    assert "globals.css" in frontend
+    assert "tailwind.config" in frontend
 
 
-def test_system_prompt_mentions_web_research():
-    assert "web_research_report" in _full_prompt()
+def test_le_specialist_n_assemble_aucun_prompt_par_stack():
+    """Le seul chemin est load_skill : un second chemin re-créerait la copie
+    Python périmée qu'on vient de supprimer."""
+    import inspect
 
+    from src.agents.coding import specialist
 
+    source = inspect.getsource(specialist)
 
-def test_system_prompt_mentions_design_system_first():
-    prompt = _full_prompt("frontend")
-    assert "globals.css" in prompt
-    assert "tailwind.config" in prompt
-
-
-def test_system_prompt_forbids_hardcoded_colors():
-    prompt = _full_prompt("frontend")
-    assert "❌" in prompt
+    assert "build_system_prompt" not in source
+    assert "SystemMessage(BASE_PROMPT)" in source
 
 
 # ── _PROGRESS_TOOLS ───────────────────────────────────────────────────────────

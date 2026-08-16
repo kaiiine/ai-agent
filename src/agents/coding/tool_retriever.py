@@ -14,9 +14,12 @@ from langchain_core.messages import AIMessage
 # ── Always in every turn — mandatory workflow tools ────────────────────────────
 _ALWAYS_INCLUDED = frozenset({
     "dev_plan_create",
+    "dev_plan_update",
     "dev_plan_step_done",
     "dev_explain",
+    "ask_clarification",
     "propose_file_change",
+    "edit_file",
     "load_skill",
 })
 

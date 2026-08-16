@@ -29,6 +29,11 @@ SVELTEKIT ROUTING :
 
 TAILWIND AVEC SVELTEKIT :
     pnpm add -D tailwindcss postcss autoprefixer
-    npx tailwindcss init -p
+    pnpm dlx tailwindcss init -p
     Ajouter dans svelte.config.js : vitePlugin({ ... }) avec postcss: true.
     globals.css : @tailwind base; @tailwind components; @tailwind utilities;
+
+⚠ GESTIONNAIRE DE PAQUETS — une seule famille par projet :
+  pnpm dlx <pkg> (jamais npx) · pnpm add (jamais npm install) · pnpm <script> (jamais npm run).
+  Projet EXISTANT avec package-lock.json et sans pnpm-lock.yaml → c'est npm :
+  utiliser npx / npm install / npm run. Vérifier avec shell_ls, ne jamais supposer.

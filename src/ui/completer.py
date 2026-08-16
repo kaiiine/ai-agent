@@ -76,16 +76,39 @@ _FS_EXCLUDE = {
 }
 
 
+def at_query(text: str) -> str | None:
+    """Le fragment de chemin en cours de saisie après un `@`, ou `None`.
+
+    Un `@` ne compte que collé au début d'un mot — sinon une adresse e-mail
+    ouvrirait un menu de fichiers. Le fragment s'arrête au premier espace : au-delà,
+    l'utilisateur écrit autre chose.
+    """
+    at_idx = text.rfind("@")
+    if at_idx == -1 or not (at_idx == 0 or text[at_idx - 1] in " \t"):
+        return None
+    query = text[at_idx + 1:]
+    return None if " " in query else query
+
+
+def completion_context(text: str) -> bool:
+    """Ce texte appartient-il au menu de complétion ?
+
+    Source unique de vérité, partagée avec la suggestion de saisie
+    (`src/ui/suggest.py`). Les deux mécanismes se disputent la touche Tab : s'ils
+    délimitaient leur territoire chacun de leur côté, une divergence rendrait Tab
+    imprévisible sans qu'aucun test ne le voie.
+    """
+    return text.startswith("/") or at_query(text) is not None
+
+
 class SlashCompleter(Completer):
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
 
-        at_idx = text.rfind("@")
-        if at_idx != -1 and (at_idx == 0 or text[at_idx - 1] in " \t"):
-            query = text[at_idx + 1:]
-            if " " not in query:
-                yield from self._at_completions(query)
-                return
+        query = at_query(text)
+        if query is not None:
+            yield from self._at_completions(query)
+            return
 
         if not text.startswith("/"):
             return

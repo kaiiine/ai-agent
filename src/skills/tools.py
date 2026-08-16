@@ -1,11 +1,5 @@
-"""Tool `load_skill`, fabriqué par contexte.
-
-Ne connaît ni l'agent coding ni l'orchestrateur : ce qui leur est propre — comme
-le repli sur _STACK_PROMPTS — est injecté.
-"""
+"""Tool `load_skill`, fabriqué par contexte — seule la portée sépare les agents."""
 from __future__ import annotations
-
-from typing import Callable
 
 from langchain_core.tools import StructuredTool
 
@@ -27,7 +21,7 @@ Returns:
 """
 
 
-def make_load_skill(scope: str, *, fallback: Callable[[str], str|None]|None = None) -> StructuredTool:
+def make_load_skill(scope: str) -> StructuredTool:
     """Une fabrique et non un singleton : les deux agents tournent dans le même
     processus, un objet partagé montrerait à l'un le catalogue de l'autre."""
     from src.skills import describe_skills, get_skill, list_skills
@@ -39,10 +33,6 @@ def make_load_skill(scope: str, *, fallback: Callable[[str], str|None]|None = No
         result = get_skill(stack, scope=scope)
         if result and not result.startswith("Skill '"):
             return result
-        if fallback is not None:
-            replacement = fallback(stack)
-            if replacement:
-                return replacement
         return f"Skill '{stack}' non disponible ici. Disponibles : {', '.join(list_skills(scope))}"
 
     return StructuredTool.from_function(

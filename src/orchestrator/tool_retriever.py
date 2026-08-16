@@ -118,6 +118,27 @@ def _money_intent(query: str) -> bool:
     return bool(_MONEY_INTENT.search(query or ""))
 
 
+# ── Porte déterministe d'intention « produire du code » ───────────────────────
+# Le seuil de rang du groupe `coding` rate les demandes de production formulées
+# sans vocabulaire technique — mesuré sur « finis le site », « crée un fichier ».
+# Sans `run_coding_agent` dans la sélection, le modèle ne peut pas déléguer.
+# La porte n'ouvre que sur un VERBE DE PRODUCTION suivi d'un ARTEFACT de code ;
+# les verbes de lecture ne la franchissent jamais.
+_CODING_INTENT = re.compile(
+    r"(?i)"
+    r"\b(?:cr[ée]{1,2}[erz]?|[ée]cri[stvez]+|fai[stre]+|termine[rz]?|finis?|finir"
+    r"|d[ée]veloppe[rz]?|impl[ée]mente[rz]?|code[rz]?|corrige[rz]?|refactor\w*"
+    r"|ajoute[rz]?|g[ée]n[èe]re[rz]?|scaffold\w*|build\w*|reprend?s?)\b"
+    r"[^.?!]{0,60}"
+    r"\b(?:site|page|landing|app|application|projet|composants?|fichiers?|module"
+    r"|script|api|next\.?js|react|vue|svelte|astro|front|back|spec)\b"
+)
+
+
+def _coding_intent(query: str) -> bool:
+    return bool(_CODING_INTENT.search(query or ""))
+
+
 def _skill_topics() -> list[str]:
     """Les skills visibles par l'orchestrateur décrivent eux-mêmes leur domaine."""
     try:
@@ -369,6 +390,8 @@ _PINNED_TOOLS = {"get_current_time", "ask_clarification", "notify"}
 _PINNED_GROUPS = ("shell",)
 #: Groupe élu par la porte déterministe d'intention money (`_money_intent`).
 _MONEY_GROUP = "quant"
+#: Groupe élu par la porte déterministe d'intention code (`_coding_intent`).
+_CODING_GROUP = "coding"
 
 # ── Réglages du routing ───────────────────────────────────────
 # Mesuré sur les deux jeux de tests/test_tool_routing.py :
@@ -498,6 +521,10 @@ class ToolRetriever:
         # dépouillement `coding` ci-dessous garde exactement le même déclencheur.
         if _money_intent(query) and _MONEY_GROUP not in groups:
             groups.append(_MONEY_GROUP)
+
+        # En tête, sinon `requires_top_rank` le recale aussitôt dehors.
+        if _coding_intent(query):
+            groups = [_CODING_GROUP] + [g for g in groups if g != _CODING_GROUP]
 
         selected: set[str] = set(_PINNED_TOOLS)
         for rang, group in enumerate(groups, start=1):

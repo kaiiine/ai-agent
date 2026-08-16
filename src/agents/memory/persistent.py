@@ -318,7 +318,7 @@ def _build_deterministic_journal(messages: list, enriched_task: str,
         for tc in (getattr(msg, "tool_calls", []) or []):
             name = tc.get("name", "")
             args = tc.get("args", {})
-            if name == "propose_file_change":
+            if name in ("propose_file_change", "edit_file"):
                 f = args.get("path", args.get("file_path", "?"))
                 if f not in files_modified:
                     files_modified.append(f)
@@ -345,7 +345,7 @@ def _build_session_summary(messages: list, enriched_task: str, result_text: str)
         for tc in tcs:
             name = tc.get("name", "")
             args = tc.get("args", {})
-            if name in ("propose_file_change", "shell_run", "dev_explain"):
+            if name in ("propose_file_change", "edit_file", "shell_run", "dev_explain"):
                 lines.append(f"TOOL {name}: {json.dumps(args, ensure_ascii=False)[:300]}")
     lines.append(f"RÉSULTAT : {result_text[:800]}")
     return "\n".join(lines)

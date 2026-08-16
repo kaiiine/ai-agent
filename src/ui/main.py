@@ -33,6 +33,19 @@ if len(sys.argv) > 1 and sys.argv[1] == "record-odds":
     from src.agents.quant.betting_engine.clv.cli import main as _record_odds
     sys.exit(_record_odds(sys.argv[2:]))
 
+# ── 0ter-bis. `axon outcomes` — justesse RÉELLE du modèle, aucune logique ici ─
+# `status` lit la calibration mesurée sur les issues observées ; `settle` règle les
+# prédictions en attente depuis le jeu de données. Sans elles, la seule mesure de
+# justesse restait un walk-forward historique.
+if len(sys.argv) > 1 and sys.argv[1] == "outcomes":
+    from src.agents.quant.betting_engine.outcomes.cli import main as _outcomes
+    sys.exit(_outcomes(sys.argv[2:]))
+
+# ── 0ter-ter. `axon catalog-coverage` — part du catalogue réellement évaluable ─
+if len(sys.argv) > 1 and sys.argv[1] == "catalog-coverage":
+    from src.agents.quant.betting_engine.catalog_coverage.cli import main as _catcov
+    sys.exit(_catcov(sys.argv[2:]))
+
 # ── 0quater. `axon coverage` — couverture Winamax -> modèle (§16), aucune logique ici ─
 if len(sys.argv) > 1 and sys.argv[1] == "coverage":
     from src.agents.quant.betting_engine.coverage_cli import main as _coverage
