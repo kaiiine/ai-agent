@@ -277,9 +277,11 @@ def _run(constraints, evaluations=(), scan=None, refus=(), scannes=40, readiness
             catalog_competitions={"tennis": ("ATP Montréal",)})
         return _batch(*evaluations), telemetrie, traces
 
+    # `capture=None` comme `persist_audit=None` : sans lui, chaque test écrit ses
+    # prédictions synthétiques dans le store RÉEL et fausse la calibration.
     run = run_recommendation(constraints, now=_MAINTENANT,
                              scan=scan or scan_par_defaut, persist_audit=None,
-                             readiness=readiness, enrich=enrich)
+                             capture=None, coverage=None, readiness=readiness, enrich=enrich)
     return run, vus
 
 

@@ -339,7 +339,8 @@ def _run_vide(refus=(), scannes=15, dans_fenetre=0):
             events_outside_window=scannes - dans_fenetre,
             events_inside_window=dans_fenetre), traces)
 
-    return run_recommendation(contraintes, now=_MAINTENANT, scan=scan, persist_audit=None)
+    return run_recommendation(contraintes, now=_MAINTENANT, scan=scan,
+                              persist_audit=None, capture=None, coverage=None)
 
 
 def _traces_refus(refus):
@@ -375,8 +376,41 @@ def test_des_rencontres_non_evaluables_sont_ventilees_par_motif():
         dans_fenetre=3)))
 
     assert "3 rencontre(s) dans la fenêtre, aucune évaluable" in texte
-    assert "2 — participants inconnus de notre référentiel" in texte
-    assert "1 — données insuffisantes pour ce match" in texte
+    assert "2 — rencontre non rattachée à une compétition connue" in texte
+    assert "1 — historique trop mince pour ce match" in texte
+
+
+def test_un_blocage_n_accuse_jamais_une_cause_non_verifiee():
+    """`EVENT_NOT_RESOLVED` disait « participants inconnus de notre référentiel ».
+    Sur le cas qui l'a révélé — PSG–Aston Villa — les DEUX participants étaient
+    dans le référentiel : c'est la compétition européenne qui ne se rattachait à
+    rien. Le libellé envoyait chercher au mauvais endroit."""
+    texte = "\n".join(render_resume(_run_vide(
+        refus=("EVENT_NOT_RESOLVED",), dans_fenetre=1)))
+
+    assert "participants inconnus" not in texte
+    assert "participants ou compétition non résolus" in texte
+
+
+def test_un_blocage_structurel_ne_conseille_jamais_d_attendre():
+    """« Re-scanne dans 24 h » sur une compétition non onboardée est un conseil
+    qui ne peut pas marcher — le temps ne résout pas un référentiel."""
+    texte = "\n".join(render_resume(_run_vide(
+        refus=("COMPETITION_NOT_RESOLVED",), dans_fenetre=1)))
+
+    assert "Attendre n'y changera rien" in texte
+    assert "onboarder la compétition" in texte
+    for interdit in ("re-scan", "réessay", "plus tard", "24 h"):
+        assert interdit not in texte.lower()
+
+
+def test_un_blocage_temporel_dit_que_le_temps_peut_aider():
+    """L'inverse doit rester vrai : un historique trop mince s'enrichit."""
+    texte = "\n".join(render_resume(_run_vide(
+        refus=("INSUFFICIENT_FEATURES",), dans_fenetre=1)))
+
+    assert "peuvent devenir évaluables" in texte
+    assert "Attendre n'y changera rien" not in texte
 
 
 def test_le_titre_garde_le_sport_demande_meme_sans_evenement():

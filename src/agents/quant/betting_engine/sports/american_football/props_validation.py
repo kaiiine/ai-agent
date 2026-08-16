@@ -49,7 +49,9 @@ from dataclasses import dataclass
 #: observation DATÉE, pas une propriété du bookmaker.
 MESURE_LE = "2026-08-15"
 
-#: Ce que le catalogue offrait au moment de la mesure.
+#: Ce que le catalogue offrait au moment de la mesure. Le second relevé porte sur
+#: un balayage plus large (84 pages d'événement, 7 sports, 9 556 marchés) : il ne
+#: corrige pas le premier, il l'élargit — et rend le même verdict.
 MARCHE_OBSERVE = {
     "evenements_nfl": 16,
     "evenements_detailles": 8,
@@ -57,6 +59,19 @@ MARCHE_OBSERVE = {
     "props_observees": 0,
     "more_bets_declare": "63 à 65 par rencontre",
     "ouverture_saison": "2026-09-10",
+    #: Second relevé, même jour, échantillon élargi.
+    "marches_lus_large": 900,
+    "props_observees_large": 0,
+}
+
+#: La symétrie, mesurée sur le même balayage : là où la NFL a des modèles validés
+#: et zéro marché, le basket a 1 521 marchés de props (45,9 % de ses 3 316 marchés
+#: observés) et AUCUN modèle de statistique de joueur. Les deux STOP sont de
+#: nature opposée et aucun des deux ne s'ouvre en abaissant un seuil.
+MARCHE_OBSERVE_BASKET = {
+    "marches_lus": 3316,
+    "props_observees": 1521,
+    "modele_de_stat_joueur": None,
 }
 
 
@@ -127,10 +142,11 @@ MESURES: tuple[MesureProp, ...] = (
 STOP_MARCHE = (
     "STOP EXTERNAL — le marché n'existe pas encore. 16 événements NFL au "
     f"catalogue le {MESURE_LE}, 514 marchés lus sur 8 rencontres, ZÉRO prop de "
-    "joueur. Winamax ouvre ces marchés à l'approche de la saison "
-    f"({MARCHE_OBSERVE['ouverture_saison']}). Les modèles sont validés et "
-    "attendent leur marché — l'inverse exact du basket, qui a 545 props par "
-    "rencontre et aucune donnée."
+    "joueur ; re-mesuré le même jour sur 900 marchés NFL, toujours ZÉRO. Winamax "
+    f"ouvre ces marchés à l'approche de la saison ({MARCHE_OBSERVE['ouverture_saison']}). "
+    "Les modèles sont validés et attendent leur marché — l'inverse exact du "
+    f"basket, qui offre {MARCHE_OBSERVE_BASKET['props_observees']} marchés de "
+    "props et pour lequel aucun modèle de statistique de joueur n'est validé."
 )
 
 
