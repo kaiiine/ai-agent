@@ -44,45 +44,11 @@ POSITIFS_MCP = [
     ("modélise un igloo en 3d et exporte-le en glb", None),   # tout outil 3D convient
 ]
 
-#: Connu défaillant à la mesure du 16 août : la requête ne remonte aucun outil
-#: MCP. `xfail` plutôt que retrait — un cas qu'on cesse de mesurer est un cas
-#: qu'on cesse de corriger.
+#: Cas témoin. Défaillant à la mesure du 16 août (aucun outil MCP remonté),
+#: passant depuis le pont linguistique. Gardé nommément parce que c'est lui qui
+#: a révélé toute la catégorie « lecture d'état ».
 POSITIF_MCP_CONNU_DEFAILLANT = (
     "dis-moi ce que contient la scène blender actuelle", "blender__get_scene_info")
-
-# ── CHANTIER OUVERT : la lecture d'état ne se route pas ─────────────────────
-#
-# Ce n'est pas un hint isolé à retoucher. Mesuré le 16 août sur les DEUX
-# serveurs, huit requêtes d'interrogation : 2/8.
-#
-#   ✗ dis-moi ce que contient la scène blender      0 outil MCP
-#   ✗ donne-moi les infos de la scène 3d            0
-#   ✗ quelles sont les propriétés de cet objet 3d   0
-#   ✓ vérifie que l'addon blender est connecté
-#   ✗ où en est le job de génération 3d             0
-#   ✗ combien de crédits motion me reste-t-il       1 outil, mais le MAUVAIS
-#   ✗ quel est le statut de ma vidéo motion         0
-#   ✓ liste mes clés api motion
-#
-# Les requêtes qui AGISSENT (exécute, télécharge, génère, applique, modélise)
-# remontent 6/7 ; celles qui INTERROGENT remontent 2/8.
-#
-# DEUX HYPOTHÈSES, NON DÉPARTAGÉES — à mesurer, pas à croire :
-#
-#   H1  écart de langue. Descriptions en anglais, requêtes en français ; les
-#       verbes d'action ont leur cognat (execute/exécute, generate/génère), pas
-#       les tournures interrogatives.
-#   H2  neutralisation entre voisins. Les outils d'état partagent tous le même
-#       vocabulaire (get, status, check, information) et se concurrencent.
-#
-# L'OBSERVABLE QUI LES SÉPARE, et c'est le cas Motion crédits : il rend UN outil,
-# le mauvais. H1 prédit le VIDE — un trou sémantique ne produit pas un voisin.
-# H2 prédit exactement ça : le bon outil noyé par ses semblables. L'indice
-# penche donc vers H2, et ce n'est pas une conclusion : une mesure dédiée doit
-# le confirmer avant qu'une ligne de code ne bouge.
-#
-# Corollaire testable de H2 : le taux d'échec devrait croître avec le nombre
-# d'outils `get_*` du même serveur.
 
 NEGATIFS_MCP = [
     # Sans ambiguïté
@@ -152,11 +118,53 @@ def test_les_requetes_3d_atteignent_les_outils_mcp(selection):
     assert reussis >= _MIN_POSITIFS_MCP, f"rappel MCP en baisse — manqués : {manques}"
 
 
-@pytest.mark.xfail(reason="mesuré défaillant le 16/08 : la lecture d'état de "
-                          "scène ne remonte aucun outil MCP", strict=False)
 def test_la_lecture_d_etat_de_scene_remonte_l_outil(selection):
+    """Défaillant jusqu'au pont linguistique, passant depuis. Voir
+    `_PONT_FR_EN` dans tool_retriever.py : les descriptions MCP sont en anglais,
+    les tâches de phase en français, et les tournures interrogatives n'ont
+    aucun cognat."""
     requete, attendu = POSITIF_MCP_CONNU_DEFAILLANT
     assert attendu in selection(requete)
+
+
+# ── Lecture d'état — le chantier qui était ouvert ───────────────────────────
+#
+# Mesuré le 16/08 : les requêtes d'ACTION passaient à 6/7, celles qui
+# INTERROGENT à 2/8. Départage par la même question posée en anglais :
+#
+#     français 2/7   ·   anglais 7/7
+#
+# H1 (écart de langue) confirmée, H2 (concurrence entre outils voisins) réfutée.
+# L'indice qu'on croyait pencher vers H2 — « combien de crédits » rendant UN
+# mauvais outil plutôt que zéro — ne discriminait rien : ce cas passe en anglais.
+LECTURE_D_ETAT = [
+    ("dis-moi ce que contient la scène blender actuelle", "blender__get_scene_info"),
+    ("quelles sont les propriétés de cet objet 3d", "blender__get_object_info"),
+    ("où en est le job de génération 3d", "blender__poll_rodin_job_status"),
+    ("combien de crédits motion me reste-t-il", "motion__get_credit_balance"),
+    ("est-ce que polyhaven est activé", "blender__get_polyhaven_status"),
+    ("donne-moi mon solde motion", "motion__get_credit_balance"),
+    ("quels plans motion sont disponibles", "motion__list_plans"),
+    ("vérifie l'état de sketchfab", "blender__get_sketchfab_status"),
+]
+
+#: Plancher mesuré APRÈS le pont : 0/8 avant, 7/8 après. Ce n'est pas 8/8 et le
+#: seuil le dit — deux formulations résistent encore (« montre-moi les objets
+#: présents dans la scène », « qu'est-ce que contient le viewport »), et poser
+#: 8/8 rendrait le test rouge sur un progrès réel.
+_MIN_LECTURE_D_ETAT = 6
+
+
+def test_les_requetes_d_interrogation_atteignent_leurs_outils(selection):
+    reussis, manques = 0, []
+    for requete, attendu in LECTURE_D_ETAT:
+        if attendu in selection(requete):
+            reussis += 1
+        else:
+            manques.append(requete)
+    assert reussis >= _MIN_LECTURE_D_ETAT, (
+        f"régression de la lecture d'état ({reussis}/{len(LECTURE_D_ETAT)}) — "
+        f"manqués : {manques}")
 
 
 # ── Ce qui ne doit PAS remonter ─────────────────────────────────────────────

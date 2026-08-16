@@ -554,3 +554,47 @@ def test_aucun_mot_cle_n_est_revendique_par_deux_groupes():
     compte = Counter(k for spec in TOOL_GROUPS.values() for k in spec.keywords)
     doublons = {k: n for k, n in compte.items() if n > 1}
     assert not doublons, f"mots-clés revendiqués par plusieurs groupes : {doublons}"
+
+
+# ── Pont linguistique FR → EN ───────────────────────────────────────────────
+#
+# Les descriptions d'outils MCP viennent de leurs serveurs, en anglais ; les
+# tâches de phase d'AXON sont en français. Mesuré sur sept requêtes de lecture
+# d'état : français 2/7, anglais 7/7. Les verbes d'action ont leur cognat
+# (execute/exécute, generate/génère) ; les tournures interrogatives n'en ont pas.
+def test_le_pont_traduit_les_intentions_pas_les_outils():
+    """Mettre un nom de serveur ou d'outil dans le pont le rendrait dépendant
+    de ce qui est installé, et il faudrait le rouvrir à chaque nouveau MCP."""
+    from src.agents.coding.tool_retriever import _PONT_FR_EN
+
+    interdits = ("blender", "motion", "scene_info", "polyhaven", "sketchfab")
+    contenu = " ".join(_PONT_FR_EN.keys()) + " " + " ".join(_PONT_FR_EN.values())
+    for mot in interdits:
+        assert mot not in contenu.lower(), f"« {mot} » lie le pont à un serveur"
+
+
+def test_le_pont_ajoute_sans_remplacer():
+    """La requête française porte les noms propres et le vocabulaire technique
+    (« blender », « framer-motion », « GLB ») que traduire perdrait."""
+    from src.agents.coding.tool_retriever import _pont_linguistique
+
+    enrichie = _pont_linguistique("dis-moi ce que contient la scène blender")
+
+    assert "blender" in enrichie
+    assert "dis-moi" in enrichie
+    assert "get information" in enrichie
+
+
+def test_une_requete_sans_intention_connue_reste_intacte():
+    from src.agents.coding.tool_retriever import _pont_linguistique
+
+    assert _pont_linguistique("crée le composant Header") == "crée le composant Header"
+
+
+def test_le_pont_ne_duplique_pas_les_termes():
+    from src.agents.coding.tool_retriever import _pont_linguistique
+
+    enrichie = _pont_linguistique("dis-moi quel est le statut et donne-moi l'état")
+    apres = enrichie.split("|", 1)[1].split()
+
+    assert len(apres) == len(set(apres))

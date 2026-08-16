@@ -158,6 +158,70 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
 }
 
 
+#: Intentions de requête, français → anglais. Le pont existe pour une raison
+#: MESURÉE : les descriptions d'outils MCP viennent de leurs serveurs, en
+#: anglais, et les tâches de phase d'AXON sont en français.
+#:
+#: Sur sept requêtes de lecture d'état, la MÊME question donne :
+#:
+#:     français : 2/7        anglais : 7/7
+#:
+#: L'écart n'est pas uniforme : les verbes d'ACTION ont leur cognat
+#: (execute/exécute, generate/génère, download/télécharge) et passent à 6/7,
+#: tandis que les tournures INTERROGATIVES — « dis-moi », « où en est »,
+#: « combien » — n'ont aucun voisin lexical dans une description anglaise.
+#:
+#: Ce sont donc des intentions qu'on traduit, jamais des noms d'outils : mettre
+#: « blender » ou « scene_info » ici rendrait le pont dépendant des serveurs
+#: installés, et il faudrait le rouvrir à chaque nouveau MCP.
+_PONT_FR_EN: dict[str, str] = {
+    # Interroger
+    "dis-moi": "get information about",
+    "donne-moi": "get information about",
+    "montre-moi": "show get list",
+    "quel est": "get status",
+    "quelle est": "get status",
+    "quelles sont": "get list properties",
+    "quels sont": "get list properties",
+    "qu'est-ce que": "get information about",
+    "combien": "how many count balance",
+    "où en est": "check status poll progress",
+    "est-ce que": "check whether",
+    "vérifie": "check verify",
+    "liste": "list",
+    "contient": "contains information",
+    "état": "status state",
+    "statut": "status",
+    "infos": "information details",
+    "informations": "information details",
+    "propriétés": "properties information",
+    "reste": "remaining balance",
+    # Agir — déjà bien couverts par les cognats, présents pour la symétrie
+    "supprime": "delete remove",
+    "téléverse": "upload",
+    "enregistre": "save record",
+}
+
+
+def _pont_linguistique(query: str) -> str:
+    """Ajoute la traduction anglaise des intentions présentes dans la requête.
+
+    AJOUTE, ne remplace pas : la requête française reste en tête, et les termes
+    anglais sont appendus. Traduire à la place perdrait les noms propres et le
+    vocabulaire technique que le français porte déjà correctement (« blender »,
+    « framer-motion », « GLB »).
+
+    Déterministe et sans appel réseau — un pont qui dépendrait d'un modèle
+    coûterait un appel par tour, pour un gain qu'un dictionnaire de vingt
+    entrées obtient déjà.
+    """
+    bas = query.lower()
+    ajouts = [en for fr, en in _PONT_FR_EN.items() if fr in bas]
+    if not ajouts:
+        return query
+    return f"{query} | {' '.join(dict.fromkeys(' '.join(ajouts).split()))}"
+
+
 class CodingToolRetriever:
     """Semantic tool selector initialised once per _run() call.
 
@@ -198,7 +262,7 @@ class CodingToolRetriever:
         # 1. Semantic retrieval
         results = self._store.as_retriever(
             search_kwargs={"k": self._k}
-        ).invoke(query)
+        ).invoke(_pont_linguistique(query))
         seed_names = {r.metadata["tool_name"] for r in results if "tool_name" in r.metadata}
 
         # 2. Group expansion
