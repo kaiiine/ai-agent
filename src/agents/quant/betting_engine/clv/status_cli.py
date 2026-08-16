@@ -89,9 +89,22 @@ def collect_par_capacite(observations, *, min_events: int) -> list[dict]:
             "borne_basse": lecture.clv_lower_bound,
             "exclues_par_motif": motifs,
             "requises": min_events,
+            # « il manque N rencontres » n'a de sens QUE tant que l'échantillon
+            # manque. L'écrire sous une capacité dont l'échantillon est atteint
+            # et le signe négatif enverrait attendre un retournement que rien ne
+            # promet : c'est le verdict qui tranche, pas le compteur.
             "manque": "—" if reste == 0 else f"{reste} rencontre(s) de plus",
             "statut": lecture.status,
         })
+
+    from .verdict import verdict_de_capacite
+
+    for ligne in lignes:
+        v = verdict_de_capacite(ligne, requis=min_events)
+        ligne["verdict"] = v.verdict
+        ligne["verdict_explication"] = v.explication
+        if not v.attendre_peut_aider:
+            ligne["manque"] = "—"
     return lignes
 
 
@@ -99,13 +112,21 @@ def render_par_capacite(lignes: list[dict]) -> list[str]:
     if not lignes:
         return ["Aucune observation : rien à isoler par capacité."]
     entete = (f"{'capacité':34} {'déc.':>5} {'clôt.':>5} {'paires':>7} {'indép.':>7} "
-              f"{'CLV moy.':>10} {'borne basse':>12}  il manque")
+              f"{'CLV moy.':>10} {'borne basse':>12}  {'verdict':<28} il manque")
     sortie = [entete, "-" * len(entete)]
     for l in lignes:
         sortie.append(
             f"{l['capacite']:34} {l['decisions']:>5} {l['clotures']:>5} "
             f"{l['paires']:>7} {l['independants']:>7} "
-            f"{_clv(l['mean_clv']):>10} {_clv(l['borne_basse']):>12}  {l['manque']}")
+            f"{_clv(l['mean_clv']):>10} {_clv(l['borne_basse']):>12}  "
+            f"{l.get('verdict', '—'):<28} {l['manque']}")
+    sortie += [
+        "",
+        "Le VERDICT répond à « qu'a-t-on mesuré », le compteur « il manque » à",
+        "« attendre peut-il aider ». Une capacité MEASURED_NEGATIVE a son",
+        "échantillon : son signe est un RÉSULTAT, pas un manque de données, et",
+        "aucune attente ne le retournera.",
+    ]
     return sortie
 
 

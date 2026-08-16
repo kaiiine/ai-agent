@@ -52,6 +52,21 @@ def _has_quota(provider_name: str) -> bool:
     return _request_counts.get(provider_name, 0) < _LOCAL_QUOTA_PER_PROCESS.get(provider_name, 999_999)
 
 
+def providers_sans_quota(sport: str, competition_id: str, season: str,
+                         data_type: str) -> list[str]:
+    """Les providers CAPABLES écartés pour épuisement de quota.
+
+    Existe parce que l'élimination par quota était INVISIBLE : le provider
+    disparaissait de la liste des candidats, et l'appelant recevait exactement
+    la même signature que pour une compétition non couverte — « aucun éligible »,
+    liste d'erreurs vide. Deux causes opposées, un seul message : l'une se
+    répare en attendant la fenêtre de quota suivante, l'autre en onboardant une
+    compétition, et rien ne permettait de choisir.
+    """
+    return [name for name in capable_providers(sport, competition_id, season, data_type)
+            if not _has_quota(name)]
+
+
 def _record_request(provider_name: str) -> None:
     _request_counts[provider_name] = _request_counts.get(provider_name, 0) + 1
 
@@ -249,6 +264,14 @@ def fetch_league_data(
     module_normalizers = module.normalizers()
     errors: list[str] = []
     candidates = _eligible_providers(sport, league_canonical_id, season, data_type)
+
+    # Un provider écarté par le quota est DIT, avant même d'essayer les autres.
+    # Sans cette ligne, « quota épuisé » et « compétition non couverte » rendent
+    # le même message vide — alors que l'un se résout en attendant et l'autre
+    # jamais.
+    for sature in providers_sans_quota(sport, league_canonical_id, season, data_type):
+        errors.append(f"{sature}: RATE_LIMITED (quota local épuisé — "
+                      f"{_quota(sature)['local_used']}/{_quota(sature)['local_limit']})")
 
     for provider_name in candidates:
         entry = REGISTRY[provider_name]
