@@ -44,6 +44,12 @@ def test_active_competitions_filter():
         "competition:football:eng:championship",
         "competition:football:nld:eredivisie",
         "competition:football:prt:primeira_liga",
+        # Ouvertes le 2026-08-13 : saison 2026 servie en HTTP 200 (matches ET
+        # standings). La Champions League reste `draft` — son 2026-27 rend 404,
+        # et une compétition active sans couverture apparaît au catalogue en
+        # refusant tout, ce qui est le défaut qu'on répare.
+        "competition:football:bra:serie_a",
+        "competition:football:sam:libertadores",
     }
 
 
@@ -111,10 +117,23 @@ def test_seed_materializes_known_coverage(tmp_path):
     assert "api_sports" not in pcr.usable_providers(
         "competition:football:fra:ligue1", "2025", "STANDINGS", db_path=db
     )
-    # PL matchs 2025 : UNVERIFIED -> aucun provider utilisable
-    assert pcr.usable_providers(
-        "competition:football:eng:premier_league", "2025", "RESULTS", db_path=db
-    ) == []
+    # Les HUIT domestiques ont une saison N-1 utilisable en RESULTS. C'est la
+    # condition d'existence du report de saison : au 15 août, six d'entre elles
+    # comptent zéro rencontre jouée en 2026, et la seule forme lisible est celle
+    # de 2025. Tant que la couverture N-1 manquait, le report tombait sur « aucun
+    # provider éligible » précisément quand il était le seul recours.
+    # (La garantie « UNVERIFIED n'est jamais servi » est portée par
+    # test_usable_providers_excludes_unverified_and_absent, sur entrée dédiée.)
+    for comp in ("competition:football:eng:premier_league",
+                 "competition:football:eng:championship",
+                 "competition:football:esp:laliga",
+                 "competition:football:ita:serie_a",
+                 "competition:football:deu:bundesliga",
+                 "competition:football:nld:eredivisie",
+                 "competition:football:prt:primeira_liga",
+                 "competition:football:fra:ligue1"):
+        assert "football_data_org" in pcr.usable_providers(
+            comp, "2025", "RESULTS", db_path=db), comp
 
 
 # ── Vérification par appel réel (provider mocké, aucun réseau) ──────────────────

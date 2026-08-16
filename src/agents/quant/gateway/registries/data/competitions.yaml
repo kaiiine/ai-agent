@@ -70,6 +70,46 @@
   tier: 1
   status: active
 
+# ── Compétitions accessibles gratuitement via football-data.org ─────────────
+# Sondé le 2026-08-13. L'identité canonique est enregistrée ICI ; elle ne dit RIEN
+# de la disponibilité d'un modèle. `COMPETITION_RESOLVED` et `MODEL_AVAILABLE`
+# sont deux axes distincts (BE-FR-007) : une rencontre peut être parfaitement
+# identifiée et rester non évaluable, avec ce motif exact plutôt qu'un
+# « participants inconnus » qui envoie chercher au mauvais endroit.
+
+- canonical_id: "competition:football:bra:serie_a"
+  sport: football
+  name: "Campeonato Brasileiro Série A"
+  country_code: BR
+  competition_type: league
+  tier: 1
+  status: active
+
+# Compétitions INTER-LIGUES. Le modèle 1X2 domestique est calibré PAR
+# championnat : lui servir une rencontre opposant deux ligues reviendrait à
+# comparer deux échelles sans preuve qu'elles soient comparables. Elles restent
+# donc sans modèle applicable jusqu'à validation d'un modèle cross-competition.
+# DRAFT, et c'est mesuré : football-data.org rend HTTP 404 sur /matches ET
+# /standings pour 2026 — la saison 2026-27 n'a pas démarré. Une compétition
+# active sans couverture apparaît au catalogue et refuse tout ; l'identité reste
+# enregistrée (l'historique 2023-2025 est couvert), le statut passe à `active`
+# quand la saison ouvre. C'est une question de données, pas de code.
+- canonical_id: "competition:football:eur:champions_league"
+  sport: football
+  name: "UEFA Champions League"
+  country_code: EU
+  competition_type: cup
+  tier: 1
+  status: draft
+
+- canonical_id: "competition:football:sam:libertadores"
+  sport: football
+  name: "Copa Libertadores"
+  country_code: BR
+  competition_type: cup
+  tier: 1
+  status: active
+
 # ── Sports à deux équipes servis par api-sports ──────────────────────────────
 # Les identifiants canoniques sont ceux qu'utilisent DÉJÀ les modèles du betting
 # engine (NBA_LEAGUE_ID, MLB_LEAGUE_ID…). Les inventer autrement aurait produit

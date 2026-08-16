@@ -27,7 +27,7 @@ _VERIFICATION_METHODS = {"live_call", "provider_docs", "manual", "fixture_checks
 # ajoutée, retirée ou corrigée : c'est ce numéro qui déclenche la ré-application
 # sur une base déjà initialisée. Sans lui, une correction de couverture ne serait
 # jamais reprise sur les installations existantes.
-BASELINE_VERSION = 4
+BASELINE_VERSION = 6
 
 
 class CoverageStatus(str, Enum):
@@ -229,6 +229,8 @@ def known_coverage() -> list[ProviderCompetitionCoverage]:
     verified = datetime(2026, 7, 25, tzinfo=timezone.utc)
     verified_0805 = datetime(2026, 8, 5, tzinfo=timezone.utc)
     verified_0807 = datetime(2026, 8, 7, tzinfo=timezone.utc)
+    verified_0813 = datetime(2026, 8, 13, tzinfo=timezone.utc)
+    verified_0815 = datetime(2026, 8, 15, tzinfo=timezone.utc)
     entries: list[ProviderCompetitionCoverage] = []
 
     def add(provider, comp, prov_id, season, data_types, status, method, notes=None,
@@ -244,8 +246,35 @@ def known_coverage() -> list[ProviderCompetitionCoverage]:
     add("football_data_org", _L1, "FL1", "2025",
         ["FIXTURES", "RESULTS", "STANDINGS"], CoverageStatus.FULL, "live_call")
     add("football_data_org", _PL, "PL", "2025", ["STANDINGS"], CoverageStatus.FULL, "live_call")
-    # PL matchs 2025 : non vérifiés en direct -> UNVERIFIED (jamais servis tant que non vérifiés)
-    add("football_data_org", _PL, "PL", "2025", ["FIXTURES", "RESULTS"], CoverageStatus.UNVERIFIED, "manual")
+
+    # ── Saison 2025-26 des 8 domestiques (vérifiée le 2026-08-15) ───────────────
+    # La saison 2026 démarre entre le 21 et le 28 août : au 15 août, RESULTS est
+    # servi mais quasi vide (0 rencontre jouée sur six des huit championnats). La
+    # seule forme disponible est donc celle de N-1 — et le report de saison ne
+    # pouvait PAS aller la chercher, faute de couverture déclarée : seules la
+    # Ligue 1 et les classements de Premier League l'étaient, les matchs de PL
+    # restant UNVERIFIED. Six compétitions sur huit tombaient sur « aucun provider
+    # éligible » à l'instant précis où le report est le seul recours.
+    #
+    # `/competitions/{code}/matches?season=2025` appelé pour les huit, HTTP 200,
+    # rencontres TOUTES terminées : ELC 557, PD 380, SA 380, PL 380, BL1 306,
+    # DED 306, PPL 306 (FL1 déjà couverte, 306). C'est le même défaut que celui
+    # corrigé le 2026-08-05 sur la saison 2026 : pas un manque de données, une
+    # baseline jamais étendue à l'axe SAISON.
+    for comp, code, joues in (
+        (_PL, "PL", 380),
+        ("competition:football:eng:championship", "ELC", 557),
+        ("competition:football:esp:laliga", "PD", 380),
+        ("competition:football:ita:serie_a", "SA", 380),
+        ("competition:football:deu:bundesliga", "BL1", 306),
+        ("competition:football:nld:eredivisie", "DED", 306),
+        ("competition:football:prt:primeira_liga", "PPL", 306),
+    ):
+        add("football_data_org", comp, code, "2025",
+            ["FIXTURES", "RESULTS"], CoverageStatus.FULL, "live_call",
+            notes=f"vérifié 2026-08-15 : /matches?season=2025 en HTTP 200, "
+                  f"{joues} rencontres toutes terminées",
+            at=verified_0815)
 
     # ── Saison 2026-27, les 8 domestiques (vérifiées le 2026-08-05) ──────────────
     # Deux endpoints appelés par compétition, tous HTTP 200 :
@@ -265,6 +294,42 @@ def known_coverage() -> list[ProviderCompetitionCoverage]:
             notes="vérifié 2026-08-05 : /matches et /standings en HTTP 200 ; "
                   "RESULTS vide tant que la saison n'a pas démarré",
             at=verified_0805)
+
+    # ── Trois compétitions ouvertes le 2026-08-13 (football-data.org, live_call) ─
+    # Comptes RÉELS relevés, `/matches?season=` par saison, HTTP 200 :
+    #   BSA 2023-2026 : 380+380+380+380 rencontres, 1 355 terminées
+    #   CL  2023-2025 : 125+189+189 rencontres, 503 terminées (2026 -> HTTP 404,
+    #                   la saison n'a pas commencé — absence de SAISON, pas de source)
+    #   CLI 2023-2026 : 155+155+155+147 rencontres, 591 terminées
+    #
+    # Enregistrer cette couverture NE REND RIEN MISABLE. C'est l'axe « la source
+    # existe » ; l'axe « un modèle validé s'applique » est ailleurs, et pour les
+    # deux compétitions INTER-LIGUES il n'est pas franchi (cf. leurs benchmarks).
+    # `/standings` sondé séparément le 2026-08-13 : BSA et CLI rendent 3 tables en
+    # HTTP 200 pour 2026 ; la CL rend 404 sur les DEUX endpoints — sa saison
+    # 2026-27 n'existe pas encore chez le provider. D'où son `status: inactive`
+    # au registre : une compétition active sans couverture apparaît au catalogue
+    # et refuse tout, ce qui est précisément le défaut qu'on répare.
+    for comp, code, saisons, types in (
+        ("competition:football:bra:serie_a", "BSA", ("2023", "2024", "2025", "2026"),
+         ["FIXTURES", "RESULTS", "STANDINGS"]),
+        ("competition:football:eur:champions_league", "CL", ("2023", "2024", "2025"),
+         ["FIXTURES", "RESULTS"]),
+        ("competition:football:sam:libertadores", "CLI", ("2023", "2024", "2025", "2026"),
+         ["FIXTURES", "RESULTS", "STANDINGS"]),
+    ):
+        for saison in saisons:
+            add("football_data_org", comp, code, saison, types,
+                CoverageStatus.FULL, "live_call",
+                notes="sondé 2026-08-13 : endpoints en HTTP 200, rencontres terminées "
+                      "présentes ; couverture de SOURCE, pas de modèle",
+                at=verified_0813)
+    # Saison CL 2026 : absence de SAISON chez le provider, pas absence de source.
+    add("football_data_org", "competition:football:eur:champions_league", "CL", "2026",
+        ["FIXTURES", "RESULTS", "STANDINGS"], CoverageStatus.ABSENT, "live_call",
+        notes="sondé 2026-08-13 : HTTP 404 sur /matches ET /standings — "
+              "la saison 2026-27 n'a pas encore démarré",
+        at=verified_0813)
 
     # ── Tennis : dataset tennis-data.co.uk EMBARQUÉ (ATP+WTA 2000-2026) ─────────
     # Le circuit est la compétition : c'est lui qui définit la population de joueurs

@@ -114,6 +114,11 @@ def test_full_decrit_la_source_pas_la_richesse_du_contenu(db):
                and e.status is CoverageStatus.FULL
                and e.provider == "football_data_org"]
     assert entries, "aucune couverture RESULTS 2026 déclarée"
+    # Les huit domestiques de 2026-27 étaient encore à zéro rencontre le 5 août :
+    # leur note DOIT porter la mention. Les compétitions ouvertes le 13 août
+    # avaient, elles, des rencontres réellement terminées — leur imposer la même
+    # mention ferait écrire une réserve fausse.
     for entry in entries:
-        assert "vide" in (entry.notes or ""), (
-            f"{entry.competition_id} : FULL sans mention que le contenu peut être vide")
+        assert entry.notes, f"{entry.competition_id} : FULL sans note de vérification"
+        assert "vide" in entry.notes or "terminées" in entry.notes, (
+            f"{entry.competition_id} : FULL sans dire si le contenu est exploitable")
