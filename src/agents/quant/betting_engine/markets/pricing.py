@@ -30,6 +30,22 @@ from enum import Enum
 
 from .families import MarketFamily
 
+#: Familles dont les issues NE PARTITIONNENT PAS l'espace des résultats.
+#:
+#: Mesuré sur le catalogue : 2 193 marchés de props sur 2 436 n'offrent qu'une
+#: sélection, et ceux qui en offrent deux portent des paliers EMBOÎTÉS (« 1+ »,
+#: « 2+ ») dont le second implique le premier. Dans les deux cas la marge du
+#: bookmaker n'est pas mesurable depuis l'intérieur du marché : il n'existe
+#: aucune masse connue vers laquelle normaliser.
+#:
+#: Une méthode inter-paliers est concevable — la monotonie de l'échelle contraint
+#: les probabilités — mais elle n'est ni mesurée ni démontrée. Tant qu'elle ne
+#: l'est pas, `vig_adjusted_probability` reste None : une absence déclarée.
+_FAMILLES_SANS_PARTITION = frozenset({
+    MarketFamily.PLAYER_PROP,
+    MarketFamily.PLAYER_COMBO_PROP,
+})
+
 
 class PricingStatus(str, Enum):
     PRICED = "PRICED"                            # probabilité défendable produite
@@ -157,7 +173,7 @@ class MarketPricing:
         return self.status is PricingStatus.PRICED
 
     @property
-    def masse_attendue(self) -> float:
+    def masse_attendue(self) -> float | None:
         """À combien somment les issues de CE marché quand la marge est retirée.
 
         Vaut 1 sur une partition — issues mutuellement exclusives et exhaustives :
@@ -165,10 +181,20 @@ class MarketPricing:
         chance : ses trois issues sont les unions deux à deux d'une partition à
         trois, donc chaque résultat y est couvert exactement deux fois.
 
+        Vaut `None` quand les issues NE PARTITIONNENT RIEN, et c'est le cas des
+        props de joueur. « Ronald Donkor 1+ » et « Ronald Donkor 2+ » ne sont pas
+        deux issues complémentaires mais deux contrats EMBOÎTÉS : le second
+        implique le premier. Leurs probabilités implicites ne somment vers aucune
+        masse connue, et les normaliser vers 1 fabriquerait un prix sans marge
+        qui ne correspond à rien — puis un edge, puis une EV, sur un marché dont
+        la marge n'est pas mesurable de l'intérieur.
+
         Ce n'est PAS une propriété du modèle, c'est la structure du marché. La
         confondre avec 1 aurait normalisé les cotes d'une double chance vers une
         somme de 1 et fabriqué un edge de −50 % sur chacune de ses issues.
         """
+        if self.family in _FAMILLES_SANS_PARTITION:
+            return None
         return 2.0 if self.family is MarketFamily.DOUBLE_CHANCE else 1.0
 
     def with_market_odds(self, odds_par_selection: Mapping) -> "MarketPricing":
@@ -181,14 +207,18 @@ class MarketPricing:
         """
         cotes = {nom: c for nom, c in odds_par_selection.items()
                  if c and c > 1.0 and any(s.selection == nom for s in self.selections)}
-        complet = len(cotes) == len(self.selections) and len(self.selections) > 1
+        cible = self.masse_attendue
+        # Deux conditions, pas une : toutes les issues cotées ET une partition à
+        # laquelle les ramener. Un marché de props peut être « complet » au sens
+        # des cotes reçues sans partitionner quoi que ce soit.
+        complet = (cible is not None
+                   and len(cotes) == len(self.selections) and len(self.selections) > 1)
 
         sans_marge: dict = {}
         overround = None
         if complet:
             brutes = {nom: 1.0 / c for nom, c in cotes.items()}
             somme = sum(brutes.values())
-            cible = self.masse_attendue
             overround = round(somme / cible, 6)
             if somme > 0:
                 sans_marge = {nom: p * cible / somme for nom, p in brutes.items()}

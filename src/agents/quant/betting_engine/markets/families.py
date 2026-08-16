@@ -83,6 +83,48 @@ _CODE_SCORE = re.compile(r"^\d+:\d+$")
 #: registre de capacité qui le tranche.
 _LIBELLE_REMBOURSE = re.compile(r"(?i)rembours[ée]\s+si\s+match\s+nul")
 
+#: Code d'issue d'une prop « à paliers » : `pre:playerprops:{event}:{joueur}:{seuil}`.
+#:
+#: MESURÉ sur 84 issues de 12 événements, trois égalités vérifiées 84/84 :
+#:   · le premier segment est l'identifiant d'ÉVÉNEMENT du bookmaker ;
+#:   · le deuxième est l'identifiant JOUEUR Sportradar — contre-vérifié par le
+#:     champ TYPÉ `srPlayerId` de l'issue, jamais lu dans un libellé ;
+#:   · le dernier est le SEUIL, confirmé a posteriori par le libellé (« 1+ »).
+#:
+#: C'est cette conjonction qui fait passer `betType 3361` — 585 marchés, 6,1 %
+#: du catalogue observé — de OPAQUE à démontré. Le libellé n'a servi qu'à
+#: VÉRIFIER l'hypothèse structurelle, jamais à la produire.
+_CODE_PALIER_JOUEUR = re.compile(r"^pre:playerprops:(\d+):(\d+):(\d+)$")
+
+#: `betType` -> statistique de joueur, pour les familles dont la mesure a établi
+#: que le betType détermine SEUL la statistique (un intitulé unique par betType
+#: sur l'échantillon). Le libellé n'entre pas dans la règle ; il la documente.
+STAT_DU_BET_TYPE = {
+    # Football — paliers `pre:playerprops`
+    3361: "ASSISTS",
+    # Basket — `player=…|total=…`
+    5598: "POINTS",
+    5619: "ASSISTS",
+    5620: "REBOUNDS",
+    5622: "THREE_POINTERS",
+    6044: "POINTS_REBOUNDS_ASSISTS",
+    6045: "POINTS_ASSISTS",
+    6046: "ASSISTS_REBOUNDS",
+    6047: "POINTS_REBOUNDS",
+}
+
+#: `betType` -> (statistique agrégée, mode de règlement). Le MODE est ce qui
+#: sépare deux marchés de signature structurelle identique : « Duo marqueurs »
+#: règle sur une SOMME, « Double chance marqueurs » sur une DISJONCTION. Les
+#: confondre ferait payer un pari pour un autre.
+STAT_COMBO_DU_BET_TYPE = {
+    5702: ("GOALS", "SUM"),          # Duo Buteurs
+    5703: ("GOALS", "SUM"),          # Trio Buteurs
+    5594: ("POINTS", "ANY"),         # Double chance marqueurs — « ou »
+    5595: ("POINTS", "SUM"),         # Duo marqueurs de points
+    5596: ("POINTS", "SUM"),         # Trio marqueurs de points
+}
+
 
 class MarketFamily(str, Enum):
     """Familles CANONIQUES. Une famille ne porte aucune ligne : la ligne est un
@@ -98,6 +140,16 @@ class MarketFamily(str, Enum):
     TEAM_TOTALS = "TEAM_TOTALS"
     HANDICAP = "HANDICAP"
     OUTRIGHT_WINNER = "OUTRIGHT_WINNER"
+    #: Statistique d'UN joueur contre un seuil (« Napheesa Collier, plus de 9,5
+    #: points »). Canonicaliser cette famille ne la rend PAS modélisable :
+    #: aucun modèle de statistique de joueur n'est validé pour le football ni
+    #: pour le basket. Le contrat est lisible, la probabilité ne l'est pas.
+    PLAYER_PROP = "PLAYER_PROP"
+    #: Statistique AGRÉGÉE de plusieurs joueurs (« Duo Buteurs », « Trio
+    #: marqueurs »). Famille distincte de PLAYER_PROP, et pas seulement par le
+    #: nombre de joueurs : son règlement porte sur une somme ou une disjonction,
+    #: donc sur une loi JOINTE que rien ne mesure ici.
+    PLAYER_COMBO_PROP = "PLAYER_COMBO_PROP"
     DOUBLE_CHANCE = "DOUBLE_CHANCE"
     DRAW_NO_BET = "DRAW_NO_BET"
     EXACT_SCORE = "EXACT_SCORE"
@@ -150,6 +202,44 @@ def _parametres_canoniques(obs: RawMarketObservation, **explicites) -> dict:
     parametres.update(obs.portee)
     parametres.update(obs.sujet)
     return parametres
+
+
+def _palier_joueur(obs: RawMarketObservation) -> dict | None:
+    """L'identité d'une prop « à paliers », si le code la porte ENTIÈREMENT.
+
+    Exige que TOUTES les issues s'accordent sur l'événement et le joueur, et que
+    chacune porte son propre seuil. Une issue dissidente invalide le marché
+    plutôt que d'en résoudre une partie : une identité à moitié démontrée ne
+    permet ni de régler un pari, ni de l'apparier en CLV.
+
+    Le champ TYPÉ `srPlayerId` sert de contre-preuve quand il est présent. S'il
+    contredit le code, on refuse — deux sources structurées en désaccord ne se
+    départagent pas au libellé.
+    """
+    if not obs.selections:
+        return None
+    evenements, joueurs, seuils = set(), set(), []
+    for s in obs.selections:
+        trouve = _CODE_PALIER_JOUEUR.match(str(s.code or ""))
+        if trouve is None:
+            return None
+        evenements.add(trouve.group(1))
+        joueurs.add(trouve.group(2))
+        seuils.append(trouve.group(3))
+        typed = getattr(s, "sr_player_id", None)
+        if typed and typed != f"sr:player:{trouve.group(2)}":
+            return None
+    if len(evenements) != 1 or len(joueurs) != 1:
+        return None
+    joueur = joueurs.pop()
+    return {
+        "player": f"sr:player:{joueur}",
+        # Les seuils sont TOUS conservés : ce marché en contient plusieurs, et
+        # n'en garder qu'un fabriquerait une identité qui ne règle rien.
+        "thresholds": ",".join(seuils),
+        "n_players": 1,
+        "threshold_form": "CUMULATIVE",
+    }
 
 
 def classify(obs: RawMarketObservation) -> MarketClassification:
@@ -278,7 +368,70 @@ def _classify(obs: RawMarketObservation) -> MarketClassification:
             _parametres_canoniques(obs),
             "événement déclaré outright par la source + liste « Vainqueur »")
 
-    # 8) Tout le reste est CONSERVÉ sans être nommé. C'est le cas majoritaire, et
+    # 8) Statistique d'UN joueur, forme « paliers » : le code d'issue porte
+    #    l'événement, le joueur et le seuil, et le champ typé `srPlayerId` du
+    #    même code confirme le joueur. Trois égalités vérifiées 84/84.
+    #
+    #    Chaque palier est SON PROPRE marché : « 1+ » et « 2+ » ne partitionnent
+    #    rien — ce sont deux contrats emboîtés, pas deux issues complémentaires.
+    #    Le seuil entre donc dans l'identité, et le no-vig reste interdit (§4).
+    palier = _palier_joueur(obs)
+    if palier is not None:
+        stat = STAT_DU_BET_TYPE.get(obs.bet_type)
+        if stat is None:
+            return MarketClassification(
+                MarketFamily.UNMAPPED, ClassificationStatus.AMBIGUOUS,
+                _parametres_canoniques(obs, **palier),
+                f"prop joueur structurellement lisible, mais betType {obs.bet_type} "
+                "n'a pas de statistique démontrée")
+        return MarketClassification(
+            MarketFamily.PLAYER_PROP, ClassificationStatus.CANONICALIZED,
+            _parametres_canoniques(obs, statistic=stat, **palier),
+            f"code pre:playerprops (événement:joueur:seuil) + betType {obs.bet_type} "
+            f"= {stat}")
+
+    # 9) Statistique d'un joueur, forme « player=…|total=… ». Ici le joueur et
+    #    la ligne sont TYPÉS dans le specialBetValue ; seul le betType nomme la
+    #    statistique, et la mesure a établi qu'il la détermine seul.
+    joueur = obs.parametres.get("player")
+    if joueur and obs.ligne is not None:
+        stat = STAT_DU_BET_TYPE.get(obs.bet_type)
+        if stat is None:
+            return MarketClassification(
+                MarketFamily.UNMAPPED, ClassificationStatus.AMBIGUOUS,
+                _parametres_canoniques(obs, player=joueur, line=obs.ligne),
+                f"prop joueur typée, mais betType {obs.bet_type} n'a pas de "
+                "statistique démontrée")
+        return MarketClassification(
+            MarketFamily.PLAYER_PROP, ClassificationStatus.CANONICALIZED,
+            _parametres_canoniques(obs, player=joueur, line=obs.ligne,
+                                   statistic=stat, n_players=1),
+            f"paramètres typés player + total + betType {obs.bet_type} = {stat}")
+
+    # 10) Statistique AGRÉGÉE de plusieurs joueurs. Le mode de règlement vient
+    #     du betType et de lui seul : « Duo marqueurs » somme, « Double chance
+    #     marqueurs » prend la disjonction. Deux marchés de même forme, deux
+    #     payoffs — ils ne peuvent pas partager une identité.
+    joueurs = obs.parametres.get("players")
+    if joueurs and obs.ligne is not None:
+        combo = STAT_COMBO_DU_BET_TYPE.get(obs.bet_type)
+        if combo is None:
+            return MarketClassification(
+                MarketFamily.UNMAPPED, ClassificationStatus.AMBIGUOUS,
+                _parametres_canoniques(obs, players=joueurs, line=obs.ligne),
+                f"prop multi-joueurs typée, mais betType {obs.bet_type} n'a pas "
+                "de mode de règlement démontré")
+        stat, mode = combo
+        membres = tuple(p for p in str(joueurs).split("-") if p)
+        return MarketClassification(
+            MarketFamily.PLAYER_COMBO_PROP, ClassificationStatus.CANONICALIZED,
+            _parametres_canoniques(obs, players=joueurs, line=obs.ligne,
+                                   statistic=stat, settlement_mode=mode,
+                                   n_players=len(membres)),
+            f"paramètres typés players + total + betType {obs.bet_type} = "
+            f"{stat}/{mode} sur {len(membres)} joueurs")
+
+    # 11) Tout le reste est CONSERVÉ sans être nommé. C'est le cas majoritaire, et
     #    c'est le comportement voulu : un inventaire honnête montre son ignorance.
     return MarketClassification(
         MarketFamily.UNMAPPED, ClassificationStatus.OBSERVED,
