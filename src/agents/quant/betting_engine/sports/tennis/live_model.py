@@ -51,6 +51,22 @@ def _matches(tour: str):
     return load_tennis_data(tour).matches
 
 
+#: Au-delà, les notes ne décrivent plus la forme actuelle et il faut le DIRE.
+#: Le jeu de données est une fixture figée : rien ne la rafraîchit tout seul, donc
+#: rien ne signalait qu'un joueur n'avait plus été vu depuis des semaines.
+PEREMPTION_JOURS = 21
+
+
+@functools.lru_cache(maxsize=2)
+def _dernier_match(tour: str) -> dict:
+    """Date du dernier match connu par joueur — mesure la péremption d'une note."""
+    vu: dict[str, object] = {}
+    for m in _matches(tour):
+        vu[m.p1_name] = m.tourney_date
+        vu[m.p2_name] = m.tourney_date
+    return vu
+
+
 @functools.lru_cache(maxsize=1)
 def all_tennis_players():
     """Entités des DEUX circuits (espaces de noms séparés — aucun croisement possible)."""
@@ -86,8 +102,14 @@ def build_tennis_features(event: CanonicalEvent, *, gateway, as_of: datetime) ->
         if not name or n < params.min_prior_matches:
             missing.add(f"elo_history_insufficient:{p.canonical_id}")
             continue
+        vu_le = _dernier_match(tour).get(name)
         participant_features[p.canonical_id] = {
-            "elo_rating": ratings.get(name, params.init_rating), "prior_matches": n}
+            "elo_rating": ratings.get(name, params.init_rating), "prior_matches": n,
+            # Une note issue de matchs vieux de six semaines vaut ce qu'elle vaut,
+            # mais l'utilisateur doit pouvoir le voir : c'est le plus gros écart
+            # constaté entre ce que le modèle croit et ce qui s'est joué depuis.
+            "derniere_observation": vu_le,
+            "anciennete_jours": (as_of.date() - vu_le).days if vu_le else None}
     return EventFeatureSet(
         event_id=event.event_id, sport="tennis", as_of=as_of,
         feature_set_version="tennis-elo-1.0", event_features={"tour": tour},
@@ -125,12 +147,21 @@ class TennisMoneylineModel:
         readiness = self.assess_data_readiness(event, features)
         n = min(fa["prior_matches"], fb["prior_matches"])
         data_quality = round(min(1.0, n / 80.0), 3)          # complétude d'historique réelle
+        vieillesse = max((f.get("anciennete_jours") or 0) for f in (fa, fb))
+        alertes = ["modèle Elo tennis EXPERIMENTAL — aucune mise réelle ; intervalle non estimé"]
+        if vieillesse >= PEREMPTION_JOURS:
+            alertes.append(
+                f"notes Elo PÉRIMÉES : le dernier match connu d'un des deux joueurs "
+                f"remonte à {vieillesse} jours. Le jeu de données est une fixture "
+                f"figée — tout ce qui s'est joué depuis est ignoré par la probabilité "
+                f"ci-dessus.")
         expl = PredictionExplanation(
             top_features=[("player_a_elo", round(fa["elo_rating"], 1)),
                           ("player_b_elo", round(fb["elo_rating"], 1)),
+                          ("anciennete_notes_jours", vieillesse),
                           ("tour", features.event_features.get("tour", "?"))],
             missing_features=set(features.missing_features),
-            warnings=["modèle Elo tennis EXPERIMENTAL — aucune mise réelle ; intervalle non estimé"],
+            warnings=alertes,
             confidence_drivers=["Elo sans fuite ; K fixe ; circuits ATP/WTA séparés ; "
                                 "variantes surface/Glicko-2 mesurées non supérieures"])
 
