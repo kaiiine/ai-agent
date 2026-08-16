@@ -25,13 +25,27 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
 from . import session
-from .constraints import PromotionalBalance, constraints_from_request
+from .constraints import EFFACER, PromotionalBalance, constraints_from_request
 from .evidence import EVIDENCE_KEY
 from .observability import collect_readiness
 from .recommend import COMPLETED, bankroll_decimal, run_recommendation
 from .renderer import render
-from .review_preference import cible_depuis_texte, objectif_de_cote
+from .review_preference import SANS_SEUIL, cible_depuis_texte, objectif_de_cote
 from .window import resolve_window
+
+
+def _seuil_demande(texte: str):
+    """Traduit la préférence de probabilité en valeur de contrainte.
+
+    Trois issues distinctes, et les confondre a un coût mesuré : « rien dit »
+    hérite du tour précédent, « pas de seuil » l'EFFACE, un nombre le remplace.
+    Sans la sentinelle, « finalement pas de seuil » laissait le 90 % en place et
+    le moteur imposait une contrainte que l'utilisateur venait de retirer.
+    """
+    lu = cible_depuis_texte(texte)
+    if lu == SANS_SEUIL:
+        return EFFACER
+    return lu
 
 
 def _enrichir(response, sports):
@@ -84,13 +98,24 @@ def betting_recommend(
         allow_combos: autoriser les combinés (construits par le Combo Builder seul).
         freebets: montant de freebets déclaré. Restitué mais JAMAIS optimisé :
             un freebet n'est pas du cash et ses conditions ne sont pas modélisées.
-        probability_preference: la préférence de probabilité TELLE QUE DITE
-            ("environ 90 % de chances", "au moins 85 % de probabilité"). Elle
-            ORDONNE l'affichage de la revue et ne filtre rien : les candidats sous
-            le seuil restent montrés. Ne JAMAIS demander à l'utilisateur de
-            l'abaisser pour avoir le droit de voir des candidats — le rendu
-            s'occupe déjà de dire qu'aucun ne l'atteint et d'afficher les
-            meilleurs en dessous.
+        probability_preference: la préférence de probabilité TELLE QUE DITE, et
+            SEULEMENT si l'utilisateur en a exprimé une.
+
+            N'INVENTE JAMAIS DE SEUIL. « des paris sûrs », « quasi certain de
+            passer » n'est PAS un seuil : c'est une demande de classement par
+            probabilité décroissante, et le rendu la traite ainsi. Poser 90 % à
+            sa place impose une contrainte que personne n'a demandée, puis fait
+            répondre « aucun pari » à une question qui admettait une réponse.
+
+            Transmets la formulation brute : "environ 90 % de chances", "80 %",
+            "pas de seuil". Les trois sont traitées différemment — un nombre
+            remplace le seuil, "pas de seuil" l'EFFACE, une chaîne vide conserve
+            celui du tour précédent.
+
+            Elle ORDONNE l'affichage et ne filtre rien : les candidats sous le
+            seuil restent montrés. Ne demande JAMAIS à l'utilisateur de l'abaisser
+            pour avoir le droit de voir des candidats — le rendu dit déjà
+            qu'aucun ne l'atteint et affiche les meilleurs en dessous.
         odds_preference: l'objectif de COTE ou de multiplicateur, tel que dit
             ("faire x2", "autour de 2 de cote", "entre 1.8 et 2.2", "doubler ma
             mise"). Toujours SUBORDONNÉ à la préférence de probabilité : ne
@@ -120,7 +145,7 @@ def betting_recommend(
         bankroll=bankroll_decimal(bankroll) if bankroll else None,
         promotional_balances=soldes,
         allow_combos=allow_combos or None,
-        probability_target=cible_depuis_texte(probability_preference),
+        probability_target=_seuil_demande(probability_preference),
         target_odds=objectif_de_cote(odds_preference),
     )
     if contraintes.time_window is None:

@@ -369,17 +369,35 @@ def _blocage_actionable(c: Any) -> str:
 
 
 def _render_cote_seule(classes, objectif, top: int) -> list[str]:
-    """Un objectif de cote sans seuil de probabilité demandé."""
-    from .review_preference import plus_proches_de_la_cote
+    """Un objectif de cote SANS seuil de probabilité demandé.
+
+    Le tri est alors par PROBABILITÉ PRUDENTE décroissante, et c'est la seule
+    réponse honnête à « des paris quasi sûrs, autour de x2 » : on respecte
+    l'objectif de cote, puis on montre les plus probables. Inventer un seuil —
+    90 %, par exemple — imposerait une contrainte que personne n'a demandée,
+    puis ferait répondre « aucun pari » à une question qui admettait une réponse.
+    """
+    from .review_preference import les_plus_probables, plus_proches_de_la_cote
 
     dans = [r for r in classes if objectif.contient(r.candidate.bookmaker_odds)]
-    lignes = ["", f"## Candidats proches de l'objectif — {objectif.describe()}", ""]
-    if not dans:
+    lignes = ["", f"## Les plus probables autour de l'objectif — "
+                  f"{objectif.describe()}", ""]
+    if dans:
         lignes += [
-            f"Aucun candidat évalué ne tombe dans la fourchette. Voici les "
-            f"{min(top, len(classes))} plus proches :", ""]
-        dans = plus_proches_de_la_cote(classes, objectif)
-    for i, r in enumerate(dans[:top], start=1):
+            f"{len(dans)} candidat(s) dans la fourchette de cote, classés par "
+            "probabilité prudente estimée décroissante. Aucun seuil de "
+            "probabilité n'a été demandé, et aucun n'est imposé.",
+            "",
+        ]
+        ordonnes = les_plus_probables(dans)
+    else:
+        lignes += [
+            "Aucun candidat évalué ne tombe dans la fourchette de cote. Voici "
+            f"les {min(top, len(classes))} plus proches, classés par proximité :",
+            "",
+        ]
+        ordonnes = plus_proches_de_la_cote(classes, objectif)
+    for i, r in enumerate(ordonnes[:top], start=1):
         lignes += _fiche_candidat(r, numero=i)
     return lignes
 

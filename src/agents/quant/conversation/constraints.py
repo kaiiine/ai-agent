@@ -172,6 +172,32 @@ def parse_scope(value: Any) -> Scope:
     return frozenset(items)
 
 
+class _Effacer:
+    """Sentinelle : « retire cette contrainte », par opposition à « rien dit ».
+
+    Une conversation a besoin des deux. `None` hérite de la valeur précédente —
+    c'est ce qui évite de reposer la question de la bankroll à chaque tour.
+    `EFFACER` la retire, et c'est ce qui permet à « finalement, pas de seuil »
+    d'annuler un « 90 % » dit deux tours plus tôt.
+    """
+
+    _instance: "_Effacer | None" = None
+
+    def __new__(cls) -> "_Effacer":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "EFFACER"
+
+    def __reduce__(self):
+        return (_Effacer, ())
+
+
+EFFACER = _Effacer()
+
+
 def merge_constraints(
     previous: UserBettingConstraints | None,
     **updates: Any,
@@ -185,7 +211,12 @@ def merge_constraints(
     l'héritage reposerait la question de la bankroll à chaque tour.
     """
     base = previous or UserBettingConstraints()
-    champs = {k: v for k, v in updates.items() if v is not None}
+    # `EFFACER` est une VALEUR, pas une absence. « pas de seuil » doit retirer un
+    # seuil déjà posé ; traité comme None il aurait été confondu avec « rien dit »
+    # et aurait laissé le seuil précédent en place. Mesuré en production :
+    # l'utilisateur demandait « pas de seuil », le moteur continuait d'exiger 90 %.
+    champs = {k: (None if v is EFFACER else v)
+              for k, v in updates.items() if v is not None}
     return replace(base, **champs) if champs else base
 
 

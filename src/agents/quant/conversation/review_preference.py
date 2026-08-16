@@ -36,24 +36,64 @@ from typing import Any, Sequence
 _POURCENTAGE = re.compile(r"(\d{1,3}(?:[.,]\d+)?)\s*%")
 _MOTS_PROBABILITE = ("chance", "probabilit", "sûr", "sur de", "certitude", "fiab")
 
+#: Une réponse qui ne porte QUE le seuil : « 80 % », « ≥ 80 % », « >=80% ».
+#: Vient d'un champ dédié ou d'une question fermée, où le mot « probabilité » est
+#: déjà porté par la question. L'exiger quand même rejetait la réponse et laissait
+#: le seuil PRÉCÉDENT en place — mesuré en production : l'utilisateur demandait
+#: 80 %, le moteur continuait d'annoncer 90 %.
+_SEUIL_NU = re.compile(r"^[\s≥>=<≤~≈environ]*(\d{1,3}(?:[.,]\d+)?)\s*%?\s*$")
 
-def cible_depuis_texte(texte: str | None) -> Decimal | None:
-    """La probabilité demandée, si l'utilisateur en a exprimé une.
+#: L'utilisateur refuse EXPLICITEMENT tout seuil. Ce n'est pas « pas de réponse » :
+#: c'est une instruction, et elle doit EFFACER un seuil déjà posé. Sans elle,
+#: « pas de seuil, juste des paris quasi sûrs » laissait le 90 % précédent en
+#: place — le moteur imposait alors une contrainte que personne n'avait demandée.
+_AUCUN_SEUIL = re.compile(
+    r"(?i)(pas\s+de\s+seuil|aucun\s+seuil|sans\s+seuil|peu\s+importe\s+(?:le\s+)?"
+    r"(?:seuil|pourcentage)|pas\s+de\s+(?:pourcentage|minimum)|no\s+threshold)")
 
-    Un pourcentage seul ne suffit pas : « mise 10 % de ma bankroll » en contient
-    un et ne demande aucune probabilité. Il faut que la phrase parle de chances,
-    de probabilité ou de fiabilité.
+#: Sentinelle : « l'utilisateur a dit NON à tout seuil ». Distinct de None, qui
+#: veut dire « il n'a rien dit » et laisse hériter la valeur précédente.
+SANS_SEUIL = "SANS_SEUIL"
+
+
+def cible_depuis_texte(texte: str | None):
+    """La probabilité demandée — ou `SANS_SEUIL` si elle est explicitement refusée.
+
+    Trois retours, et la distinction compte :
+
+    - `None`   : l'utilisateur n'a rien dit. La valeur précédente est conservée.
+    - `SANS_SEUIL` : il a dit ne pas en vouloir. Le seuil est EFFACÉ, et le
+      produit classe alors par probabilité décroissante plutôt que d'en inventer un.
+    - un `Decimal` : le seuil demandé.
+
+    Un pourcentage seul dans une PHRASE ne suffit pas — « mise 10 % de ma
+    bankroll » en contient un et ne demande aucune probabilité. Mais une réponse
+    qui ne contient QUE le nombre vient d'une question fermée, où le sens est
+    déjà porté par la question : la refuser laisserait le seuil précédent en
+    place, ce qui est exactement le défaut observé en production.
     """
     if not texte:
         return None
-    minuscules = texte.lower()
+    minuscules = texte.lower().strip()
+
+    if _AUCUN_SEUIL.search(minuscules):
+        return SANS_SEUIL
+
+    nu = _SEUIL_NU.match(minuscules)
+    if nu:
+        return _fraction(nu.group(1))
+
     if not any(mot in minuscules for mot in _MOTS_PROBABILITE):
         return None
     trouve = _POURCENTAGE.search(minuscules)
     if not trouve:
         return None
+    return _fraction(trouve.group(1))
+
+
+def _fraction(brut: str) -> Decimal | None:
     try:
-        valeur = Decimal(trouve.group(1).replace(",", ".")) / Decimal(100)
+        valeur = Decimal(brut.replace(",", ".")) / Decimal(100)
     except (InvalidOperation, ValueError):
         return None
     return valeur if Decimal(0) < valeur <= Decimal(1) else None
@@ -282,6 +322,34 @@ class RevueParObjectifs:
         return tuple(r for r in self.c_sous_le_seuil
                      if self.objectif_cote.contient(
                          getattr(r, "candidate", r).bookmaker_odds))
+
+
+def les_plus_probables(classes: Sequence[Any],
+                       objectif: TargetOddsPreference | None = None) -> tuple[Any, ...]:
+    """Les candidats ordonnés par PROBABILITÉ PRUDENTE décroissante.
+
+    C'est la réponse à « je veux des paris quasi sûrs » quand aucun seuil n'est
+    donné. Inventer un seuil à la place — 90 % par exemple — impose une contrainte
+    que personne n'a demandée, puis fait répondre « aucun pari » à une question
+    qui admettait parfaitement une réponse : les plus probables d'abord.
+
+    `objectif` restreint d'abord à la fourchette de cote quand elle est demandée.
+    L'ordre est donc : respecter l'objectif de cote, PUIS trier par probabilité —
+    jamais l'inverse, sans quoi le prix piloterait la sélection.
+
+    Un candidat sans borne basse mesurée part en fin de liste : il n'est pas
+    moins probable, il est non comparable, et le placer devant un candidat mesuré
+    le ferait passer pour meilleur.
+    """
+    lignes = list(classes)
+    if objectif is not None:
+        dans = [r for r in lignes
+                if objectif.contient(getattr(r, "candidate", r).bookmaker_odds)]
+        lignes = dans or lignes
+    return tuple(sorted(
+        lignes,
+        key=lambda r: (-(_borne_basse(r) if _borne_basse(r) is not None else Decimal(-1)),
+                       str(getattr(getattr(r, "candidate", r), "candidate_id", "")))))
 
 
 def plus_proches_de_la_cote(classes: Sequence[Any],

@@ -561,3 +561,118 @@ def test_le_rendu_ne_promet_jamais_de_certitude():
 
     assert not enforce(texte, None).blocked
     assert "prudente" in texte or "basse mesurée" in texte
+
+
+# ══ 11 · Le seuil ne s'invente pas, et se laisse changer ═══════════════════
+#
+# Trois défauts relevés sur de vrais runs, chacun ancré ici :
+#   · l'utilisateur demande 80 %, le moteur continue d'annoncer 90 % ;
+#   · l'utilisateur ne demande AUCUN seuil, le moteur en pose un à 90 % ;
+#   · l'utilisateur veut « des paris sûrs », le moteur répond « aucun pari »
+#     au lieu de classer par probabilité décroissante.
+@pytest.mark.parametrize("texte, attendu", [
+    ("80%", Decimal("0.80")),
+    ("≥ 80 %", Decimal("0.80")),
+    (">=80%", Decimal("0.80")),
+    ("80", Decimal("0.80")),
+    ("environ 85 %", Decimal("0.85")),
+])
+def test_une_reponse_qui_ne_porte_que_le_seuil_est_lue(texte, attendu):
+    """Elle vient d'une question fermée : le mot « probabilité » est déjà dans
+    la question. La refuser laissait le seuil PRÉCÉDENT en place."""
+    assert cible_depuis_texte(texte) == attendu
+
+
+@pytest.mark.parametrize("texte", [
+    "pas de seuil en tant que tel, juste des paris quasi sûrs de passer",
+    "aucun seuil",
+    "sans seuil",
+    "peu importe le seuil",
+])
+def test_un_refus_de_seuil_est_une_instruction_pas_un_silence(texte):
+    from src.agents.quant.conversation.review_preference import SANS_SEUIL
+
+    assert cible_depuis_texte(texte) == SANS_SEUIL
+
+
+def test_un_refus_de_seuil_efface_le_seuil_precedent():
+    """« Rien dit » hérite du tour précédent ; « pas de seuil » l'EFFACE. Les
+    confondre laissait le moteur exiger 90 % après que l'utilisateur l'ait retiré."""
+    from src.agents.quant.conversation.constraints import (
+        EFFACER, UserBettingConstraints, merge_constraints,
+    )
+
+    avant = UserBettingConstraints(probability_target=Decimal("0.90"))
+
+    rien_dit = merge_constraints(avant, probability_target=None)
+    efface = merge_constraints(avant, probability_target=EFFACER)
+
+    assert rien_dit.probability_target == Decimal("0.90"), "l'héritage est conservé"
+    assert efface.probability_target is None, "le refus retire la contrainte"
+
+
+def test_sans_seuil_le_produit_classe_par_probabilite_decroissante():
+    """« Des paris quasi sûrs, autour de x2 » admet une réponse : les plus
+    probables parmi ceux qui respectent la cote. Inventer un seuil à la place
+    fait répondre « aucun pari » à une question qui n'en demandait pas tant."""
+    from src.agents.quant.conversation.review_preference import (
+        les_plus_probables, objectif_de_cote,
+    )
+
+    rangs = [_Rang(_candidat(event="a", low=0.40, odds=2.0)),
+             _Rang(_candidat(event="b", low=0.75, odds=2.1)),
+             _Rang(_candidat(event="c", low=0.60, odds=1.9)),
+             _Rang(_candidat(event="d", low=0.99, odds=9.0))]   # hors fourchette
+
+    ordonnes = les_plus_probables(rangs, objectif_de_cote("x2"))
+
+    assert [r.candidate.event_id for r in ordonnes] == ["b", "c", "a"], (
+        "les plus probables d'abord, et seulement dans la fourchette de cote")
+
+
+def test_une_borne_basse_absente_ne_passe_pas_devant_une_mesuree():
+    from src.agents.quant.conversation.review_preference import les_plus_probables
+
+    rangs = [_Rang(_candidat(event="sans", low=None, odds=2.0)),
+             _Rang(_candidat(event="avec", low=0.30, odds=2.0))]
+
+    ordonnes = les_plus_probables(rangs)
+
+    assert [r.candidate.event_id for r in ordonnes] == ["avec", "sans"]
+
+
+def test_le_rendu_sans_seuil_ne_mentionne_aucun_seuil_impose():
+    from src.agents.quant.conversation.review_preference import objectif_de_cote
+    from src.agents.quant.conversation.summary import render_marches_en_revue
+
+    revue = _Revue([_Rang(_candidat(event=f"e{i}", low=0.4 + i / 10, odds=2.0))
+                    for i in range(3)])
+
+    texte = "\n".join(render_marches_en_revue(
+        revue, cible=None, objectif=objectif_de_cote("x2")))
+
+    assert "plus probables" in texte.lower()
+    assert "Aucun seuil de probabilité n'a été demandé" in texte
+    assert "90 %" not in texte, "aucun seuil ne doit être inventé"
+
+
+# ══ 12 · Les conseils relevés sur de vrais runs sont refusés ═══════════════
+@pytest.mark.parametrize("phrase", [
+    "Allonger la fenêtre temporelle (par ex. inclure les prochains jours) peut "
+    "faire apparaître de nouveaux événements.",
+    "les rapports de maturité sont publiés quotidiennement",
+    "Augmenter le bankroll : avec plus de capital, le moteur pourra proposer des "
+    "combinaisons.",
+    "Surveiller les mises à jour du moteur",
+    "dès qu'un des modèles passera le seuil de maturité, elles deviendront misables",
+    "Abaisser la probabilité cible (ex. 80 %) permettrait de récupérer des sélections.",
+    "Élargir la fourchette de cote peut faire apparaître de nouvelles opportunités.",
+])
+def test_les_conseils_infondes_releves_en_production_sont_bloques(phrase):
+    """Aucune de ces phrases n'est vraie : la bankroll n'entre dans aucun critère
+    d'éligibilité, aucun rapport n'est publié quotidiennement, allonger la fenêtre
+    ajoute des candidats tous EXPERIMENTAL, et abaisser un seuil n'a jamais été
+    nécessaire pour VOIR des candidats — le rendu les montre déjà."""
+    from src.agents.quant.conversation.guard import enforce
+
+    assert enforce(phrase, None).blocked

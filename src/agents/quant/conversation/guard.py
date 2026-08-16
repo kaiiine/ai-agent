@@ -245,6 +245,27 @@ _PROMESSE_INFONDEE = re.compile(
     r"|(?:augmente|am[ée]liore|maximise)[^.]{0,60}(?:trouver|obtenir)\s+"
     r"(?:des\s+)?paris\s+valid[ée]s"
     r"|reviens\s+(?:demain|plus\s+tard)[^.]{0,40}(?:validé|actionnable|misable)"
+    # Relevées telles quelles sur de vraies réponses du modèle, toutes fausses :
+    # allonger la fenêtre ne promeut aucun candidat (elle en ajoute, tous
+    # EXPERIMENTAL) ; aucun rapport de maturité n'est publié quotidiennement ;
+    # la bankroll n'entre dans AUCUN critère d'éligibilité, donc l'augmenter ne
+    # peut rien rendre misable ; et « surveiller les mises à jour du moteur »
+    # promet une évolution que rien ne planifie.
+    r"|(?:allonger|étendre|elargir|élargir)\s+la\s+fen[êe]tre[^\n]{0,90}"
+    r"(?:faire\s+apparaître|nouvelles?\s+opportunit|répondre|apparaître)"
+    r"|rapports?\s+de\s+maturité[^\n]{0,40}(?:publiés?|quotidien)"
+    r"|augmenter\s+(?:le\s+|votre\s+|la\s+)?bankroll[^\n]{0,90}"
+    r"(?:pourra|permettra|proposer|actionnable|misable)"
+    r"|surveiller\s+les\s+mises?\s+à\s+jour\s+du\s+moteur"
+    r"|passera\s+le\s+seuil\s+de\s+maturité"
+    # Demander à l'utilisateur d'abaisser son exigence pour avoir le DROIT de
+    # voir des candidats : le rendu montre déjà les meilleurs sous le seuil, et
+    # aucun seuil de probabilité n'a jamais empêché un candidat d'être affiché.
+    r"|(?:abaisser|baisser|réduire|reduire|relâcher|relacher|élargir|elargir|"
+    r"étendre|etendre)\s+(?:la\s+|le\s+|votre\s+|les\s+)?"
+    r"(?:probabilité|seuil|exigence|fourchette|crit[èe]re|contrainte)[^\n]{0,90}"
+    r"(?:permettrait|permet|récupérer|recuperer|obtenir|faire\s+apparaître|"
+    r"apparaître|opportunit|actionnable|misable)"
     r")")
 
 
