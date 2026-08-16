@@ -676,3 +676,94 @@ def test_les_conseils_infondes_releves_en_production_sont_bloques(phrase):
     from src.agents.quant.conversation.guard import enforce
 
     assert enforce(phrase, None).blocked
+
+
+# ══ 13 · Un pari doit se lire et se placer ════════════════════════════════
+#
+# Relevé sur un vrai run : le produit listait « Casa Pia AC – Benfica · Double
+# chance (1N) · 4.0 » sans jamais dire SUR QUI, et « AFC Ajax · Nombre de buts
+# — seuil 2.5 @ 2.6 » où deux nombres se suivaient sans qu'on sache lequel
+# était la cote. Une sélection qu'on ne peut pas nommer ne peut pas être placée.
+def _avec_roles(selection, famille, sport="football", **params):
+    c = _candidat(event="e1", selection=selection, famille=famille,
+                  parametres=params or {})
+    object.__setattr__(c, "sport", sport)
+    object.__setattr__(c, "event_id",
+                       "event:football:liga:2026-08-17T21:15:00Z:"
+                       "away=benfica|home=casa_pia")
+    object.__setattr__(c, "participant_ids",
+                       ("team:football:prt:casa_pia", "team:football:prt:benfica"))
+    return c
+
+
+def test_une_double_chance_nomme_l_equipe_pas_le_role():
+    """« 1N — domicile ou nul » demandait à l'utilisateur de savoir qui reçoit."""
+    from src.agents.quant.conversation.summary import libelle_issue
+
+    texte = libelle_issue(_avec_roles("home_or_draw", MarketFamily.DOUBLE_CHANCE))
+
+    assert "1N" not in texte
+    assert "domicile" not in texte
+    assert "match nul" in texte
+
+
+@pytest.mark.parametrize("selection, attendu_role", [
+    ("home_or_draw", "home"),
+    ("draw_or_away", "away"),
+    ("home_or_away", "home"),
+])
+def test_chaque_issue_composite_est_nommee(selection, attendu_role):
+    from src.agents.quant.conversation.summary import _roles, libelle_issue
+
+    c = _avec_roles(selection, MarketFamily.DOUBLE_CHANCE)
+    texte = libelle_issue(c)
+
+    assert _roles(c).get(attendu_role), "le rôle doit être résolu"
+    assert "domicile" not in texte and "extérieur" not in texte
+
+
+def test_un_role_introuvable_retombe_sur_une_formulation_honnete():
+    """Un mauvais nom prétend beaucoup plus qu'un rôle dit en français."""
+    from src.agents.quant.conversation.summary import libelle_issue
+
+    c = _candidat(selection="home_or_draw", famille=MarketFamily.DOUBLE_CHANCE)
+    object.__setattr__(c, "event_id", "event:sans:roles")
+    object.__setattr__(c, "participant_ids", ())
+
+    assert "l'équipe à domicile" in libelle_issue(c)
+
+
+def test_un_total_se_lit_sans_confondre_la_ligne_et_la_cote():
+    """« MOINS — Nombre de buts — seuil 2.5 @ 2.6 » a été lu par un modèle comme
+    une cote de 2,5. Deux nombres qui se suivent doivent être désambiguïsés."""
+    from src.agents.quant.conversation.summary import pari_lisible
+
+    c = _avec_roles("under", MarketFamily.TOTALS, line="2.5")
+
+    assert pari_lisible(c) == "moins de 2.5 buts"
+
+
+@pytest.mark.parametrize("sport, unite", [
+    ("football", "buts"), ("basketball", "points"),
+    ("baseball", "runs"), ("tennis", "jeux"),
+])
+def test_le_total_porte_l_unite_de_son_sport(sport, unite):
+    from src.agents.quant.conversation.summary import pari_lisible
+
+    c = _avec_roles("over", MarketFamily.TOTALS, sport=sport, line="5.5")
+
+    assert pari_lisible(c) == f"plus de 5.5 {unite}"
+
+
+def test_la_fiche_porte_le_pari_dans_sa_ligne_de_tete():
+    """Une reformulation en aval peut perdre les lignes de détail ; elle ne peut
+    pas perdre le titre."""
+    from src.agents.quant.conversation.summary import _fiche_candidat
+
+    lignes = _fiche_candidat(_Rang(_avec_roles(
+        "home_or_draw", MarketFamily.DOUBLE_CHANCE)))
+    tete = lignes[1]
+
+    assert "PARI" in tete
+    assert "COTE" in tete
+    assert "match nul" in tete

@@ -175,10 +175,23 @@ _LIBELLE_FAMILLE = {
 #: nom canonique — « Naomi Osaka », jamais « player_b ».
 _LIBELLE_ISSUE = {
     "over": "PLUS", "under": "MOINS",
-    "home_or_draw": "1N — domicile ou nul",
-    "draw_or_away": "N2 — nul ou extérieur",
-    "home_or_away": "12 — pas de nul",
     "other": "tout autre score",
+}
+
+#: Issues COMPOSITES : elles couvrent plusieurs résultats à la fois, et chacun
+#: se dit avec le NOM de l'équipe concernée.
+#:
+#: « 1N — domicile ou nul » était un code doublé d'une paraphrase de rôle. Sur
+#: « Casa Pia AC – Benfica », l'utilisateur devait savoir que Casa Pia reçoit
+#: pour comprendre sur qui il parie — et rien à l'écran ne le lui disait. Une
+#: sélection qu'on ne peut pas nommer est une sélection qu'on ne peut pas placer.
+#:
+#: `{0}` = équipe à domicile, `{1}` = équipe à l'extérieur ; les deux sont
+#: résolues par le référentiel d'identités via les rôles écrits dans `event_id`.
+_ISSUE_COMPOSITE = {
+    "home_or_draw": "{0} gagne ou match nul",
+    "draw_or_away": "match nul ou {1} gagne",
+    "home_or_away": "{0} ou {1} gagne (pas de nul)",
 }
 
 #: Rôles DITS EN FRANÇAIS, pour le cas où le participant n'est pas nommable —
@@ -217,12 +230,77 @@ def libelle_issue(candidat: Any) -> str:
     issue = candidat.selection
     if issue in _LIBELLE_ISSUE:
         return _LIBELLE_ISSUE[issue]
+    if issue in _ISSUE_COMPOSITE:
+        return _issue_composite(candidat, issue)
     if issue in ("draw", "nul"):
         return "match nul"
     if ":" in issue:
         return f"score {issue} (domicile:extérieur)"
     nomme = selection_lisible(candidat)
     return nomme if nomme != issue else _ROLE_SANS_NOM.get(issue, issue)
+
+
+def _issue_composite(candidat: Any, issue: str) -> str:
+    """Une issue qui couvre plusieurs résultats, dite avec les NOMS des équipes.
+
+    Les rôles viennent d'`event_id`, écrit par le domaine au moment de la
+    résolution — jamais de l'ordre de `participant_ids`, qui n'est pas un
+    contrat et intervertirait deux équipes le jour où il changerait.
+
+    Si un rôle manque, on retombe sur la formulation de rôle plutôt que
+    d'emprunter un nom au hasard : « l'équipe à domicile » ne prétend rien de
+    plus que ce qu'on sait, un mauvais nom prétend beaucoup trop.
+    """
+    from .renderer import participant_label
+
+    par_role = _roles(candidat)
+    noms = []
+    for role in ("home", "away"):
+        identifiant = par_role.get(role)
+        noms.append(participant_label([identifiant]) if identifiant
+                    else _ROLE_SANS_NOM[role])
+    return _ISSUE_COMPOSITE[issue].format(*noms)
+
+
+#: Ce que compte un total, par famille de marché. Sert uniquement à écrire
+#: « moins de 2,5 BUTS » plutôt que « MOINS — Nombre de buts — seuil 2.5 ».
+_UNITE_DU_TOTAL = {
+    "football": "buts", "basketball": "points", "american_football": "points",
+    "baseball": "runs", "hockey": "buts", "tennis": "jeux", "volleyball": "points",
+}
+
+
+def pari_lisible(candidat: Any) -> str:
+    """Le pari en une phrase placable : sur quoi, et à quelle valeur.
+
+    Existe parce que la composition mécanique « {issue} — {marché} » produisait
+    « MOINS — Nombre de buts — seuil 2.5 @ 2.6 », où deux nombres se suivent
+    sans que rien ne dise lequel est la ligne et lequel est la cote. Relevé en
+    production : une réponse a présenté le seuil 2,5 COMME la cote.
+
+    Les totaux se disent donc « moins de 2,5 buts » ; les handicaps portent leur
+    valeur ; le reste garde la forme « issue — marché », déjà sans ambiguïté.
+    """
+    famille = getattr(candidat.family, "value", str(candidat.family))
+    parametres = candidat.parameters or {}
+    ligne = parametres.get("line")
+    issue = candidat.selection
+
+    if famille in ("TOTALS", "TEAM_TOTALS") and ligne is not None:
+        sens = {"over": "plus de", "under": "moins de"}.get(issue)
+        if sens:
+            unite = _UNITE_DU_TOTAL.get(candidat.sport, "unités")
+            camp = parametres.get("side")
+            precision = f" pour {camp}" if camp else ""
+            return f"{sens} {ligne} {unite}{precision}"
+
+    if famille == "HANDICAP":
+        handicap = parametres.get("handicap")
+        nomme = libelle_issue(candidat)
+        if handicap is not None:
+            return f"{nomme} avec handicap {handicap}"
+
+    return f"{libelle_issue(candidat)} — {libelle_marche(candidat)}"
 
 
 def rencontre_du_candidat(candidat: Any) -> str:
@@ -322,9 +400,15 @@ def _fiche_candidat(r: Any, numero: Any = None) -> list[str]:
     """
     c = r.candidate
     tete = f"{numero if numero is not None else r.global_rank}. "
+    # La ligne de tête porte le PARI COMPLET — sur quoi, à quelle cote — et pas
+    # seulement le nom de la rencontre. Une reformulation en aval peut perdre
+    # les lignes de détail ; elle ne peut pas perdre le titre. Mesuré : une
+    # réponse listait « Casa Pia – Benfica · Double chance · 4.0 » sans jamais
+    # dire sur qui, et l'utilisateur ne pouvait pas placer le pari.
     return [
         f"{tete}{rencontre_du_candidat(c)}{_quand(c)}"
         f"  ({_LIBELLE_SPORT.get(c.sport, c.sport)})",
+        f"   ▸ PARI : {pari_lisible(c)}  ·  COTE {_valeur_ou_non_mesure(c.bookmaker_odds)}",
         f"   Marché : {libelle_marche(c)}",
         f"   Sélection : {libelle_issue(c)}",
         f"   Cote : {_valeur_ou_non_mesure(c.bookmaker_odds)}",
