@@ -94,6 +94,30 @@ def _outils_mcp():
 
     Une panne MCP ne coûte JAMAIS le build : sans serveur joignable, la liste est
     vide et le specialist travaille comme avant.
+
+    ── POURQUOI CE CHEMIN DIVERGE DE `graph.py` ────────────────────────────
+    L'orchestrateur sépare les deux routages :
+
+        selected_tools = retriever.get(query) + _mcp.select(query)
+
+    Ici les outils MCP entrent au contraire dans l'index sémantique, avec les
+    natifs. C'est DÉLIBÉRÉ et MESURÉ — ne pas « aligner » sans refaire la mesure.
+
+    Sur 23 requêtes étiquetées (`tests/test_mcp_routing_specialist.py`), avec
+    82 outils dont 43 MCP :
+
+        index unique (ce fichier)     6/7 pos · 10/10 nég · 6/6 natif = 22/23
+        deux voies (comme graph.py)   7/7 pos ·  0/10 nég · 6/6 natif = 13/23
+
+    `mcp_runtime().select()` rend SEPT outils sur CHAQUE requête, sans exception
+    — « montre-moi les fichiers modifiés dans le dépôt » comprise. Il ne
+    discrimine pas. Dans une sélection conversationnelle large, sept outils de
+    trop se noient ; ici ils seraient liés à chaque tour de chaque phase, et
+    redeviendraient le bruit permanent que le routage par groupe (`0c9a03b`)
+    avait supprimé.
+
+    L'alignement paraît propre et coûte 9 cas sur 23. La divergence est le
+    résultat de la mesure, pas un oubli de câblage.
     """
     try:
         from src.mcp_client.runtime import mcp_runtime
@@ -390,6 +414,20 @@ def _run(task: str) -> str:
     all_tools = _get_coding_tools()
     tool_map = {t.name: t for t in all_tools}  # full map — every tool remains callable
 
+    # DEUX VOIES, comme l'orchestrateur (graph.py) : les outils natifs passent par
+    # l'index sémantique, les outils MCP par LEUR PROPRE routeur à deux étages,
+    # qui lit déjà le `capabilities_hint` de chaque serveur.
+    #
+    # Les indexer ensemble faisait une TROISIÈME architecture, différente des deux
+    # qui existaient. Mesurée, elle ne dégradait rien (22/23 sur un jeu de
+    # référence incluant cinq requêtes ambiguës) — mais elle portait 31 % de la
+    # cardinalité de l'index, et surtout elle faisait diverger deux chemins qui
+    # résolvent le même problème. C'est cette divergence qui coûte : le jour où
+    # l'un des deux évolue, l'autre le suit par erreur ou reste en arrière sans
+    # que rien ne le signale.
+    #
+    # `tool_map` reste construit sur TOUS les outils : un outil non lié demeure
+    # exécutable, et retirer MCP de l'index ne doit pas retirer ce filet.
     # Re-use cached retriever — rebuilding Chroma embeds ~100 docs on every call otherwise
     global _retriever_cache, _retriever_tool_names
     _names = tuple(t.name for t in all_tools)
