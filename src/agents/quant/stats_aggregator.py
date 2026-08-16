@@ -226,20 +226,3 @@ def opponent_ratings_for_form(form: list[dict]) -> dict[int, float]:
         return {}
 
 
-def head_to_head(team1_id: int, team2_id: int, last: int = 10) -> list[dict]:
-    """Historique des confrontations directes."""
-    fixtures = _api_get("fixtures/headtohead", {"h2h": f"{team1_id}-{team2_id}", "last": last})
-    results = []
-    for f in fixtures:
-        goals_home = f["goals"]["home"]
-        goals_away = f["goals"]["away"]
-        if goals_home is None or goals_away is None:
-            continue
-        results.append({
-            "date": f["fixture"]["date"][:10],
-            "home": f["teams"]["home"]["name"],
-            "away": f["teams"]["away"]["name"],
-            "goals_home": goals_home,
-            "goals_away": goals_away,
-        })
-    return results
