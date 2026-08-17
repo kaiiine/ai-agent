@@ -200,6 +200,38 @@ _PONT_FR_EN: dict[str, str] = {
     "supprime": "delete remove",
     "téléverse": "upload",
     "enregistre": "save record",
+    # Piloter un navigateur. Ces entrées ont l'air de vocabulaire de domaine, et
+    # la règle ci-dessus l'interdit — mais ce sont des mots français ORDINAIRES
+    # du web, pas des noms de serveurs ni d'outils : tout MCP de navigateur en
+    # profite, aucun n'est nommé.
+    #
+    # Elles existent parce que rien d'autre n'a marché. Les outils Playwright se
+    # décrivent en trois à cinq mots d'anglais (« Navigate to a URL »), donc
+    # 0/4 en français contre 5-8/8 en anglais. Indexer le `capabilities_hint` du
+    # serveur corrigeait bien ces 4 positifs, mais polluait 10 à 14 des 16
+    # négatifs dans les TROIS formes essayées — document composite, découpé en
+    # capacités, ou chaque capacité nommant « navigateur » (la pire : 9 ancres
+    # quasi-identiques, l'erreur du commit 0c9a03b refaite).
+    #
+    # Aucun seuil ne triait, car les distributions se recouvraient :
+    #     graines Playwright   positifs [1, 1, 2, 2]
+    #                          négatifs [0, 0, 0, 1×9, 2, 2, 2, 3]
+    # L'embedding ne sépare pas « regarder une page » de « écrire une page » en
+    # français : « page », « formulaire », « rendu » appartiennent aux deux, et
+    # seul le VERBE discrimine.
+    #
+    # Le pont réussit là où l'index échoue parce qu'il n'ajoute AUCUN document —
+    # il ne peut donc pas inonder les 8 places — et parce qu'il ne se déclenche
+    # que sur des mots que les négatifs n'emploient jamais. Mesuré : positifs
+    # 3/4, négatifs 0/16.
+    "navigateur": "browser page tab",
+    "onglet": "browser tab",
+    "clique": "click element",
+    "cliquer": "click element",
+    "console": "console messages log",
+    "remplis": "fill form type",
+    "s'affiche": "renders is displayed snapshot",
+    "formulaire": "form",
 }
 
 
@@ -222,6 +254,28 @@ def _pont_linguistique(query: str) -> str:
     return f"{query} | {' '.join(dict.fromkeys(' '.join(ajouts).split()))}"
 
 
+def _groupes_mcp(tools: list) -> dict[str, list[str]]:
+    """Un groupe par serveur MCP, d'après le préfixe `serveur__outil`.
+
+    Même raison que les groupes natifs — on ne veut jamais `git_status` sans
+    `git_add` — et elle est plus forte encore ici. Router correctement ne suffit
+    pas : le pont lexical amenait UN outil par requête de navigateur, par exemple
+    `browser_navigate` sans `browser_snapshot`. Naviguer sans pouvoir regarder ne
+    vérifie rien.
+
+    Le groupe n'était pas sûr avant le pont : il multipliait par 24 la moindre
+    graine parasite, et les négatifs en avaient sur 13 requêtes sur 16. Il l'est
+    maintenant qu'ils sont à zéro — l'amplification n'a plus rien à amplifier.
+    C'est cet ordre qui compte, pas les deux mécanismes pris ensemble.
+    """
+    groupes: dict[str, list[str]] = {}
+    for t in tools:
+        serveur, _, _ = t.name.partition("__")
+        if _:
+            groupes.setdefault(serveur, []).append(t.name)
+    return groupes
+
+
 class CodingToolRetriever:
     """Semantic tool selector initialised once per _run() call.
 
@@ -237,6 +291,7 @@ class CodingToolRetriever:
         self._fallback = list(tools)
         self._store = None
         self._k = k
+        self._serveurs_mcp = _groupes_mcp(tools)
 
         try:
             embeddings = OllamaEmbeddings(model="nomic-embed-text")
@@ -271,8 +326,9 @@ class CodingToolRetriever:
             group = _TOOL_TO_GROUP.get(name)
             if group:
                 selected.update(_TOOL_GROUPS[group])
-            else:
-                selected.add(name)
+                continue
+            serveur, _, _ = name.partition("__")
+            selected.update(self._serveurs_mcp.get(serveur, [name]))
 
         # 3. Return in original order, only tools we have
         return [t for name, t in self._tools_by_name.items() if name in selected]

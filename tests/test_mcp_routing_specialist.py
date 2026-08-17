@@ -75,6 +75,82 @@ POSITIFS_NATIFS = [
     ("note la décision sur le rendu des animations", "axon_note"),
 ]
 
+
+# ── Navigateur — labels écrits AVANT de brancher Playwright MCP ─────────────
+#
+# Playwright partage le vocabulaire front-end de l'agent code, ce que Blender ne
+# faisait pas : « vérifie que la page s'affiche » et « écris le composant
+# Header » se ressemblent bien plus que « rendu 3D » et « landing page ». Les
+# NÉGATIFS de cette section sont donc la partie la plus susceptible de casser —
+# c'est exactement ce type de pollution qui a fait chuter le score de 22/23 à
+# 13/23 quand on avait tenté de router les MCP séparément.
+POSITIFS_NAVIGATEUR = [
+    "vérifie que la page d'accueil s'affiche dans le navigateur",
+    "clique sur le menu hamburger et vérifie qu'il s'ouvre",
+    "y a-t-il des erreurs dans la console du navigateur",
+    "remplis le formulaire de contact et soumets-le",
+]
+
+#: Ceux-là ne doivent JAMAIS tirer d'outil navigateur : ils s'écrivent dans des
+#: fichiers, ils ne se regardent pas dans un onglet. Le recouvrement lexical est
+#: maximal — « page », « bouton », « formulaire » appartiennent aux deux mondes.
+NEGATIFS_FRONT = [
+    "écris le composant Header en react",
+    "ajoute une classe tailwind à ce bouton",
+    "crée la page d'accueil du site",
+    "corrige l'erreur de typage dans page.tsx",
+    "installe framer-motion et configure-le",
+    "renomme le fichier du formulaire de contact",
+]
+
+
+def _outils_navigateur(noms: list[str]) -> list[str]:
+    """Les outils PLAYWRIGHT, pas l'outil natif `browser_screenshot`.
+
+    La distinction est essentielle et mesurée. `browser_screenshot` fuit déjà sur
+    5 des 6 tâches d'écriture front-end — non par proximité sémantique, mais
+    parce qu'il est déclaré dans le groupe `shell` : toute tâche qui installe,
+    build ou lance quelque chose tire le groupe entier, lui compris.
+
+    C'est un artefact de GROUPEMENT, antérieur à Playwright, et Playwright ne
+    l'héritera pas : ses outils arrivent par le chemin MCP, routés par leur
+    description, hors de tout groupe natif. Confondre les deux ferait attribuer
+    à la bascule une fuite qu'elle n'a pas causée.
+    """
+    return [n for n in noms if n.startswith("playwright__")]
+
+
+def test_les_requetes_de_verification_visuelle_atteignent_le_navigateur(selection):
+    """Ce qui route le navigateur est le PONT LEXICAL, pas l'index.
+
+    Playwright était joignable et exécutable, mais inatteignable en français :
+    ses outils se décrivent en trois à cinq mots d'anglais (« Navigate to a
+    URL »), donc 0/4 en français contre 5-8/8 en anglais.
+
+    Indexer le `capabilities_hint` du serveur corrigeait ces 4 positifs et
+    cassait les négatifs, dans les trois formes essayées — document composite
+    (~10/16 pollués), découpé en capacités (~13/16), chaque capacité nommant
+    « navigateur » (14/16, la pire : 9 ancres quasi-identiques, soit l'erreur du
+    commit 0c9a03b refaite). Aucun seuil ne triait, les distributions se
+    recouvrant : positifs [1, 1, 2, 2] graines contre négatifs [0, 0, 0, 1×9,
+    2, 2, 2, 3].
+
+    Le seuil est à 3 et non à 4 : « clique sur le menu hamburger » ne remonte
+    rien, « menu » et « s'ouvre » dominant le seul mot ponté. C'est une limite
+    connue, pas un test permissif.
+    """
+    reussis = sum(1 for r in POSITIFS_NAVIGATEUR if _outils_navigateur(selection(r)))
+    assert reussis >= 3, f"rappel navigateur insuffisant ({reussis}/4)"
+
+
+def test_ecrire_du_code_front_ne_tire_jamais_le_navigateur(selection):
+    """Le garde le plus important de la bascule Playwright. Un composant
+    s'écrit dans un fichier ; l'ouvrir dans un onglet ne le fait pas exister."""
+    fuites = [(r, _outils_navigateur(selection(r))) for r in NEGATIFS_FRONT
+              if _outils_navigateur(selection(r))]
+    assert not fuites, f"fuite navigateur sur des tâches d'écriture : {fuites}"
+
+
 #: Planchers de RÉGRESSION, pas des cibles. Mesurés le 16 août 2026.
 _MIN_POSITIFS_MCP = 6      # sur 6 (hors cas connu défaillant)
 _MIN_NEGATIFS_MCP = 10     # sur 10 — aucune fuite tolérée
