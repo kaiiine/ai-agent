@@ -33,13 +33,21 @@ _TOOL_GROUPS: dict[str, list[str]] = {
         "local_read_file", "local_grep",
         "url_fetch",
     ],
+    # `browser_screenshot` a été retiré d'ici. Le motif invoqué — la vérification
+    # visuelle est couplée au shell, on lance le dev server puis on regarde — dit
+    # la dépendance dans le MAUVAIS SENS, et la mesure l'a montré.
+    #
+    # Il n'arrivait pas en passager d'une tâche de build : il était la GRAINE. Ses
+    # ancres françaises (« voir ce que donne le site ») sont si front-end qu'il
+    # remontait sur « crée la page d'accueil » et « corrige l'erreur de typage
+    # dans page.tsx », deux tâches sans aucun shell, et il traînait les cinq
+    # outils du groupe derrière lui. Sur « installe framer-motion », qui a pourtant
+    # un vrai besoin de shell, celui-ci arrivait quand même par accident.
+    #
+    # Un outil ne rejoint donc ce groupe que s'il EST une commande shell, pas
+    # parce qu'on l'emploie souvent après une commande shell.
     "shell": [
         "shell_run", "shell_cd", "shell_pwd", "shell_ls", "shell_kill_bg",
-        # La vérification visuelle est couplée aux commandes shell, pas aux autres
-        # producteurs d'images : on lance le dev server puis on regarde la page.
-        # Cet outil était AUSSI déclaré dans un groupe « visual », et l'index inverse
-        # en écrasait un — il tirait donc mermaid et download_asset au lieu du shell.
-        "browser_screenshot",
     ],
     "git": [
         "git_status", "git_log", "git_diff", "git_suggest_commit",
@@ -65,11 +73,34 @@ _TOOL_GROUPS: dict[str, list[str]] = {
     ],
 }
 
-_TOOL_TO_GROUP: dict[str, str] = {
-    tool: group
-    for group, tools in _TOOL_GROUPS.items()
-    for tool in tools
-}
+def _index_inverse(groupes: dict[str, list[str]]) -> dict[str, str]:
+    """L'index outil → groupe, en refusant qu'un outil appartienne à deux groupes.
+
+    Sans ce refus, la compréhension équivalente garde le DERNIER groupe vu et
+    perd l'autre sans rien dire. Ce n'est pas une précaution théorique : c'est
+    arrivé à `browser_screenshot`, déclaré à la fois dans « shell » et dans un
+    groupe « visual », qui tirait donc mermaid et download_asset au lieu du
+    shell. Le bug était invisible parce que le mauvais résultat était un
+    résultat valide — un groupe existant, simplement pas celui qu'on croyait.
+
+    Le garde-fou vaut plus que le cas qui l'a motivé : il reste vrai quand
+    `browser_screenshot` aura disparu, et il échoue au démarrage plutôt qu'en
+    routage silencieux.
+    """
+    index: dict[str, str] = {}
+    for groupe, outils in groupes.items():
+        for outil in outils:
+            if (deja := index.get(outil)) and deja != groupe:
+                raise ValueError(
+                    f"« {outil} » est déclaré dans « {deja} » ET « {groupe} » : "
+                    "l'index inverse en perdrait un silencieusement. "
+                    "Un outil appartient à un seul groupe."
+                )
+            index[outil] = groupe
+    return index
+
+
+_TOOL_TO_GROUP: dict[str, str] = _index_inverse(_TOOL_GROUPS)
 
 # ── Semantic anchors ───────────────────────────────────────────────────────────
 # Extra indexing phrases for tools whose description isn't enough to match
@@ -85,6 +116,21 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "exécuter une commande bash ou shell",
         "lancer le serveur de développement",
         "installer les dépendances npm pip cargo pnpm",
+        # Sans ces deux-là, `shell_run` sort 1er sur « installe les dépendances »,
+        # « installe framer-motion avec pnpm » et « lance npm install », mais est
+        # ABSENT de « installe framer-motion » et « ajoute la librairie
+        # framer-motion au projet » : l'ancre ci-dessus exige un mot d'écosystème,
+        # et l'embedding ne sait pas que framer-motion est un paquet npm.
+        #
+        # Le trou existait avant, masqué : `browser_screenshot` était alors dans
+        # le groupe shell et l'y tirait par accident. Le retirer a découvert un
+        # agent à qui l'on demande d'installer une lib sans lui donner de shell.
+        # Une seule ancre, pas deux : « ajouter une dépendance au projet » a été
+        # essayée et retirée. « au projet » est assez générique pour remonter sur
+        # « explique-moi ce que fait cette fonction », qui passait alors de zéro
+        # à cinq outils shell. Le gain d'une requête d'install ne payait pas cette
+        # fuite.
+        "installer une librairie ou un paquet par son nom",
         "builder le projet tsc next build",
         "lancer les tests jest pytest",
         "compiler le code",

@@ -294,3 +294,124 @@ def test_la_divergence_avec_l_orchestrateur_est_documentee():
     source = inspect.getsource(specialist)
     assert "graph.py" in source, "la divergence doit citer le chemin dont elle diverge"
     assert "test_mcp_routing_specialist" in source, "et le test qui la justifie"
+
+
+# ── Le groupement est-il sain en lui-même ? ────────────────────────────────
+#
+# Question posée AVANT de supprimer `browser_screenshot`, et pour cette raison
+# précise : si on retire le coupable d'abord, son symptôme le plus visible — il
+# fuyait sur 5 tâches d'écriture front-end sur 6 — s'éteint mécaniquement avec
+# lui, et l'on n'aura jamais vérifié le mécanisme. Le groupe `shell` garde cinq
+# outils qui survivront à cette suppression.
+#
+# Mesuré alors, et l'inverse de ce qui était écrit dans le code : il n'arrivait
+# pas en passager d'une tâche de build, il en était la GRAINE.
+_COMMANDES_SHELL = "shell_"
+
+
+def test_le_groupe_shell_ne_contient_que_des_commandes_shell():
+    """L'appartenance se juge sur ce qu'un outil EST, pas sur ce qu'on fait
+    juste après lui. « on lance le dev server puis on regarde la page » est une
+    séquence d'usage, pas une parenté — et c'est ce raccourci qui avait mis
+    `browser_screenshot` ici, d'où il tirait cinq outils sans rapport."""
+    from src.agents.coding.tool_retriever import _TOOL_GROUPS
+
+    intrus = [o for o in _TOOL_GROUPS["shell"] if not o.startswith(_COMMANDES_SHELL)]
+
+    assert not intrus, f"pas des commandes shell : {intrus}"
+
+
+def test_un_outil_dans_deux_groupes_echoue_au_demarrage():
+    """Le bug qui a réellement eu lieu : `browser_screenshot` était déclaré à la
+    fois dans « shell » et dans un groupe « visual ». L'index inverse gardait le
+    dernier vu et perdait l'autre SANS RIEN DIRE — il tirait donc mermaid et
+    download_asset au lieu du shell. Invisible, parce que le mauvais résultat
+    était un groupe valide, simplement pas celui qu'on croyait."""
+    from src.agents.coding.tool_retriever import _index_inverse
+
+    with pytest.raises(ValueError, match="un seul groupe"):
+        _index_inverse({"a": ["outil_x"], "b": ["outil_x"]})
+
+
+def test_le_garde_fou_laisse_passer_un_groupement_correct():
+    from src.agents.coding.tool_retriever import _TOOL_GROUPS, _index_inverse
+
+    assert _index_inverse(_TOOL_GROUPS)["shell_run"] == "shell"
+
+
+_INTENTIONS_SHELL = [
+    "installe les dépendances",
+    "installe framer-motion et configure-le",
+    "ajoute la librairie framer-motion au projet",
+    "lance npm install",
+    "build le projet",
+    "démarre le serveur de développement",
+    "lance les tests",
+]
+
+
+def test_installer_ou_builder_donne_toujours_un_shell(selection):
+    """Le trou que le retrait de `browser_screenshot` a DÉCOUVERT, et qu'il n'a
+    pas créé : il tirait le groupe shell par accident sur « installe
+    framer-motion et configure-le », masquant que `shell_run` n'y remontait pas.
+
+    Mesuré : `shell_run` sortait 1er dès que la requête nommait l'écosystème
+    (« dépendances », « pnpm », « npm install », « build ») et était ABSENT quand
+    elle ne nommait qu'un paquet — l'embedding ne sait pas que framer-motion est
+    un paquet npm. D'où l'ancre « installer une librairie ou un paquet par son
+    nom ». Un agent sommé d'installer une lib sans shell ne peut rien faire.
+    """
+    manquants = [q for q in _INTENTIONS_SHELL if "shell_run" not in selection(q)]
+
+    assert not manquants, f"aucun shell pour : {manquants}"
+
+
+_SANS_SHELL = [
+    "explique-moi ce que fait cette fonction",
+    "renomme le fichier du formulaire de contact",
+    "lis le contenu de page.tsx",
+]
+
+
+def test_lire_ou_expliquer_ne_tire_pas_le_shell(selection):
+    """Le contrepoids de l'ancre ci-dessus. Une seconde ancre avait été essayée,
+    « ajouter une dépendance au projet », et retirée : « au projet » remontait
+    sur « explique-moi ce que fait cette fonction », qui passait de zéro à cinq
+    outils shell. Une requête d'install gagnée ne payait pas cette fuite.
+
+    « écris le composant Header en react » n'est PAS dans cette liste : il tire
+    les cinq outils via `shell_cd`/`shell_pwd`, et c'est assumé — écrire un
+    composant précède presque toujours un build, et resserrer davantage
+    demanderait des signaux négatifs dont le coût dépasse la pollution.
+    """
+    from src.agents.coding.tool_retriever import _TOOL_GROUPS
+
+    shell = set(_TOOL_GROUPS["shell"])
+    fuites = [(q, sorted(set(selection(q)) & shell)) for q in _SANS_SHELL
+              if set(selection(q)) & shell]
+
+    assert not fuites, f"shell tiré sans raison : {fuites}"
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Le couplage dev-server n'est pas fait. Mesuré :\n\n"
+    "  « vérifie que la page d'accueil s'affiche dans le navigateur »\n"
+    "        → 24 outils Playwright, shell_run ABSENT\n"
+    "  « y a-t-il des erreurs dans la console du navigateur »\n"
+    "        → 24 outils Playwright, shell_run ABSENT\n"
+    "  « démarre le serveur de développement puis vérifie la page »\n"
+    "        → shell_run présent, ZÉRO outil Playwright\n\n"
+    "Chaque moitié de l'intention, jamais les deux : l'agent peut piloter un "
+    "navigateur sans pouvoir démarrer le serveur vers lequel le pointer, ou "
+    "l'inverse.\n\n"
+    "Ce besoin justifiait de mettre `browser_screenshot` dans le groupe `shell`. "
+    "Le moyen était faux — il y devenait la GRAINE et polluait des tâches "
+    "d'écriture — mais le besoin lui survit, et le retrait le laisse à nu plutôt "
+    "qu'il ne le crée."
+))
+def test_piloter_un_navigateur_devrait_donner_un_shell(selection):
+    """Regarder une page qu'on n'a pas pu démarrer ne vérifie rien."""
+    sans_shell = [q for q in POSITIFS_NAVIGATEUR
+                  if _outils_navigateur(selection(q)) and "shell_run" not in selection(q)]
+
+    assert not sans_shell, f"navigateur sans moyen de servir la page : {sans_shell}"

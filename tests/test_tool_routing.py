@@ -493,13 +493,29 @@ def test_aucun_outil_du_specialist_dans_deux_groupes():
     assert not doublons, f"outils dans plusieurs groupes : {sorted(doublons)}"
 
 
-def test_le_specialist_voit_le_shell_quand_il_verifie_un_rendu():
-    """Le couplage réel : screenshot sans shell_run, c'est regarder une page que
-    l'on n'a pas pu démarrer."""
-    from src.agents.coding.tool_retriever import _TOOL_GROUPS, _TOOL_TO_GROUP
+def test_le_groupe_shell_ne_recrute_pas_par_voisinage_d_usage():
+    """Ce test affirmait l'inverse — que `browser_screenshot` DEVAIT être dans le
+    groupe `shell` — au motif que « screenshot sans shell_run, c'est regarder une
+    page que l'on n'a pas pu démarrer ». Le besoin est réel ; le moyen était faux,
+    et la mesure a montré le couplage dans le mauvais sens.
 
-    assert _TOOL_TO_GROUP["browser_screenshot"] == "shell"
-    assert "browser_screenshot" in _TOOL_GROUPS["shell"]
+    `browser_screenshot` n'arrivait pas en passager d'une tâche de build : il en
+    était la GRAINE. Ses ancres françaises (« voir ce que donne le site ») le
+    faisaient remonter sur « crée la page d'accueil du site » et « corrige
+    l'erreur de typage dans page.tsx » — deux tâches sans aucun shell — et il
+    tirait les cinq outils du groupe derrière lui. Sur « installe framer-motion »,
+    qui a pourtant un vrai besoin de shell, celui-ci arrivait par le même
+    accident, masquant que `shell_run` n'y remontait pas de lui-même.
+
+    Le besoin d'origine — piloter un navigateur exige de pouvoir démarrer le
+    serveur — reste entier et n'est PAS satisfait aujourd'hui. Il est mesuré et
+    suivi par `test_piloter_un_navigateur_devrait_donner_un_shell` dans
+    tests/test_mcp_routing_specialist.py, qui appartient au couplage dev-server.
+    """
+    from src.agents.coding.tool_retriever import _TOOL_GROUPS
+
+    intrus = [o for o in _TOOL_GROUPS["shell"] if not o.startswith("shell_")]
+    assert not intrus, f"recrutés par voisinage d'usage, pas par nature : {intrus}"
 
 
 # ── étage 1 hybride : un groupe NOMMÉ ne dépend pas d'un rang vectoriel ─────────
