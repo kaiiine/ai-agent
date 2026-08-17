@@ -134,7 +134,9 @@ Réponds en français.
               Max 3 cycles.
 
               FRONTEND : exit_code=0 ne veut pas dire « la page a du contenu ».
-              browser_screenshot("http://localhost:3000") → page blanche = bug.
+              Sers la page, puis REGARDE-LA avec les outils navigateur (MCP
+              Playwright) : arbre d'accessibilité, erreurs de console, requêtes
+              réseau échouées. Une page blanche ou une console rouge = bug.
               Ne jamais annoncer « opérationnel » sans avoir vu le rendu.
 
   ⑥ CLÔTURE   AXON.md seulement si l'architecture a changé (module, service,

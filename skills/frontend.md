@@ -206,7 +206,7 @@ aliases: [react, vite, frontend]
 
 ━━ SELF-CRITIQUE ANTI-SLOP — OBLIGATOIRE AVANT CLÔTURE ━━━━━━━━━━━━━━━━━━━━━━━━
 
-   ❌ INTERDIT d'appeler browser_screenshot sans avoir d'abord émis ce dev_explain :
+   ❌ INTERDIT d'ouvrir la page dans le navigateur sans avoir d'abord émis ce dev_explain :
 
    dev_explain("SELF-CRITIQUE RÉSULTAT
    CONTENU    : [✓ ou ✗] — aucun placeholder ? textes du brief ? pas de métriques inventées ?
@@ -216,7 +216,7 @@ aliases: [react, vite, frontend]
    COHÉRENCE  : [✓ ou ✗] — transitions uniformes ? effets cohérents avec le style global ?
    ANTI-SLOP  : [liste des violations trouvées, ou 'aucune']")
 
-   Si un ✗ → corriger les fichiers concernés AVANT d'appeler browser_screenshot.
+   Si un ✗ → corriger les fichiers concernés AVANT de regarder la page.
    ❌ Gradient violet générique · ❌ Emojis comme icônes · ❌ Métriques hors-brief · ❌ Lorem ipsum
    ❌ CTA générique si brief fournit un wording · ❌ Fond #000/#fff nu sans intention brief · ❌ Cards identiques
 
@@ -229,7 +229,8 @@ aliases: [react, vite, frontend]
    [ ] framer-motion hooks sont utilisés dans les composants (whileInView, animate, variants)
        — pas juste installé dans package.json mais réellement câblé sur les éléments visibles
    [ ] Au moins 1 effet visuel avancé présent : glassmorphisme OU glow OU gradient text
-   [ ] browser_screenshot confirme que la page n'est pas blanche
+   [ ] playwright__browser_snapshot confirme que la page a du contenu,
+       et playwright__browser_console_messages qu'aucune erreur ne remonte
 
 ⚠ GESTIONNAIRE DE PAQUETS — une seule famille par projet :
   pnpm dlx <pkg> (jamais npx) · pnpm add (jamais npm install) · pnpm <script> (jamais npm run).

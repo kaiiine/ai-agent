@@ -70,7 +70,11 @@ POSITIFS_NATIFS = [
     ("montre-moi le dernier commit", "git_log"),
     ("note cette décision dans la mémoire projet", "axon_note"),
     # Mixtes : natif attendu, vocabulaire partagé avec la 3D
-    ("fais une capture de la page d'accueil dans le navigateur", "browser_screenshot"),
+    #
+    # « fais une capture de la page d'accueil dans le navigateur » attendait ici
+    # `browser_screenshot`, supprimé. Le cas n'est pas perdu : il vit maintenant
+    # dans POSITIFS_NAVIGATEUR, où l'attendu est un outil Playwright — c'est le
+    # même besoin, routé vers son nouveau titulaire.
     ("lis le fichier qui décrit la scène du hero", "local_read_file"),
     ("note la décision sur le rendu des animations", "axon_note"),
 ]
@@ -89,6 +93,8 @@ POSITIFS_NAVIGATEUR = [
     "clique sur le menu hamburger et vérifie qu'il s'ouvre",
     "y a-t-il des erreurs dans la console du navigateur",
     "remplis le formulaire de contact et soumets-le",
+    # Repris de POSITIFS_NATIFS, où il attendait `browser_screenshot`.
+    "fais une capture de la page d'accueil dans le navigateur",
 ]
 
 #: Ceux-là ne doivent JAMAIS tirer d'outil navigateur : ils s'écrivent dans des
@@ -105,17 +111,17 @@ NEGATIFS_FRONT = [
 
 
 def _outils_navigateur(noms: list[str]) -> list[str]:
-    """Les outils PLAYWRIGHT, pas l'outil natif `browser_screenshot`.
+    """Les outils navigateur — tous Playwright depuis la suppression du natif.
 
-    La distinction est essentielle et mesurée. `browser_screenshot` fuit déjà sur
-    5 des 6 tâches d'écriture front-end — non par proximité sémantique, mais
-    parce qu'il est déclaré dans le groupe `shell` : toute tâche qui installe,
-    build ou lance quelque chose tire le groupe entier, lui compris.
+    Ce filtre a été écrit quand `browser_screenshot` existait encore, et c'est
+    lui qui a rendu la bascule mesurable : il fuyait alors sur 5 des 6 tâches
+    d'écriture front-end, et le confondre avec Playwright aurait attribué à la
+    bascule une fuite qu'elle n'avait pas causée.
 
-    C'est un artefact de GROUPEMENT, antérieur à Playwright, et Playwright ne
-    l'héritera pas : ses outils arrivent par le chemin MCP, routés par leur
-    description, hors de tout groupe natif. Confondre les deux ferait attribuer
-    à la bascule une fuite qu'elle n'a pas causée.
+    La séparation a servi deux fois. Elle a montré que la fuite venait du
+    GROUPEMENT et non du sens — `browser_screenshot` était la graine qui tirait
+    le groupe `shell` — puis, ce défaut corrigé séparément, elle a permis de
+    mesurer Playwright seul avant de supprimer son prédécesseur.
     """
     return [n for n in noms if n.startswith("playwright__")]
 
@@ -135,12 +141,14 @@ def test_les_requetes_de_verification_visuelle_atteignent_le_navigateur(selectio
     recouvrant : positifs [1, 1, 2, 2] graines contre négatifs [0, 0, 0, 1×9,
     2, 2, 2, 3].
 
-    Le seuil est à 3 et non à 4 : « clique sur le menu hamburger » ne remonte
-    rien, « menu » et « s'ouvre » dominant le seul mot ponté. C'est une limite
-    connue, pas un test permissif.
+    Le seuil est à 4 sur 5, pas à 5 : « clique sur le menu hamburger et vérifie
+    qu'il s'ouvre » ne remonte rien, « menu » et « s'ouvre » dominant le seul mot
+    ponté. C'est une limite connue et unique, pas un test permissif — les quatre
+    autres remontent les 24 outils du serveur.
     """
     reussis = sum(1 for r in POSITIFS_NAVIGATEUR if _outils_navigateur(selection(r)))
-    assert reussis >= 3, f"rappel navigateur insuffisant ({reussis}/4)"
+    assert reussis >= 4, (
+        f"rappel navigateur insuffisant ({reussis}/{len(POSITIFS_NAVIGATEUR)})")
 
 
 def test_ecrire_du_code_front_ne_tire_jamais_le_navigateur(selection):
@@ -154,7 +162,7 @@ def test_ecrire_du_code_front_ne_tire_jamais_le_navigateur(selection):
 #: Planchers de RÉGRESSION, pas des cibles. Mesurés le 16 août 2026.
 _MIN_POSITIFS_MCP = 6      # sur 6 (hors cas connu défaillant)
 _MIN_NEGATIFS_MCP = 10     # sur 10 — aucune fuite tolérée
-_MIN_POSITIFS_NATIFS = 6   # sur 6
+_MIN_POSITIFS_NATIFS = 5   # sur 5 — un cas est parti vers POSITIFS_NAVIGATEUR
 
 
 @pytest.fixture(scope="module")

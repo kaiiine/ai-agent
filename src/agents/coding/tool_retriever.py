@@ -83,9 +83,9 @@ def _index_inverse(groupes: dict[str, list[str]]) -> dict[str, str]:
     shell. Le bug était invisible parce que le mauvais résultat était un
     résultat valide — un groupe existant, simplement pas celui qu'on croyait.
 
-    Le garde-fou vaut plus que le cas qui l'a motivé : il reste vrai quand
-    `browser_screenshot` aura disparu, et il échoue au démarrage plutôt qu'en
-    routage silencieux.
+    Le garde-fou vaut plus que le cas qui l'a motivé : `browser_screenshot` a
+    depuis été supprimé, et la règle tient toujours pour les cinq commandes shell
+    qui lui survivent. Il échoue au démarrage plutôt qu'en routage silencieux.
     """
     index: dict[str, str] = {}
     for groupe, outils in groupes.items():
@@ -150,14 +150,20 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         "rechercher dans le code source",
         "trouver toutes les occurrences de",
     ],
-    "browser_screenshot": [
-        "vérifier le rendu visuel de l'application",
-        "voir ce que donne le site dans le navigateur",
-        "contrôler l'affichage de la page après le build",
-        "vérifier que la page n'est pas blanche",
-        "tester visuellement le résultat UI",
-        "screenshot du dev server localhost",
-    ],
+    # Les six ancres de `browser_screenshot` ont été SUPPRIMÉES avec lui, et
+    # délibérément pas transférées à Playwright — c'est le geste évident, et il
+    # est mesuré comme faux.
+    #
+    # Elles sont françaises, courtes, mono-intention : tout ce qui devrait bien
+    # router. Mais ce sont exactement celles dont la mesure a montré la fuite —
+    # « voir ce que donne le site dans le navigateur » sortait PREMIÈRE sur
+    # « crée la page d'accueil du site », et « contrôler l'affichage de la page
+    # après le build » sur « installe framer-motion ». Les recoller sur un outil
+    # Playwright rejouerait cette fuite, désormais multipliée par 24 par
+    # l'expansion de serveur.
+    #
+    # Ce qui route le navigateur est le pont lexical, pas des ancres françaises.
+
     "notebook_read": [
         "lire un notebook jupyter ipynb",
         "voir les cellules du notebook",

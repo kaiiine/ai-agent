@@ -45,7 +45,7 @@ def _get_coding_llm():
 def _get_coding_tools():
     from src.agents.coding.tools import (
         dev_plan_create, dev_plan_update, dev_plan_step_done, dev_explain, ask_clarification,
-        find_git_repos, propose_file_change, edit_file, browser_screenshot, load_skill,
+        find_git_repos, propose_file_change, edit_file, load_skill,
         project_graph_query,
     )
     from src.agents.filesystem.tools import (
@@ -67,7 +67,7 @@ def _get_coding_tools():
     )
     return [
         dev_plan_create, dev_plan_update, dev_plan_step_done, dev_explain, ask_clarification,
-        find_git_repos, propose_file_change, edit_file, browser_screenshot, load_skill,
+        find_git_repos, propose_file_change, edit_file, load_skill,
         project_graph_query,
         local_find_file, local_read_file, local_list_directory,
         local_grep, local_glob,

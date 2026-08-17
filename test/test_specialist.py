@@ -149,7 +149,7 @@ def test_le_prompt_de_base_impose_le_plan_et_les_outils_d_ecriture():
 def test_le_prompt_de_base_renvoie_vers_la_recherche_et_la_verification_visuelle():
     prompt = _base()
     assert "web_research_report" in prompt
-    assert "browser_screenshot" in prompt
+    assert "navigateur" in prompt, "le rendu se constate, il ne se déduit pas d'un exit_code"
 
 
 def test_le_skill_frontend_porte_les_regles_de_design_system():

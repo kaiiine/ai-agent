@@ -156,8 +156,10 @@ def test_expected_tools_are_cacheable():
         assert tool in CACHEABLE_TOOLS, f"{tool} should be in CACHEABLE_TOOLS"
 
 
-def test_browser_screenshot_not_cacheable():
-    assert "browser_screenshot" not in CACHEABLE_TOOLS
+def test_un_outil_a_effet_de_bord_n_est_pas_cachable():
+    """Portait sur `browser_screenshot`, supprimé. L'invariant vise le cache :
+    ce qui agit sur le monde ne se rejoue pas depuis un cache."""
+    assert "shell_kill_bg" not in CACHEABLE_TOOLS
 
 
 def test_shell_run_not_cacheable():
@@ -182,5 +184,7 @@ def test_invalidates_has_propose_file_change():
     assert "propose_file_change" in _INVALIDATES
 
 
-def test_browser_screenshot_not_in_invalidates():
-    assert "browser_screenshot" not in _INVALIDATES
+def test_un_outil_en_lecture_seule_n_invalide_rien():
+    """Idem : `browser_screenshot` ne modifiait pas le disque, donc n'invalidait
+    rien. `local_read_file` porte le même contrat et vit encore."""
+    assert "local_read_file" not in _INVALIDATES

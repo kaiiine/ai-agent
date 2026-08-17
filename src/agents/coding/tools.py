@@ -387,35 +387,18 @@ def find_git_repos(root: str = "") -> Dict[str, Any]:
     return {"status": "ok", "count": len(repos), "repos": repos}
 
 
-@tool("browser_screenshot")
-def browser_screenshot(
-    url: str,
-    width: int = 1280,
-    height: int = 900,
-    wait_ms: int = 2500,
-) -> dict:
-    """
-    Takes a headless screenshot of a running web application and returns its rendered page text.
-    Use this after starting the dev server to verify the UI visually matches expectations.
-
-    Workflow :
-      1. shell_run("npm run dev &") — lance le serveur en arrière-plan
-      2. shell_run("sleep 4")       — attends que le serveur soit prêt
-      3. browser_screenshot("http://localhost:3000") — capture + texte DOM
-      4. Analyse le texte retourné et corrige si nécessaire
-
-    Args:
-        url:      URL à capturer, ex. "http://localhost:3000"
-        width:    largeur du viewport en pixels (défaut 1280)
-        height:   hauteur du viewport en pixels (défaut 900)
-        wait_ms:  temps d'attente JS virtuel en ms (défaut 2500)
-    Returns:
-        {"status": "ok", "screenshot_path": str, "page_text": str, "url": str,
-         "audit": {"title": str, "h1s": list, "issueCount": int, "issues": list}}
-        {"status": "error", "error": str}
-    """
-    from src.infra.browser import screenshot_url
-    return screenshot_url(url, width=width, height=height, wait_ms=wait_ms)
+# `browser_screenshot` vivait ici, au-dessus de `src/infra/browser.py` : un
+# Playwright piloté à la main, une capture, et un audit JS de six règles écrites
+# en dur (texte tronqué, hors viewport, section vide, image cassée…).
+#
+# Il est remplacé par le serveur MCP Playwright, qui rend l'arbre
+# d'accessibilité, le clic, la saisie de formulaire, les erreurs de console et
+# les requêtes réseau échouées — là où celui-ci ne savait que photographier puis
+# deviner. Six règles maintenues à la main ne rattraperont jamais un navigateur
+# qu'on peut interroger.
+#
+# La bascule n'a été faite qu'une fois le routage MESURÉ, pas à l'annonce du
+# remplaçant : cf. tests/test_mcp_routing_specialist.py.
 
 
 @tool("project_graph_query")

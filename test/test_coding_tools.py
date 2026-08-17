@@ -161,32 +161,6 @@ def test_propose_file_change_replaces_same_path(tmp_path):
 
 
 # ── browser_screenshot ────────────────────────────────────────────────────────
-
-def test_browser_screenshot_delegates_to_screenshot_url():
-    from src.agents.coding.tools import browser_screenshot
-    mock_result = {
-        "status": "ok",
-        "screenshot_path": "/tmp/axon_screenshot_123.png",
-        "url": "http://localhost:3000",
-        "page_text": "Hello world",
-        "audit": {"issues": [], "issueCount": 0},
-    }
-    with patch("src.infra.browser.screenshot_url", return_value=mock_result) as mock_fn:
-        result = browser_screenshot.invoke({
-            "url": "http://localhost:3000",
-            "width": 1280,
-            "height": 900,
-            "wait_ms": 2500,
-        })
-    mock_fn.assert_called_once_with(
-        "http://localhost:3000", width=1280, height=900, wait_ms=2500
-    )
-    assert result["status"] == "ok"
-    assert "audit" in result
-
-
-def test_browser_screenshot_propagates_error():
-    from src.agents.coding.tools import browser_screenshot
-    with patch("src.infra.browser.screenshot_url", return_value={"status": "error", "error": "timeout"}):
-        result = browser_screenshot.invoke({"url": "http://localhost:9999"})
-    assert result["status"] == "error"
+# Les deux tests de cet outil ont été supprimés avec lui : il déléguait à
+# `src/infra/browser.py`, un Playwright piloté à la main, remplacé par le
+# serveur MCP Playwright. Un délégué qui n'existe plus n'a pas de contrat.

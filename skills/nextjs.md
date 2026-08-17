@@ -340,11 +340,16 @@ NEXT/IMAGE + NEXT/LINK :
   ✅ shell_run("pnpm build")              → vérifie TypeScript + erreurs de build
   ✅ Résultat "Compiled successfully" = projet OK
 
-  Si tu as besoin d'un screenshot du rendu (browser_screenshot) :
+  Si tu as besoin de CONSTATER le rendu, pas seulement qu'il compile :
   1. shell_run("pnpm dev > /tmp/next-dev.log 2>&1 &")  ← arrière-plan avec &
   2. shell_run("sleep 6")
-  3. browser_screenshot("http://localhost:3000")
-  4. shell_kill_bg()                                    ← OBLIGATOIRE — tuer le serveur après
+  3. playwright__browser_navigate("http://localhost:3000")
+  4. playwright__browser_snapshot()                     ← l'arbre d'accessibilité,
+                                                          bien plus lisible qu'une image
+  5. playwright__browser_console_messages()             ← une console rouge = un bug
+                                                          qu'un build réussi ne voit pas
+  6. playwright__browser_close()
+  7. shell_kill_bg()                                    ← OBLIGATOIRE — tuer le serveur après
 
 PERFORMANCE :
     • Composants lourds côté client : dynamic(() => import('./Comp'), { ssr: false })
