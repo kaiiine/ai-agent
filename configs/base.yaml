@@ -7,8 +7,15 @@ llm_backend: "ollama_cloud"   # "groq" | "ollama" | "ollama_cloud" | "gemini"
 coding_model: "minimax-m3:cloud"
 
 gemini:
-  model: "gemini-2.5-flash"        
-  coding_model: "gemini-2.5-pro"  
+  model: "gemini-2.5-flash"
+  # `gemini-2.5-pro` est LISTÉ par l'API pour cette clé mais renvoie 404 à
+  # l'appel : le catalogue et les droits d'appel sont deux choses différentes,
+  # et le pro demande un projet facturé. Mesuré côté client :
+  #     gemini-2.5-pro    404 NOT_FOUND
+  #     gemini-2.5-flash  OK
+  # Conséquence vécue : ollama_cloud tombe, la rotation bascule sur gemini, et
+  # les phases suivantes meurent instantanément sur ce 404.
+  coding_model: "gemini-2.5-flash"
 
 mistral:
   model: "mistral-small-2603"

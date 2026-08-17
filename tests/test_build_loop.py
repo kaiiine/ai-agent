@@ -25,6 +25,7 @@ from collections import Counter
 import pytest
 
 from src.agents.coding.build_runner import (
+    _is_scaffold_phase,
     _build_phase_task, _cible_de, _compress_spec_for_phase, _inventaire_du_projet,
 )
 from src.agents.coding.task_decomposer import Phase
@@ -282,3 +283,116 @@ def test_la_tache_porte_les_capacites_quand_un_serveur_existe(monkeypatch, tmp_p
 
     assert "OUTILS MCP CONNECTÉS" in task
     assert "3D, rendering" in task
+
+
+# ══ 6 · Un scope revient toujours en chaîne ═══════════════════════════════
+#
+# Plantage vécu sur `/build axon-landing`, à la reprise d'un build existant :
+#
+#     File "build_runner.py", line 81, in _is_scaffold_phase
+#       text = (phase.title + " " + phase.scope).lower()
+#     TypeError: can only concatenate str (not "list") to str
+#
+# `Phase.scope` est annoté `str`, mais une dataclass annote sans imposer. Deux
+# producteurs l'alimentent — le modèle qui décompose la spec, et le rechargement
+# de `build-state.json` — et le premier a rendu un TABLEAU JSON. La consigne l'y
+# invitait : l'exemple montrait une chaîne, la règle disait « scope = liste
+# exhaustive ». La liste a été persistée, et toute reprise plantait ensuite.
+
+def test_un_scope_en_liste_devient_une_chaine():
+    """Le cas exact du fichier d'état d'axon-landing."""
+    phase = Phase(1, "Setup", ["Initialiser Vite", "Configurer Tailwind"])
+
+    assert isinstance(phase.scope, str)
+    assert "- Initialiser Vite" in phase.scope
+    assert "- Configurer Tailwind" in phase.scope
+
+
+def test_une_phase_rechargee_passe_le_test_de_scaffold():
+    """La fonction qui plantait, sur la donnée qui la faisait planter."""
+    phase = Phase(1, "Setup & Scaffold",
+                  ["Initialize project with Vite", "Install Tailwind CSS"])
+
+    assert _is_scaffold_phase(phase) is True
+
+
+def test_un_scope_en_chaine_n_est_pas_touche():
+    """Non-régression : le cas nominal ne doit pas être reformaté."""
+    phase = Phase(2, "Composants", "Layout, header, footer")
+
+    assert phase.scope == "Layout, header, footer"
+
+
+@pytest.mark.parametrize("brut, attendu", [
+    (None, ""),
+    ([], ""),
+    (["  ", ""], ""),
+    (42, "42"),
+])
+def test_un_scope_incongru_ne_fait_pas_planter(brut, attendu):
+    """Normaliser au lieu de lever : un plan mal formé doit dégrader le build,
+    pas l'interrompre avant la première phase."""
+    assert Phase(1, "T", brut).scope == attendu
+
+
+def test_la_tache_de_phase_accepte_un_scope_recharge(tmp_path):
+    """Le second appelant qui aurait eu besoin du même correctif : il interpole
+    le scope au lieu de le concaténer, donc il ne plantait pas — il aurait
+    simplement écrit « ['a', 'b'] » dans la tâche envoyée au modèle."""
+    phase = Phase(3, "Pages", ["Écrire la home", "Écrire le footer"])
+
+    task = _build_phase_task(phase, "SPEC", "p", tmp_path, [phase])
+
+    assert "- Écrire la home" in task
+    assert "['Écrire la home'" not in task
+
+
+# ══ 7 · Le préfixe de pré-scaffold est appliqué, pas orphelin ═════════════
+#
+# Second plantage vécu sur `/build axon-landing`, juste après le premier :
+#
+#     File "build_runner.py", line 768, in run_build
+#       + task
+#     UnboundLocalError: cannot access local variable 'task'
+#
+# Le préfixe vivait AU-DESSUS de la boucle de retry, du temps où la tâche s'y
+# construisait aussi. Quand elle a été déplacée dans la boucle — « reconstruite à
+# CHAQUE tentative » — le préfixe est resté derrière et lisait un `task` pas
+# encore assigné. Il plantait donc à tout pré-scaffold réussi, c'est-à-dire à
+# toute phase 1 d'un projet dont le framework est détecté.
+
+def test_le_prefixe_de_prescaffold_dit_de_ne_pas_recommencer():
+    from src.agents.coding.build_runner import _prefixe_prescaffold
+
+    prefixe = _prefixe_prescaffold("next")
+
+    assert "next" in prefixe
+    assert "NE PAS relancer" in prefixe
+    assert prefixe.endswith("\n\n"), "il se colle devant une tâche, pas dedans"
+
+
+def test_le_prefixe_precede_la_tache_de_phase(tmp_path):
+    """L'ordre est ce qui plantait : le préfixe s'applique APRÈS la construction."""
+    from src.agents.coding.build_runner import _prefixe_prescaffold
+
+    task = _build_phase_task(_PHASES[0], "SPEC", "p", tmp_path, _PHASES)
+    complet = _prefixe_prescaffold("next") + task
+
+    assert complet.startswith("[PRÉ-SCAFFOLD EFFECTUÉ AUTOMATIQUEMENT]")
+    assert "SCOPE DE CETTE PHASE" in complet
+
+
+def test_run_build_n_utilise_plus_task_avant_de_l_avoir_construit():
+    """Le défaut était un ORDRE, pas une valeur : dans le source de `run_build`,
+    la première mention de `task` doit être son affectation."""
+    import inspect
+
+    from src.agents.coding import build_runner
+
+    # `_run_build` et non `run_build` : ce dernier n'est plus qu'une enveloppe
+    # qui décide d'ancrer l'aperçu à droite, et délègue le travail.
+    source = inspect.getsource(build_runner._run_build)
+    affectation = source.index("task = _build_phase_task")
+    lecture = source.index("+ task")
+
+    assert affectation < lecture, "le préfixe lit `task` avant son affectation"

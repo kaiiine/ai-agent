@@ -9,6 +9,27 @@ class Phase:
     title: str
     scope: str
 
+    def __post_init__(self) -> None:
+        """Ramène le scope à une CHAÎNE, d'où qu'il vienne.
+
+        Une dataclass annote mais n'impose rien, et deux producteurs alimentent ce
+        champ : le modèle qui décompose la spec, et le rechargement de
+        `build-state.json`. Le premier a rendu un TABLEAU JSON, ce que la consigne
+        invitait à faire — l'exemple montrait une chaîne, la règle disait « scope =
+        liste exhaustive ». La liste a été persistée telle quelle, et toute reprise
+        de build plantait ensuite :
+
+            TypeError: can only concatenate str (not "list") to str
+
+        Normaliser ici plutôt qu'aux appelants : `_is_scaffold_phase` concatène,
+        `_build_phase_task` interpole, et chacun aurait eu besoin du même correctif.
+        Un état déjà écrit en liste se relit donc sans migration.
+        """
+        if isinstance(self.scope, (list, tuple)):
+            self.scope = "\n".join(f"- {str(x).strip()}" for x in self.scope if str(x).strip())
+        elif not isinstance(self.scope, str):
+            self.scope = "" if self.scope is None else str(self.scope)
+
 _BACKEND_BUDGET = {
     "mistral":      "Backend Mistral — phases PETITES, max 12 tool calls. Préférer 5-6 phases.",
     "groq":         "Backend Groq — phases standard, max 20 tool calls. 4-5 phases.",
@@ -33,7 +54,8 @@ Règles :
 - Phase 2 = composants partagés (layout, header, footer, design system)
 - Phases intermédiaires = pages/sections métier groupées logiquement
 - Phase finale = polish, tests visuels, corrections finales
-- scope = liste exhaustive de ce qui DOIT être livré dans cette phase, sous forme de tirets
+- scope = UNE SEULE CHAÎNE de caractères listant ce qui doit être livré, avec des
+  tirets et des retours à la ligne DANS la chaîne. Jamais un tableau JSON.
 - Ne jamais répéter le même travail dans 2 phases
 
 Budget : {budget}
