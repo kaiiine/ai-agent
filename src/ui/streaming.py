@@ -166,7 +166,63 @@ def _make_keybindings() -> KeyBindings:
         _attachments.pop_all()
         event.app.invalidate()
 
+    # ── Saisie multi-ligne ────────────────────────────────────────────────────
+    #
+    # La session passe en `multiline=True`, ce qui INVERSE le rôle d'Entrée :
+    # par défaut elle insérerait un retour à la ligne et plus rien n'enverrait.
+    # Ces deux liaisons rétablissent le geste attendu — Entrée envoie, une autre
+    # touche va à la ligne.
+    #
+    # Plusieurs touches pour aller à la ligne, et ce n'est pas de la générosité.
+    #
+    # prompt_toolkit 3.0.52 NE CONNAÎT PAS Maj+Entrée : `enter` est un alias de
+    # `c-m`, et l'énumération des touches n'a aucune variante shift pour elle —
+    # vérifié, `s-tab` et `s-left` existent, rien pour entrée. La raison est en
+    # amont : la plupart des terminaux envoient le même octet `\r` pour Entrée et
+    # Maj+Entrée, donc il n'y a rien à distinguer.
+    #
+    # Deux réponses, complémentaires :
+    #   · Alt+Entrée et Ctrl+J, que TOUT terminal émet distinctement — ce sont
+    #     elles qui garantissent que la fonctionnalité marche partout ;
+    #   · la séquence du protocole clavier kitty (`ESC [ 13 ; 2 u`), qu'émettent
+    #     kitty, ghostty, WezTerm et foot quand le protocole est actif. Là où
+    #     c'est le cas, Maj+Entrée marche vraiment ; ailleurs la séquence
+    #     n'arrive jamais et la liaison dort sans gêner personne.
+
+    @kb.add("enter")
+    def _kb_envoyer(event):
+        """Entrée envoie, toujours.
+
+        Une version précédente validait d'abord la complétion ouverte, en croyant
+        éviter qu'Entrée n'envoie au lieu d'insérer `/build`. C'était faux et
+        mesuré comme tel : dans prompt_toolkit, Tab INSÈRE déjà la complétion
+        dans le tampon tout en laissant `current_completion` renseigné. La
+        condition ne distinguait donc pas « en attente » de « déjà écrite »,
+        Entrée réappliquait la complétion, et la saisie ne se terminait jamais —
+        deux tests de complétion restaient bloqués indéfiniment.
+        """
+        event.current_buffer.validate_and_handle()
+
+    @kb.add("escape", "enter")
+    @kb.add("c-j")
+    @kb.add("escape", "[", "1", "3", ";", "2", "u")
+    def _kb_nouvelle_ligne(event):
+        """Alt+Entrée · Ctrl+J · Maj+Entrée (terminaux au protocole kitty)."""
+        event.current_buffer.insert_text("\n")
+
     return kb
+
+
+def _continuation(largeur: int, ligne: int, doit_envelopper: bool):
+    """Le préfixe des lignes 2 et suivantes d'une saisie multi-ligne.
+
+    Aligné sur le « › » de la première ligne : sans lui, prompt_toolkit met des
+    points de suite qui ne ressemblent à rien de la DA, et le texte se décale
+    d'une colonne à chaque nouvelle ligne.
+    """
+    from prompt_toolkit.formatted_text import ANSI
+
+    return ANSI("\033[2m\033[38;5;214m│ \033[0m")
 
 
 def _prompt_tokens():
@@ -239,6 +295,11 @@ def build_session(**overrides) -> PromptSession:
         completer=SlashCompleter(),
         complete_while_typing=True,
         auto_suggest=HistorySuggest(),
+        # Le tampon accepte les retours à la ligne ; ce sont les liaisons de
+        # `_make_keybindings` qui décident quelle touche envoie et laquelle va à
+        # la ligne. Sans `multiline`, aucune touche ne peut insérer de retour.
+        multiline=True,
+        prompt_continuation=_continuation,
     )
     options.update(overrides)
     return PromptSession(**options)
