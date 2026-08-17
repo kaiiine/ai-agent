@@ -415,28 +415,52 @@ def test_lire_ou_expliquer_ne_tire_pas_le_shell(selection):
     assert not fuites, f"shell tiré sans raison : {fuites}"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Le couplage dev-server n'est pas fait. Mesuré :\n\n"
-    "  « vérifie que la page d'accueil s'affiche dans le navigateur »\n"
-    "        → 24 outils Playwright, shell_run ABSENT\n"
-    "  « y a-t-il des erreurs dans la console du navigateur »\n"
-    "        → 24 outils Playwright, shell_run ABSENT\n"
-    "  « démarre le serveur de développement puis vérifie la page »\n"
-    "        → shell_run présent, ZÉRO outil Playwright\n\n"
-    "Chaque moitié de l'intention, jamais les deux : l'agent peut piloter un "
-    "navigateur sans pouvoir démarrer le serveur vers lequel le pointer, ou "
-    "l'inverse.\n\n"
-    "Ce besoin justifiait de mettre `browser_screenshot` dans le groupe `shell`. "
-    "Le moyen était faux — il y devenait la GRAINE et polluait des tâches "
-    "d'écriture — mais le besoin lui survit, et le retrait le laisse à nu plutôt "
-    "qu'il ne le crée."
-))
-def test_piloter_un_navigateur_devrait_donner_un_shell(selection):
-    """Regarder une page qu'on n'a pas pu démarrer ne vérifie rien."""
+def test_piloter_un_navigateur_donne_un_shell(selection):
+    """Regarder une page qu'on n'a pas pu démarrer ne vérifie rien.
+
+    Ce test a d'abord été posé en xfail, sur cette mesure :
+
+        « vérifie que la page d'accueil s'affiche dans le navigateur »
+              → 24 outils Playwright, shell_run ABSENT
+
+    C'est le besoin qui justifiait de mettre `browser_screenshot` DANS le groupe
+    `shell`. Le moyen était faux — il y devenait la graine et polluait des tâches
+    d'écriture — mais le besoin lui a survécu, et son retrait l'a laissé à nu.
+
+    Il est satisfait par une dépendance ORIENTÉE (`_DEPENDANCES_MCP`), pas par une
+    appartenance de groupe : un groupe est symétrique, et c'est sa symétrie qui
+    avait tout cassé. Piloter un navigateur exige un shell ; lancer une commande
+    shell n'exige aucun navigateur, et le vérifier est l'objet de
+    `test_le_shell_ne_convoque_jamais_le_navigateur`.
+    """
     sans_shell = [q for q in POSITIFS_NAVIGATEUR
                   if _outils_navigateur(selection(q)) and "shell_run" not in selection(q)]
 
     assert not sans_shell, f"navigateur sans moyen de servir la page : {sans_shell}"
+
+
+_INTENTIONS_SHELL_PURES = [
+    "build le projet",
+    "installe les dépendances",
+    "lance les tests",
+    "démarre le serveur de développement",
+]
+
+
+def test_le_shell_ne_convoque_jamais_le_navigateur(selection):
+    """La moitié qui manque à la dépendance, et qui doit manquer. Déclarer
+    `shell` → `playwright` ramènerait le navigateur sur chaque build, install et
+    lancement de tests : c'est la fuite mesurée à 13 négatifs sur 16 quand
+    l'expansion de serveur tournait sans le pont lexical.
+
+    « démarre le serveur de développement » est dans cette liste exprès : c'est
+    le cas le plus tentant, puisque démarrer un serveur PRÉCÈDE souvent une
+    vérification. Précéder n'est pas exiger.
+    """
+    fuites = [(q, _outils_navigateur(selection(q))) for q in _INTENTIONS_SHELL_PURES
+              if _outils_navigateur(selection(q))]
+
+    assert not fuites, f"le shell a convoqué le navigateur : {fuites}"
 
 
 # ── Une graine MCP trop lointaine n'a rien matché ──────────────────────────

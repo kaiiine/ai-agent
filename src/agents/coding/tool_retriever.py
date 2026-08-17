@@ -336,6 +336,33 @@ def _pont_linguistique(query: str) -> str:
 #: figer la valeur — il tombe si le classement se déplace.
 _DISTANCE_MAX_MCP = 0.85
 
+#: Dépendances ORIENTÉES : serveur MCP → groupe natif dont il a besoin.
+#:
+#: À ne pas confondre avec l'appartenance à un groupe, qui est symétrique et dont
+#: le mauvais usage a coûté un commit entier. `browser_screenshot` avait été mis
+#: DANS le groupe `shell` au motif qu'on lance le dev server avant de regarder la
+#: page ; il y devenait la graine et polluait des tâches d'écriture qui n'avaient
+#: rien à voir. Le motif était juste, le moyen faux.
+#:
+#: Ici le sens compte : piloter un navigateur sur une page servie localement exige
+#: de pouvoir la SERVIR, tandis que lancer une commande shell n'exige aucun
+#: navigateur. Mesuré avant :
+#:
+#:     « vérifie que la page d'accueil s'affiche dans le navigateur »
+#:           → 24 outils Playwright, shell_run ABSENT
+#:
+#: L'inverse n'est délibérément PAS déclaré. Un `shell` → `playwright` ramènerait
+#: le navigateur sur chaque build, install et lancement de tests : c'est
+#: exactement la fuite mesurée à 13 négatifs sur 16.
+#:
+#: Conséquence assumée : une requête composite comme « démarre le serveur de
+#: développement puis vérifie la page dans le navigateur » n'obtient que la moitié
+#: shell, les huit places étant prises par le vocabulaire de commande. Elle se
+#: résout au tour suivant, quand la requête ne porte plus que la vérification.
+_DEPENDANCES_MCP: dict[str, str] = {
+    "playwright": "shell",
+}
+
 
 def _groupes_mcp(tools: list) -> dict[str, list[str]]:
     """Un groupe par serveur MCP, d'après le préfixe `serveur__outil`.
@@ -417,6 +444,8 @@ class CodingToolRetriever:
                 continue
             serveur, _, _ = name.partition("__")
             selected.update(self._serveurs_mcp.get(serveur, [name]))
+            if (requis := _DEPENDANCES_MCP.get(serveur)):
+                selected.update(_TOOL_GROUPS[requis])
 
         # 3. Return in original order, only tools we have
         return [t for name, t in self._tools_by_name.items() if name in selected]
