@@ -12,6 +12,10 @@ MESURES, le 16 août 2026, 82 outils (39 natifs + 43 MCP : Blender et Motion) :
     index unique (actuel)         6/7      10/10       6/6      22/23
     deux voies (graph.py)         7/7       0/10       6/6      13/23
 
+État actuel de l'index, 87 outils / 138 documents : 38 natifs, et 49 outils MCP
+soit 35 % de la cardinalité — Blender 25, Playwright 24. Motion a été supprimé
+de la config, et avec lui trois labels de lecture d'état (cf. LECTURE_D_ETAT).
+
 `mcp_runtime().select()` rend SEPT outils sur chaque requête, sans exception —
 « montre-moi les fichiers modifiés dans le dépôt » comprise. Il ne discrimine
 pas. Dans l'orchestrateur, sept outils de plus se noient dans une sélection
@@ -225,18 +229,28 @@ LECTURE_D_ETAT = [
     ("dis-moi ce que contient la scène blender actuelle", "blender__get_scene_info"),
     ("quelles sont les propriétés de cet objet 3d", "blender__get_object_info"),
     ("où en est le job de génération 3d", "blender__poll_rodin_job_status"),
-    ("combien de crédits motion me reste-t-il", "motion__get_credit_balance"),
     ("est-ce que polyhaven est activé", "blender__get_polyhaven_status"),
-    ("donne-moi mon solde motion", "motion__get_credit_balance"),
-    ("quels plans motion sont disponibles", "motion__list_plans"),
     ("vérifie l'état de sketchfab", "blender__get_sketchfab_status"),
 ]
 
-#: Plancher mesuré APRÈS le pont : 0/8 avant, 7/8 après. Ce n'est pas 8/8 et le
-#: seuil le dit — deux formulations résistent encore (« montre-moi les objets
-#: présents dans la scène », « qu'est-ce que contient le viewport »), et poser
-#: 8/8 rendrait le test rouge sur un progrès réel.
-_MIN_LECTURE_D_ETAT = 6
+#: Trois requêtes ont été retirées avec le serveur Motion, supprimé de la config :
+#: « combien de crédits motion me reste-t-il », « donne-moi mon solde motion »,
+#: « quels plans motion sont disponibles ».
+#:
+#: Elles ne sont PAS remplacées par des équivalents Blender fabriqués pour tenir
+#: le compte à huit. Conséquence à connaître : quatre entrées du pont ne sont plus
+#: exercées par aucun label — « combien » → « how many count balance »,
+#: « donne-moi », « quels sont », et « reste » → « remaining balance ». Aucun outil
+#: des serveurs restants n'expose un solde ou une liste de plans, donc le cas
+#: n'existe simplement plus ; ces entrées restent en place pour le jour où un
+#: serveur à quotas reviendra, mais sans filet de mesure d'ici là.
+
+#: Plancher mesuré APRÈS le pont : 0/8 avant, 7/8 après, sur les huit labels
+#: d'alors. Ce n'était pas 8/8 et le seuil le disait — deux formulations résistent
+#: encore (« montre-moi les objets présents dans la scène », « qu'est-ce que
+#: contient le viewport »), et poser le maximum rendrait le test rouge sur un
+#: progrès réel. Même écart conservé sur les cinq labels restants.
+_MIN_LECTURE_D_ETAT = 4
 
 
 def test_les_requetes_d_interrogation_atteignent_leurs_outils(selection):
@@ -423,3 +437,96 @@ def test_piloter_un_navigateur_devrait_donner_un_shell(selection):
                   if _outils_navigateur(selection(q)) and "shell_run" not in selection(q)]
 
     assert not sans_shell, f"navigateur sans moyen de servir la page : {sans_shell}"
+
+
+# ── Une graine MCP trop lointaine n'a rien matché ──────────────────────────
+#
+# `installe framer-motion` remontait les huit outils du serveur Motion. La cause
+# semblait être le token « motion » — une lib d'animation npm contre un service
+# de génération vidéo. Motion retiré, la même requête a remonté les vingt-cinq
+# outils de Blender : ce n'était donc pas le token. Une requête courte nommant un
+# nom propre inconnu n'a aucun bon voisin natif, et le serveur MCP le plus proche
+# remplit les huit places, quel qu'il soit.
+_FALLTHROUGH = [
+    "installe framer-motion",
+    "ajoute la librairie framer-motion au projet",
+]
+
+
+def _distance_mcp_min(retriever, query: str) -> float | None:
+    from src.agents.coding.tool_retriever import _pont_linguistique
+
+    resultats = retriever._store.similarity_search_with_score(
+        _pont_linguistique(query), k=8)
+    distances = [d for doc, d in resultats
+                 if "__" in doc.metadata.get("tool_name", "")]
+    return min(distances) if distances else None
+
+
+@pytest.fixture(scope="module")
+def retriever_brut():
+    """Le retriever lui-même, pas seulement sa sélection : la marge se mesure sur
+    des distances, que `selection` n'expose pas."""
+    from src.agents.coding.specialist import _get_coding_tools
+    from src.agents.coding.tool_retriever import CodingToolRetriever
+
+    outils = _get_coding_tools()
+    if not any("__" in t.name for t in outils):
+        pytest.skip("aucun serveur MCP joignable — rien à mesurer")
+    r = CodingToolRetriever(outils, k=8)
+    if r._store is None:
+        pytest.skip("embeddings indisponibles — distances non mesurables")
+    return r
+
+
+def test_la_marge_du_seuil_de_distance_tient_toujours(retriever_brut):
+    """Ce test REMESURE la marge au lieu de figer 0.85.
+
+    Le seuil dépend de l'embedder (`nomic-embed-text`) et de la distance de
+    Chroma ; en changer invaliderait les nombres mesurés. Figer la valeur dans un
+    test la rendrait vraie par construction et muette au moment où elle cesserait
+    d'être juste. Vérifier la MARGE échoue au contraire dès que le classement se
+    déplace, ce qui est précisément le signal qu'on veut.
+
+    Mesuré : légitimes 0.548 → 0.765, parasites une seule graine à 0.960.
+    """
+    from src.agents.coding.tool_retriever import _DISTANCE_MAX_MCP
+
+    legitimes = [q for q, _ in POSITIFS_MCP] + [POSITIF_MCP_CONNU_DEFAILLANT[0]] \
+        + POSITIFS_NAVIGATEUR
+    trop_loin = [(q, d) for q in legitimes
+                 if (d := _distance_mcp_min(retriever_brut, q)) is not None
+                 and d > _DISTANCE_MAX_MCP]
+    assert not trop_loin, f"le seuil écarte des intentions MCP RÉELLES : {trop_loin}"
+
+    trop_proche = [(q, d) for q in _FALLTHROUGH
+                   if (d := _distance_mcp_min(retriever_brut, q)) is not None
+                   and d <= _DISTANCE_MAX_MCP]
+    assert not trop_proche, f"le seuil laisse passer du bruit : {trop_proche}"
+
+
+def test_installer_une_lib_ne_convoque_aucun_serveur_mcp(selection):
+    """Le symptôme, mesuré du côté de la sélection et non des distances : ni les
+    vingt-cinq outils de Blender, ni ceux d'un autre serveur."""
+    fuites = [(q, _outils_mcp(selection(q))) for q in _FALLTHROUGH
+              if _outils_mcp(selection(q))]
+
+    assert not fuites, f"un serveur MCP convoqué pour installer une lib : {fuites}"
+
+
+def test_installer_une_lib_donne_quand_meme_le_shell(selection):
+    """Le garde-fou du garde-fou : écarter le bruit ne doit pas laisser l'agent
+    sans moyen d'installer quoi que ce soit.
+
+    « installe framer-motion » nu est EXCLU de cette assertion, et le mesuré dit
+    pourquoi : sur cette requête, toutes les distances sont ≥ 0.902 — git_status
+    0.902, shell_run 0.970, blender 0.960. Rien ne matche. `shell_run` flotte au
+    rang 7 d'un k=8 où les écarts se jouent à trois millièmes, donc sa présence
+    varie d'une exécution à l'autre. L'asserter serait asserter sur du bruit.
+
+    C'est précisément pour ce régime que le seuil de distance existe : quand rien
+    ne matche, le tirage ne doit au moins pas convoquer un serveur entier — ce que
+    `test_installer_une_lib_ne_convoque_aucun_serveur_mcp` vérifie sur les deux.
+    """
+    reel = "ajoute la librairie framer-motion au projet"   # meilleure graine 0.643
+    assert "shell_run" in selection(reel), "aucun shell pour installer une lib"

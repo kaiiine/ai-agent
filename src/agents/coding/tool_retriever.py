@@ -306,6 +306,37 @@ def _pont_linguistique(query: str) -> str:
     return f"{query} | {' '.join(dict.fromkeys(' '.join(ajouts).split()))}"
 
 
+#: Au-delà de cette distance, une graine MCP est écartée : le voisin le plus
+#: proche est si loin que la requête n'a rien matché du tout, et l'expansion de
+#: serveur ferait de ce bruit vingt-cinq outils.
+#:
+#: Le seuil existe parce que le TOKEN n'était pas la cause. « installe
+#: framer-motion » remontait les huit outils du serveur Motion — collision
+#: apparente sur « motion » — puis, Motion retiré, les vingt-cinq de Blender. Une
+#: requête courte nommant un nom propre inconnu n'a aucun bon voisin natif, et le
+#: serveur MCP le plus proche remplit les huit places, quel qu'il soit.
+#:
+#: Mesuré sur les jeux de labels de tests/test_mcp_routing_specialist.py, en
+#: distance de la MEILLEURE graine MCP :
+#:
+#:     légitimes (MCP attendu) ...  11 requêtes,  0.548 → 0.765
+#:     parasites (aucun MCP) .....  18 requêtes,  une seule en a une : 0.960
+#:
+#: Aucun chevauchement, 0.195 d'écart. C'est le discriminant que le COMPTAGE de
+#: graines ne donnait pas — il se recouvrait entièrement — parce que le nombre dit
+#: combien de documents ont matché, la distance dit si l'un d'eux a vraiment
+#: matché.
+#:
+#: Le seuil ne s'applique qu'aux outils MCP. Les natifs sont le repli : les
+#: écarter pourrait ne rien laisser, alors qu'une graine MCP écartée coûte au pire
+#: un serveur non proposé, avec `tool_map` qui le garde appelable.
+#:
+#: Il dépend de l'embedder (`nomic-embed-text`) et de la distance de Chroma. En
+#: changer invaliderait ces nombres, d'où un test qui REMESURE la marge au lieu de
+#: figer la valeur — il tombe si le classement se déplace.
+_DISTANCE_MAX_MCP = 0.85
+
+
 def _groupes_mcp(tools: list) -> dict[str, list[str]]:
     """Un groupe par serveur MCP, d'après le préfixe `serveur__outil`.
 
@@ -366,11 +397,16 @@ class CodingToolRetriever:
         if self._store is None:
             return self._fallback
 
-        # 1. Semantic retrieval
-        results = self._store.as_retriever(
-            search_kwargs={"k": self._k}
-        ).invoke(_pont_linguistique(query))
-        seed_names = {r.metadata["tool_name"] for r in results if "tool_name" in r.metadata}
+        # 1. Semantic retrieval — avec les distances, pour pouvoir écarter une
+        #    graine MCP qui n'a en réalité rien matché (cf. _DISTANCE_MAX_MCP).
+        resultats = self._store.similarity_search_with_score(
+            _pont_linguistique(query), k=self._k)
+        seed_names = {
+            doc.metadata["tool_name"]
+            for doc, distance in resultats
+            if "tool_name" in doc.metadata
+            and (distance <= _DISTANCE_MAX_MCP or "__" not in doc.metadata["tool_name"])
+        }
 
         # 2. Group expansion
         selected: set[str] = set(_ALWAYS_INCLUDED)
