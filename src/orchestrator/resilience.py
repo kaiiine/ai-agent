@@ -10,11 +10,34 @@ from __future__ import annotations
 
 import json
 
+def _message_sur(exc: Exception) -> str:
+    """Le message d'une exception, secrets masqués.
+
+    Mesuré : les exceptions de `requests` embarquent l'URL COMPLÈTE, paramètres
+    compris. Une clé passée en query string ressortait donc intégralement —
+
+        Max retries exceeded with url: /v4/matches?apiKey=CLE_SECRETE_ABC123
+
+    — et de là dans le contexte du modèle, donc chez le fournisseur LLM, et dans
+    le journal des échecs sur disque.
+
+    La rédaction est appliquée TOUJOURS, sans regarder le backend, là où
+    `redactor.should_redact()` ne la réserve qu'aux backends cloud. La distinction
+    est volontaire : ce garde-là protège des RÉSULTATS d'outils, où masquer
+    pourrait détruire ce que l'utilisateur a justement demandé à lire. Un message
+    d'erreur n'a pas ce besoin — « auth failed for key *** » informe le modèle
+    exactement autant que la clé en clair.
+    """
+    from src.infra.redactor import redact
+    return redact(str(exc) or "échec sans message")
+
+
 def _log_failure(backend: str, exc: Exception, strategy: str, recovered: bool) -> None:
     """Consigne l'échec pour que « ce backend est instable » devienne mesurable."""
     try:
         from src.infra.failure_log import record
-        record(backend=backend, error_type=type(exc).__name__, message=str(exc),
+        record(backend=backend, error_type=type(exc).__name__,
+               message=_message_sur(exc),
                strategy=strategy, recovered=recovered)
     except Exception:
         pass
@@ -33,6 +56,10 @@ def tool_error_to_message(exc: Exception) -> str:
     tente autre chose. C'est le comportement attendu d'un agent — un outil qui
     échoue est un fait du monde, pas un plantage du programme.
 
+    Le message passe par `_message_sur`, qui masque les secrets : c'est ce chemin
+    qui envoyait une clé d'API en clair au fournisseur LLM dès qu'un appel réseau
+    échouait sur une URL en portant une.
+
     `GraphBubbleUp` reste levée : ce n'est pas une erreur mais le mécanisme
     d'interruption de LangGraph (`interrupt()`, `Command`). L'avaler bloquerait
     les confirmations utilisateur. `KeyboardInterrupt` et `SystemExit` ne sont
@@ -46,7 +73,7 @@ def tool_error_to_message(exc: Exception) -> str:
     return json.dumps({
         "status": "TOOL_ERROR",
         "error_type": type(exc).__name__,
-        "message": str(exc) or "échec sans message",
+        "message": _message_sur(exc),
         "note": "Cet outil a échoué. Ce n'est PAS un résultat : ne présente pas "
                 "ce contenu comme une donnée. Explique brièvement l'échec, puis "
                 "soit tente une autre approche, soit dis clairement que tu n'as "
