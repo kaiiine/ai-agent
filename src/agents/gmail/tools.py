@@ -1,20 +1,48 @@
 from langchain_core.tools import tool
 from src.infra.google_auth import get_gmail_service
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from pathlib import Path
 import base64
 import os
 import re
 from email.utils import parsedate_to_datetime
 
 # --- Brouillon global ---
-_draft = {"to": None, "subject": None, "body": None, "has_draft": False}
+#
+# Un seul brouillon par PROCESSUS : deux fils de conversation qui rédigent en
+# parallèle s'écrasent. C'est assumé pour l'instant — le flux brouillon → relecture
+# → confirmation est mono-utilisateur par nature — mais `_CHAMPS` rend la liste
+# explicite pour qu'un futur passage à un brouillon par thread n'oublie rien.
+_CHAMPS = ("to", "cc", "bcc", "subject", "body",
+           "pieces_jointes", "repondre_a", "thread_id", "references")
+
+_draft: dict = {c: None for c in _CHAMPS} | {"has_draft": False}
+
+
+def _vider_brouillon() -> None:
+    _draft.update({c: None for c in _CHAMPS})
+    _draft["has_draft"] = False
 
 
 def _build_html(body: str, subject: str) -> str:
-    """Wrap le corps en HTML avec le template Axon (dark + orange). Markdown → HTML."""
-    import markdown as _md
-    body_html = _md.markdown(body, extensions=["nl2br", "fenced_code"])
+    """Wrap le corps en HTML avec le template Axon (dark + orange).
+
+    La conversion passe par `src.infra.markdown_rendu`, partagée avec les Docs et
+    Slack. Deux défauts mesurés disparaissent avec elle :
+
+      · la liste d'extensions était `["nl2br", "fenced_code"]` — sans `tables`.
+        Un tableau markdown, que tout rapport contient, arrivait en PIPES BRUTS
+        dans un paragraphe ;
+      · les règles de typographie vivaient dans une balise `<style>` placée
+        DANS un `<td>`. Gmail l'accepte aujourd'hui, plusieurs clients dont
+        Outlook l'ignorent, et une règle ignorée rend le rapport nu sans que
+        personne le sache. Tout est désormais en style EN LIGNE.
+    """
+    from src.infra.markdown_rendu import en_html
+    body_html = en_html(body)
     sender_name = os.getenv("USER_NAME", "Axon")
     return f"""<!DOCTYPE html>
 <html lang="fr">
@@ -39,18 +67,6 @@ def _build_html(body: str, subject: str) -> str:
           <!-- Body -->
           <tr>
             <td style="padding:32px;color:#e0e0e0;font-size:14px;line-height:1.8;">
-              <style>
-                p {{ margin: 0 0 14px 0; }}
-                strong {{ color: #FF8700; }}
-                em {{ color: #cccccc; font-style: italic; }}
-                ul, ol {{ padding-left: 20px; margin: 0 0 14px 0; }}
-                li {{ margin-bottom: 6px; }}
-                code {{ background: #222; color: #FF8700; padding: 1px 5px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; }}
-                pre {{ background: #222; border-left: 3px solid #FF8700; padding: 12px 16px; border-radius: 3px; overflow: auto; }}
-                pre code {{ background: none; padding: 0; color: #e0e0e0; }}
-                a {{ color: #FF8700; }}
-                blockquote {{ border-left: 3px solid #FF8700; margin: 0 0 14px 0; padding-left: 16px; color: #999; }}
-              </style>
               {body_html}
             </td>
           </tr>
@@ -79,24 +95,74 @@ def _do_send() -> str:
     if not _draft["to"] or not _draft["subject"] or not _draft["body"]:
         return "Brouillon incomplet (to/subject/body requis)."
 
-    msg = MIMEMultipart("alternative")
+    from src.infra.markdown_rendu import en_texte
+
+    corps = _draft["body"]
+    alternatif = MIMEMultipart("alternative")
+    # La version texte comptait autant que la version HTML et recevait le markdown
+    # BRUT — donc les dièses et les astérisques, pour tout client en mode texte et
+    # tout lecteur d'écran. Elle est maintenant rendue, elle aussi.
+    alternatif.attach(MIMEText(en_texte(corps), "plain", "utf-8"))
+    alternatif.attach(MIMEText(_build_html(corps, _draft["subject"]), "html", "utf-8"))
+
+    jointes = [p for p in (_draft["pieces_jointes"] or []) if p]
+    if jointes:
+        msg = MIMEMultipart("mixed")
+        msg.attach(alternatif)
+    else:
+        msg = alternatif
+
     msg["to"] = _draft["to"]
     msg["subject"] = _draft["subject"]
+    if _draft["cc"]:
+        msg["cc"] = _draft["cc"]
+    if _draft["bcc"]:
+        msg["bcc"] = _draft["bcc"]
 
-    msg.attach(MIMEText(_draft["body"], "plain", "utf-8"))
-    msg.attach(MIMEText(_build_html(_draft["body"], _draft["subject"]), "html", "utf-8"))
+    # Sans ces deux en-têtes, une réponse arrive comme un NOUVEAU fil chez le
+    # destinataire — l'échange se disperse au lieu de se suivre.
+    if _draft["repondre_a"]:
+        msg["In-Reply-To"] = _draft["repondre_a"]
+        msg["References"] = _draft["references"] or _draft["repondre_a"]
 
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    manquantes = []
+    for chemin in jointes:
+        p = Path(chemin).expanduser()
+        if not p.is_file():
+            manquantes.append(str(p))
+            continue
+        piece = MIMEBase("application", "octet-stream")
+        piece.set_payload(p.read_bytes())
+        encoders.encode_base64(piece)
+        piece.add_header("Content-Disposition", "attachment", filename=p.name)
+        msg.attach(piece)
+    if manquantes:
+        # Envoyer un mail en annonçant une pièce jointe qui n'y est pas serait la
+        # même faute que compter un asset non téléchargé.
+        return f"Envoi annulé — pièce(s) jointe(s) introuvable(s) : {', '.join(manquantes)}"
+
+    corps_api: dict = {"raw": base64.urlsafe_b64encode(msg.as_bytes()).decode()}
+    if _draft["thread_id"]:
+        corps_api["threadId"] = _draft["thread_id"]
+
     service = get_gmail_service()
-    res = service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    res = service.users().messages().send(userId="me", body=corps_api).execute()
 
-    to = _draft["to"]
-    _draft.update({"to": None, "subject": None, "body": None, "has_draft": False})
-    return f"Email envoyé à {to} — ID: `{res.get('id')}`"
+    to, n = _draft["to"], len(jointes)
+    _vider_brouillon()
+    suffixe = f" · {n} pièce(s) jointe(s)" if n else ""
+    return f"Email envoyé à {to} — ID: `{res.get('id')}`{suffixe}"
 
 
 def _draft_summary() -> str:
-    return f"Brouillon enregistré — À : {_draft['to']} · Objet : {_draft['subject']}"
+    extra = []
+    if _draft["cc"]:
+        extra.append(f"Cc : {_draft['cc']}")
+    if _draft["pieces_jointes"]:
+        extra.append(f"{len(_draft['pieces_jointes'])} pièce(s) jointe(s)")
+    suffixe = (" · " + " · ".join(extra)) if extra else ""
+    return (f"Brouillon enregistré — À : {_draft['to']} · "
+            f"Objet : {_draft['subject']}{suffixe}")
 
 @tool
 def gmail_search(query: str = "newer_than:7d", max_results: int = 7) -> str:
@@ -141,12 +207,27 @@ def gmail_search(query: str = "newer_than:7d", max_results: int = 7) -> str:
     msgs = res.get("messages", [])
     if not msgs:
         return "📭 Aucun mail trouvé."
+
+    # UN seul aller-retour pour toutes les en-têtes. Avant, c'était un `get` PAR
+    # message : huit allers-retours pour sept mails, et c'est ce qui donnait
+    # l'impression que l'agent traînait sur Gmail.
+    entetes: dict[str, dict] = {}
+
+    def _recolte(request_id, reponse, exception):
+        if exception is None and reponse:
+            entetes[request_id] = {
+                h["name"]: h["value"] for h in reponse["payload"]["headers"]}
+
+    lot = service.new_batch_http_request(callback=_recolte)
+    for m in msgs:
+        lot.add(service.users().messages().get(
+            userId="me", id=m["id"], format="metadata",
+            metadataHeaders=["From", "Subject", "Date"]), request_id=m["id"])
+    lot.execute()
+
     rows = []
     for i, m in enumerate(msgs, 1):
-        meta = service.users().messages().get(
-            userId="me", id=m["id"], format="metadata", metadataHeaders=["From","Subject","Date"]
-        ).execute()
-        headers = {h["name"]: h["value"] for h in meta["payload"]["headers"]}
+        headers = entetes.get(m["id"], {})
         sender = headers.get("From", "?")
         subject = headers.get("Subject", "(sans sujet)")
         date = headers.get("Date", "?")
@@ -213,7 +294,8 @@ def gmail_summarize(message_id: str) -> str:
     )
 
 @tool
-def gmail_send_email(to: str, subject: str, body: str) -> str:
+def gmail_send_email(to: str, subject: str, body: str, cc: str = "",
+                     bcc: str = "", pieces_jointes: list[str] | None = None) -> str:
     """
     Prépare un brouillon d’email Gmail (sans l’envoyer) pour révision avant envoi.
 
@@ -224,19 +306,77 @@ def gmail_send_email(to: str, subject: str, body: str) -> str:
 
     Mots-clés : envoyer mail, écrire email, rédiger message, gmail, email, destinataire, sujet
 
+    Le corps s'écrit en MARKDOWN : titres, **gras**, listes, tableaux et liens sont
+    mis en forme dans le mail envoyé, en HTML comme en version texte.
+
     **Args:**
-        - `to` (str) : Adresse du destinataire
+        - `to` (str) : Adresse du destinataire (plusieurs séparées par des virgules)
         - `subject` (str) : Objet du mail
-        - `body` (str) : Corps du message (texte brut)
+        - `body` (str) : Corps du message, en markdown
+        - `cc` (str, optionnel) : copie
+        - `bcc` (str, optionnel) : copie cachée
+        - `pieces_jointes` (list[str], optionnel) : chemins de fichiers à joindre
 
     **Returns:**
         - Markdown affichant le brouillon créé et rappelant les prochaines actions possibles
     """
-    _draft["to"] = to
-    _draft["subject"] = subject
-    _draft["body"] = body
-    _draft["has_draft"] = True
+    _vider_brouillon()
+    _draft.update({
+        "to": to, "subject": subject, "body": body,
+        "cc": cc or None, "bcc": bcc or None,
+        "pieces_jointes": list(pieces_jointes or []) or None,
+        "has_draft": True,
+    })
     return _draft_summary()
+
+
+@tool
+def gmail_reply(message_id: str, body: str, tous: bool = False) -> str:
+    """
+    Prépare une RÉPONSE à un mail existant, dans le même fil de discussion.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - répondre à un mail reçu
+    - donner suite à un message précis
+    - relancer dans une conversation existante
+
+    Mots-clés : répondre, réponse, mail, fil, conversation, relancer, suite
+
+    À la différence de gmail_send_email, la réponse porte les en-têtes
+    `In-Reply-To` et `References` et le `threadId` d'origine : elle s'affiche donc
+    DANS la conversation chez le destinataire, au lieu d'ouvrir un fil séparé.
+
+    Args:
+        message_id: identifiant du mail auquel répondre (via gmail_search)
+        body: corps de la réponse, en markdown
+        tous: True pour répondre à tous (met les autres destinataires en copie)
+    Returns:
+        Résumé du brouillon, à confirmer avec gmail_confirm_send
+    """
+    service = get_gmail_service()
+    msg = service.users().messages().get(
+        userId="me", id=message_id, format="metadata",
+        metadataHeaders=["From", "To", "Cc", "Subject", "Message-ID", "References"],
+    ).execute()
+    h = {k["name"].lower(): k["value"] for k in msg["payload"]["headers"]}
+
+    objet = h.get("subject", "(sans objet)")
+    if not objet.lower().startswith("re:"):
+        objet = f"Re: {objet}"
+
+    identifiant = h.get("message-id", "")
+    _vider_brouillon()
+    _draft.update({
+        "to": h.get("from", ""),
+        "cc": (h.get("cc") if tous else None) or None,
+        "subject": objet,
+        "body": body,
+        "repondre_a": identifiant or None,
+        "references": " ".join(x for x in (h.get("references"), identifiant) if x) or None,
+        "thread_id": msg.get("threadId"),
+        "has_draft": True,
+    })
+    return f"{_draft_summary()} · réponse dans le fil"
 
 @tool
 def gmail_edit_draft(field: str, value: str) -> str:
@@ -250,7 +390,7 @@ def gmail_edit_draft(field: str, value: str) -> str:
     Mots-clés : modifier mail, corriger email, brouillon, changer destinataire, modifier sujet
 
     **Args:**
-        - `field` (str) : Champ à modifier (`"to"`, `"subject"`, `"body"`)
+        - `field` (str) : Champ à modifier (`"to"`, `"cc"`, `"bcc"`, `"subject"`, `"body"`)
         - `value` (str) : Nouvelle valeur
 
     **Returns:**
@@ -258,8 +398,8 @@ def gmail_edit_draft(field: str, value: str) -> str:
     """
     if not _draft["has_draft"]:
         return "Aucun brouillon en cours. Dis par ex. “Écris un mail à …” pour en créer un."
-    if field not in {"to", "subject", "body"}:
-        return "Champ invalide. Utilise 'to', 'subject' ou 'body'."
+    if field not in {"to", "cc", "bcc", "subject", "body"}:
+        return "Champ invalide. Utilise 'to', 'cc', 'bcc', 'subject' ou 'body'."
     _draft[field] = value
     return _draft_summary()
 

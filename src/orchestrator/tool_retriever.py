@@ -225,9 +225,10 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
     ),
     "gmail": ToolGroup(
         covers="Boîte mail Gmail : chercher des messages, résumer les mails reçus, "
-               "rédiger et envoyer un email, modifier un brouillon avant envoi.",
+               "rédiger et envoyer un email avec pièces jointes et copie, répondre "
+               "dans un fil de discussion, modifier un brouillon avant envoi.",
         tools=("gmail_search", "gmail_summarize", "gmail_send_email",
-               "gmail_edit_draft", "gmail_confirm_send"),
+               "gmail_edit_draft", "gmail_confirm_send", "gmail_reply"),
         keywords=frozenset({"gmail", "mail", "mails", "email", "emails", "e-mail"}),
     ),
     "calendar": ToolGroup(
@@ -245,8 +246,23 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "y ajouter du texte, lire son contenu.",
         tools=("drive_list_files", "drive_find_file_id", "drive_read_file",
                "drive_delete_file", "drive_get_file_metadata",
-               "google_docs_create", "google_docs_update", "google_docs_read"),
+               "google_docs_create", "google_docs_write", "google_docs_read"),
         keywords=frozenset({"drive", "gdoc", "gdocs"}),
+    ),
+    "sheets": ToolGroup(
+        covers="Tableur Google Sheets : créer une feuille de calcul, y ajouter des "
+               "lignes de données, lire les valeurs d'une plage, tenir un budget ou "
+               "un suivi chiffré.",
+        tools=("sheets_create", "sheets_append_rows", "sheets_read"),
+        keywords=frozenset({"sheets", "sheet", "tableur", "gsheet", "spreadsheet"}),
+    ),
+    "slides": ToolGroup(
+        covers="Présentation Google Slides : créer un diaporama, ajouter des "
+               "diapositives avec titre et puces, transformer un plan ou un rapport "
+               "en deck de présentation pour une réunion.",
+        tools=("slides_create", "slides_add_slide", "slides_from_markdown"),
+        keywords=frozenset({"slides", "slide", "diapo", "diapositive", "diaporama",
+                            "presentation", "présentation", "deck"}),
     ),
     "slack": ToolGroup(
         covers="Slack : envoyer, poster ou publier un message, un récap ou un compte "
