@@ -601,11 +601,111 @@ def _make_build_callback(console, accent: str = "color(214)"):
     return _cb
 
 
+def _prefixe_prescaffold(framework: str) -> str:
+    """Dit au specialist que le scaffold est DÉJÀ fait, pour qu'il ne le refasse pas.
+
+    Sorti de `run_build` parce qu'il y était devenu du code mort en plantant :
+    isolé, il se teste sans dérouler un build entier.
+    """
+    return (
+        "[PRÉ-SCAFFOLD EFFECTUÉ AUTOMATIQUEMENT]\n"
+        f"Framework : {framework} · pnpm create a déjà tourné avec succès.\n"
+        "package.json, node_modules, tsconfig, structure src/ sont en place.\n"
+        "⚠ NE PAS relancer pnpm create next-app ou équivalent — scaffold déjà fait.\n"
+        "Continue directement avec : tailwind.config.ts, globals.css, "
+        "structure de dossiers spécifique au projet, composants partagés.\n\n"
+    )
+
+
+def _demarrer_apercu(console, ajouter_observateur):
+    """Branche l'aperçu ASCII du navigateur, ou rien du tout.
+
+    À `apercu_navigateur: False`, cette fonction rend `None` et AUCUN fil n'est
+    lancé, aucune capture demandée. Le sidecar n'est pas masqué, il est absent —
+    c'est la désactivation que le PRD exige.
+
+    L'affichage se fait à l'arrivée d'un cadre plutôt que dans une zone `Live` en
+    place : `run_build` imprime déjà ses panneaux au fil de l'eau, et ouvrir un
+    `Live` concurrent ici les ferait se disputer le curseur. Un aperçu qui casse
+    l'affichage de la phase serait pire que pas d'aperçu.
+    """
+    try:
+        from src.infra.settings import settings as _s
+        if not getattr(_s, "apercu_navigateur", True):
+            return None
+
+        from src.ui.ascii import Reglages
+        from src.ui.ascii.navigateur import ObservateurNavigateur
+
+        obs = ObservateurNavigateur(reglages=Reglages(
+            colonnes=getattr(console, "colonnes_apercu", None)
+                     or getattr(_s, "apercu_colonnes", 72),
+            lignes=getattr(_s, "apercu_lignes", 20),
+            moteur=getattr(_s, "apercu_moteur", ""),
+            battement=getattr(_s, "apercu_battement", 1.2),
+            battement_max=getattr(_s, "apercu_battement_max", 20.0),
+            etiquette="navigateur",
+        ))
+        vus = {"rendus": 0}
+
+        def _relayer(nom: str, resultat) -> None:
+            obs.sur_outil(nom, resultat)
+
+        def _afficher() -> None:
+            stats = obs.sidecar.statistiques
+            if stats["rendus"] > vus["rendus"]:
+                vus["rendus"] = stats["rendus"]
+                # `poser_apercu` remplace la colonne de droite ; hors ancrage la
+                # scène retombe sur un `print`, donc l'appelant ne change pas.
+                poser = getattr(console, "poser_apercu", None)
+                (poser or console.print)(obs.sidecar)
+
+        obs.demarrer()
+        ajouter_observateur(_relayer)
+        return {"obs": obs, "relais": _relayer, "afficher": _afficher}
+    except Exception:                                            # noqa: BLE001
+        # Un aperçu qui ne démarre pas ne doit pas empêcher un build de tourner.
+        return None
+
+
+def _arreter_apercu(apercu, retirer_observateur) -> None:
+    if not apercu:
+        return
+    try:
+        retirer_observateur(apercu["relais"])
+        apercu["obs"].arreter()
+    except Exception:                                            # noqa: BLE001
+        pass
+
+
 def run_build(project_name: str, console) -> None:
+    """Point d'entrée du build. Enveloppe l'affichage, délègue le travail.
+
+    L'ancrage de l'aperçu à droite se décide ICI et nulle part ailleurs : le
+    corps du build imprime sur `console` sans savoir si c'est le terminal ou une
+    colonne. Si le terminal est trop étroit, la scène se déclare non ancrable et
+    tout retombe sur l'affichage classique.
+    """
+    from src.infra.settings import settings as _s
+
+    if getattr(_s, "apercu_navigateur", True) and getattr(_s, "apercu_colonnes", 72):
+        from src.ui.ascii.scene import SceneBuild
+
+        scene = SceneBuild(console, largeur_apercu=getattr(_s, "apercu_largeur", 46))
+        if scene.ancrable:
+            with scene:
+                return _run_build(project_name, scene)
+    return _run_build(project_name, console)
+
+
+def _run_build(project_name: str, console) -> None:
     from rich.text import Text
     from rich.rule import Rule
     from src.infra.settings import settings
-    from src.agents.coding.specialist import run_coding_task, set_phase_max_iterations, set_progress_callback
+    from src.agents.coding.specialist import (
+        run_coding_task, set_phase_max_iterations, set_progress_callback,
+        ajouter_observateur, retirer_observateur,
+    )
     from src.agents.coding.pending import reset_specialist_state
     from src.ui.panels import command_panel
 
@@ -675,6 +775,11 @@ def run_build(project_name: str, console) -> None:
     # Détection du framework une seule fois pour toutes les phases
     detected_framework = _detect_framework(spec_text)
 
+    # L'aperçu navigateur est branché à la PREMIÈRE phase exécutée, pas ici : une
+    # reprise (`resume_from`) peut sauter toutes les phases, et ouvrir un fil pour
+    # un build qui ne fait rien serait du bruit.
+    apercu = None
+
     for phase in phases:
         if phase.index < resume_from:
             continue
@@ -694,29 +799,32 @@ def run_build(project_name: str, console) -> None:
         # d'échec doit y entrer.
         motif_echec = ""
 
-        if prescaffold_done:
-            task = (
-                "[PRÉ-SCAFFOLD EFFECTUÉ AUTOMATIQUEMENT]\n"
-                f"Framework : {detected_framework} · pnpm create a déjà tourné avec succès.\n"
-                "package.json, node_modules, tsconfig, structure src/ sont en place.\n"
-                "⚠ NE PAS relancer pnpm create next-app ou équivalent — scaffold déjà fait.\n"
-                "Continue directement avec : tailwind.config.ts, globals.css, "
-                "structure de dossiers spécifique au projet, composants partagés.\n\n"
-                + task
-            )
-
         success = False
         result = ""
         for attempt in range(2):
             # Isolation : reset singletons + budget + callback frais (reset loop detector)
             reset_specialist_state()
+            if apercu is None:
+                apercu = _demarrer_apercu(console, ajouter_observateur)
             set_phase_max_iterations(phase_iter_budget)
             set_progress_callback(_make_build_callback(console, ACCENT))
             task = _build_phase_task(phase, spec_text, project_name, project_dir,
                                      phases, echec_precedent=motif_echec,
                                      echouees=set(build_state["failed"]))
+            # Le préfixe s'applique APRÈS la construction, et à chaque tentative.
+            # Il vivait au-dessus de cette boucle, du temps où la tâche s'y
+            # construisait aussi ; quand elle a été déplacée ici — « reconstruite à
+            # CHAQUE tentative », dit le commentaire plus haut — le préfixe est
+            # resté orphelin et lisait un `task` pas encore assigné :
+            #     UnboundLocalError: cannot access local variable 'task'
+            # Il plantait donc à tout pré-scaffold réussi, c'est-à-dire à toute
+            # phase 1 d'un projet dont le framework est détecté.
+            if prescaffold_done:
+                task = _prefixe_prescaffold(detected_framework) + task
             try:
                 result = run_coding_task(task)
+                if apercu:
+                    apercu["afficher"]()
                 if _phase_failed(result):
                     raise RuntimeError(result[:120])
                 success = True
@@ -769,3 +877,4 @@ def run_build(project_name: str, console) -> None:
 
     # Restore : plus de callback auto-accept après le build
     set_progress_callback(None)
+    _arreter_apercu(apercu, retirer_observateur)

@@ -216,3 +216,10 @@ models/
 .claude/
 .vscode/
 graphify-out/
+
+# Sorties du serveur Playwright MCP. Une capture ou un snapshot appelé SANS
+# `filename` y atterrit — dans le dépôt — et c'est le comportement du serveur,
+# pas d'Axon. L'aperçu ASCII, lui, impose son chemin et nettoie derrière lui ;
+# `.axon-apercu/` ne subsiste que si le processus est tué en cours de route.
+.playwright-mcp/
+.axon-apercu/

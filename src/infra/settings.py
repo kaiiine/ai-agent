@@ -63,6 +63,31 @@ class Settings(BaseSettings):
     # Laisser vide → l'IA cherchera depuis $HOME
     projects_dir: str = ""
 
+    # Aperçu ASCII du navigateur (src/ui/ascii)
+    #
+    # Désactivable parce qu'un aperçu est un confort : sur un terminal sans
+    # couleurs vraies, dans un CI, ou quand on veut le silence, il doit pouvoir
+    # disparaître sans que rien d'autre ne change. À False, aucun fil n'est
+    # lancé et aucune capture n'est demandée — ce n'est pas un affichage masqué,
+    # c'est un sidecar absent.
+    apercu_navigateur: bool = True
+    #: "" laisse le registre choisir le meilleur moteur présent. Un nom inconnu
+    #: n'est pas une erreur : on retombe sur l'ordre par défaut.
+    apercu_moteur: str = ""
+    apercu_colonnes: int = 72
+    apercu_lignes: int = 20
+    #: Largeur de la colonne d'aperçu ancrée à droite, en cellules. Mettre
+    #: `apercu_colonnes: 0` revient à l'affichage classique, qui défile et garde
+    #: tout l'historique du terminal — l'ancrage, lui, redessine sa surface et
+    #: perd les lignes sorties du journal.
+    apercu_largeur: int = 46
+    #: Rythme de capture spontanée, en secondes. 0 = purement événementiel (une
+    #: image par action navigateur, ce qui donnait UNE image par phase).
+    #: L'intervalle double tout seul tant que l'image ne change pas, et repart au
+    #: minimum dès qu'elle bouge : une page figée ne coûte presque rien.
+    apercu_battement: float = 1.2
+    apercu_battement_max: float = 20.0
+
     # Clés optionnelles
     openai_api_key: str | None = None
     google_api_key: str | None = None
