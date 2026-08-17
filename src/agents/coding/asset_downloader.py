@@ -32,6 +32,71 @@ def _resolve_dest(dest: str) -> Path:
     return p
 
 
+def _url_web(out: Path) -> str:
+    """Le chemin servi par l'application, ou "" si le fichier est hors du projet.
+
+    `out.relative_to(get_cwd())` levait une ValueID sur un `dest` absolu situé
+    hors du cwd — APRÈS avoir écrit le fichier. L'agent recevait donc une
+    exception au lieu d'un résultat, sur un téléchargement pourtant réussi.
+    """
+    try:
+        return "/" + str(out.relative_to(get_cwd())).lstrip("/")
+    except ValueError:
+        return ""
+
+
+def _sorties(dest_path: Path, query: str, count: int, exts_fichier: set[str]) -> list[Path]:
+    """Un chemin de sortie par asset, tous DISTINCTS.
+
+    Mesuré : `count=3` vers « img/hero.jpg » annonçait trois assets et n'écrivait
+    qu'un fichier, chaque téléchargement écrasant le précédent. L'agent câblait
+    trois `<img>` sur la même image.
+
+    Un dest nommé avec `count > 1` numérote donc à partir de ce nom plutôt que de
+    se contenter d'écraser — « hero.jpg » donne hero-1.jpg, hero-2.jpg, hero-3.jpg.
+    C'est ce que l'appel voulait dire ; refuser aurait été défendable, mais perdre
+    deux assets sur trois en silence ne l'est pas.
+    """
+    nomme = dest_path.suffix.lower() in exts_fichier
+    if nomme and count == 1:
+        return [dest_path]
+    if nomme:
+        tige, ext = dest_path.stem, dest_path.suffix
+        return [dest_path.with_name(f"{tige}-{i + 1}{ext}") for i in range(count)]
+    return []          # dossier : le nom est dérivé de la query, cf. appelants
+
+
+#: Signatures acceptées par extension. Un fichier qui ne commence pas par la
+#: sienne n'est pas du type qu'il prétend être.
+_SIGNATURES: dict[str, tuple[bytes, ...]] = {
+    ".jpg":  (b"\xff\xd8\xff",),
+    ".jpeg": (b"\xff\xd8\xff",),
+    ".png":  (b"\x89PNG\r\n\x1a\n",),
+    ".webp": (b"RIFF",),
+    ".glb":  (b"glTF",),
+    ".gltf": (b"{",),
+}
+
+
+def _signature_valide(dest: Path) -> bool:
+    """L'octet de tête dit-il le même type que l'extension ?
+
+    `taille > 1024` ne validait rien. `_search_3d_ddg` cherche « site:poly.pizza
+    … glb download » et rend des URL de PAGES, pas de fichiers ; la page HTML
+    téléchargée pèse plus de 1024 octets, passait donc le contrôle, et était
+    enregistrée en `.glb`. L'agent câblait ensuite `<model-viewer src="…glb">`
+    sur du HTML — mesuré, avec `status: ok` et une licence affichée.
+    """
+    attendues = _SIGNATURES.get(dest.suffix.lower())
+    if not attendues:
+        return True
+    try:
+        tete = dest.read_bytes()[:12]
+    except OSError:
+        return False
+    return any(tete.startswith(s) for s in attendues)
+
+
 def _download_url(url: str, dest: Path, timeout: int = 15) -> bool:
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -41,7 +106,10 @@ def _download_url(url: str, dest: Path, timeout: int = 15) -> bool:
         with open(dest, "wb") as f:
             for chunk in r.iter_content(8192):
                 f.write(chunk)
-        return dest.stat().st_size > 1024  # reject empty/error pages
+        if dest.stat().st_size <= 1024 or not _signature_valide(dest):
+            dest.unlink(missing_ok=True)   # ne pas laisser un leurre sur le disque
+            return False
+        return True
     except Exception:
         return False
 
@@ -73,23 +141,24 @@ def _search_photos(query: str, count: int) -> list[dict]:
 
 def _download_photos(query: str, dest_path: Path, count: int) -> list[dict]:
     candidates = _search_photos(query, count)
+    nommes = _sorties(dest_path, query, count, _PHOTO_EXTS)
     downloaded = []
-    for i, item in enumerate(candidates):
+    for item in candidates:
         if len(downloaded) >= count:
             break
         ext = Path(item["url"].split("?")[0]).suffix.lower() or ".jpg"
         if ext not in _PHOTO_EXTS:
             ext = ".jpg"
-        if count == 1:
-            filename = _safe_filename(query, ext)
+        if nommes:
+            out = nommes[len(downloaded)]
         else:
-            filename = _safe_filename(f"{query}-{i + 1}", ext)
+            rang = query if count == 1 else f"{query}-{len(downloaded) + 1}"
+            out = dest_path / _safe_filename(rang, ext)
 
-        out = dest_path if dest_path.suffix else dest_path / filename
         if _download_url(item["url"], out):
             downloaded.append({
                 "path": str(out),
-                "url": "/" + str(out.relative_to(get_cwd())).lstrip("/"),
+                "url": _url_web(out),
                 "source": item.get("source", ""),
                 "title": item.get("title", ""),
             })
@@ -137,58 +206,65 @@ def _search_3d(query: str, count: int) -> list[dict]:
         return []
 
 
-def _search_3d_ddg(query: str, count: int) -> list[dict]:
-    try:
-        from duckduckgo_search import DDGS
-        results = []
-        with DDGS() as ddgs:
-            for r in ddgs.text(
-                f"site:poly.pizza {query} glb download",
-                max_results=count * 4,
-            ):
-                href = r.get("href", "")
-                if "poly.pizza" in href:
-                    results.append({"url": href, "title": r.get("title", ""), "author": ""})
-        return results
-    except Exception:
-        return []
+# `_search_3d_ddg` a été supprimé. Il cherchait « site:poly.pizza … glb
+# download » et rendait les `href` des résultats, c'est-à-dire des URL de PAGES
+# HTML — jamais de fichiers. Le contrôle de signature les rejette toutes : cette
+# recherche ne pouvait donc plus produire un seul modèle, elle ne faisait que
+# retarder le repli d'un aller-retour réseau.
+#
+# C'est elle qui rendait le défaut visible : sa page HTML pesait plus de 1024
+# octets, passait donc l'unique contrôle de l'époque, et était enregistrée en
+# `.glb` avec `status: ok` et une licence affichée.
 
 
-# Known-good CC0/public-domain GLB files — used as fallback when search fails
+# Repli quand la recherche ne rend rien. Ce sont des assets de DÉMONSTRATION de
+# model-viewer et Three.js — utiles pour qu'une page ne reste pas vide, mais ils
+# n'ont rien à voir avec Poly Pizza et leur licence n'est pas CC0.
+#
+# La licence était pourtant annoncée « CC0 (Poly Pizza) » pour tout modèle 3D,
+# repli compris : mesuré, `Astronaut.glb` de Google repartait sous cette
+# étiquette. Une licence fausse sur un asset qui part en production n'est pas une
+# imprécision de log. Elle est donc portée PAR la source, jamais affirmée après.
+_LICENCE_A_VERIFIER = "à vérifier — asset de démonstration, licence non garantie"
+
 _FALLBACK_GLBS: list[dict] = [
-    {"url": "https://modelviewer.dev/shared-assets/models/Astronaut.glb",       "title": "Astronaut",   "author": "Google"},
-    {"url": "https://modelviewer.dev/shared-assets/models/Horse.glb",           "title": "Horse",       "author": "Google"},
-    {"url": "https://modelviewer.dev/shared-assets/models/NeilArmstrong.glb",   "title": "NeilArmstrong", "author": "Google"},
-    {"url": "https://modelviewer.dev/shared-assets/models/RobotExpressive.glb", "title": "Robot",       "author": "Google"},
-    {"url": "https://threejs.org/examples/models/gltf/LittlestTokyo.glb",       "title": "LittlestTokyo", "author": "Three.js"},
+    {"url": "https://modelviewer.dev/shared-assets/models/Astronaut.glb",       "title": "Astronaut",     "author": "Google model-viewer", "license": _LICENCE_A_VERIFIER},
+    {"url": "https://modelviewer.dev/shared-assets/models/Horse.glb",           "title": "Horse",         "author": "Google model-viewer", "license": _LICENCE_A_VERIFIER},
+    {"url": "https://modelviewer.dev/shared-assets/models/NeilArmstrong.glb",   "title": "NeilArmstrong", "author": "Google model-viewer", "license": _LICENCE_A_VERIFIER},
+    {"url": "https://modelviewer.dev/shared-assets/models/RobotExpressive.glb", "title": "Robot",         "author": "Google model-viewer", "license": _LICENCE_A_VERIFIER},
+    {"url": "https://threejs.org/examples/models/gltf/LittlestTokyo.glb",       "title": "LittlestTokyo", "author": "Three.js examples",   "license": _LICENCE_A_VERIFIER},
 ]
 
 
 def _download_3d(query: str, dest_path: Path, count: int) -> list[dict]:
     candidates = _search_3d(query, count)
     if not candidates:
-        candidates = _search_3d_ddg(query, count)
-    if not candidates:
         candidates = _FALLBACK_GLBS[:count]
 
+    nommes = _sorties(dest_path, query, count, _MODEL_EXTS)
     downloaded = []
-    for i, item in enumerate(candidates):
+    for item in candidates:
         if len(downloaded) >= count:
             break
         url = item["url"]
         ext = Path(url.split("?")[0]).suffix.lower()
         if ext not in _MODEL_EXTS:
             ext = ".glb"
-        filename = _safe_filename(f"{query}-{i + 1}" if count > 1 else query, ext)
-        out = dest_path if dest_path.suffix in _MODEL_EXTS else dest_path / filename
+        if nommes:
+            out = nommes[len(downloaded)]
+        else:
+            rang = query if count == 1 else f"{query}-{len(downloaded) + 1}"
+            out = dest_path / _safe_filename(rang, ext)
 
         if _download_url(url, out, timeout=30):
             downloaded.append({
                 "path": str(out),
-                "url": "/" + str(out.relative_to(get_cwd())).lstrip("/"),
+                "url": _url_web(out),
                 "title": item.get("title", ""),
                 "author": item.get("author", ""),
-                "license": "CC0 (Poly Pizza)",
+                # Portée par la source. `_search_3d` interroge bien l'API Poly
+                # Pizza, dont le catalogue est CC0 ; le repli, non.
+                "license": item.get("license", "CC0 (Poly Pizza)"),
             })
         time.sleep(0.3)
 
@@ -243,10 +319,27 @@ def download_asset(
                    "Pour les modèles 3D, poly.pizza est parfois lent — réessaie.",
         }
 
-    return {
+    # Sans `url`, l'asset est hors du projet et aucune balise ne peut le servir :
+    # mieux vaut le dire que proposer un `src` qui rendra 404.
+    premier = assets[0]
+    if premier["url"]:
+        usage = (f"Dans ton composant React : <img src=\"{premier['url']}\" /> "
+                 f"ou pour GLB : <model-viewer src=\"{premier['url']}\" />")
+    else:
+        usage = ("Ces fichiers sont HORS du projet servi : aucune URL web ne les "
+                 "atteint. Déplace-les sous public/ ou relance avec un `dest` "
+                 "relatif au projet avant de les référencer.")
+
+    resultat = {
         "status": "ok",
         "count": len(assets),
         "assets": assets,
-        "usage": f"Dans ton composant React : <img src=\"{assets[0]['url']}\" /> "
-                 f"ou pour GLB : <model-viewer src=\"{assets[0]['url']}\" />",
+        "usage": usage,
     }
+    if any(_LICENCE_A_VERIFIER in (a.get("license") or "") for a in assets):
+        resultat["avertissement"] = (
+            "La recherche n'a rien donné : ce sont des assets de DÉMONSTRATION, "
+            "servis pour ne pas laisser la page vide. Leur licence n'est pas "
+            "garantie — ne les laisse pas partir en production sans la vérifier."
+        )
+    return resultat
