@@ -10,6 +10,7 @@ Checkpointer SQLite persistant pour LangGraph.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -39,8 +40,27 @@ def build_checkpointer() -> SqliteSaver:
 
 # ── Persistance du thread actif ────────────────────────────────────────────────
 
+def _ecrire_atomique(chemin: Path, contenu: str) -> None:
+    """Écrit via un fichier temporaire puis un rename, jamais en place.
+
+    `write_text` tronque la cible AVANT d'écrire : un processus tué au mauvais
+    moment laisse un fichier à moitié écrit. Pour `thread_cwds.json` ce n'est pas
+    une gêne passagère mais une perte définitive, car la lecture suivante échoue
+    et l'écriture d'après repart d'une table VIDE (cf. save_thread_cwd).
+
+    `os.replace` est atomique sur le même système de fichiers : le fichier
+    contient soit l'ancien état complet, soit le nouveau, jamais un moignon.
+    """
+    tmp = chemin.with_name(chemin.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(contenu)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, chemin)
+
+
 def save_last_thread(thread_id: str) -> None:
-    _LAST_FILE.write_text(thread_id, encoding="utf-8")
+    _ecrire_atomique(_LAST_FILE, thread_id)
 
 
 def load_last_thread() -> Optional[str]:
@@ -53,14 +73,37 @@ def load_last_thread() -> Optional[str]:
 # ── Persistance du cwd par thread ─────────────────────────────────────────────
 
 def save_thread_cwd(thread_id: str, cwd: str) -> None:
+    """Enregistre le répertoire de travail d'un thread.
+
+    Le `except: pass` d'origine laissait `data` à {} quand le JSON était
+    illisible, puis RÉÉCRIVAIT le fichier : une seule lecture ratée effaçait le
+    cwd de tous les autres threads. Mesuré sur trois threads, il en restait un ;
+    le fichier réel en contient 286.
+
+    Les deux moitiés du défaut se nourrissaient l'une l'autre — l'écriture non
+    atomique produisait précisément le JSON tronqué que la lecture suivante ne
+    savait pas relire. Elles sont corrigées ensemble, et un fichier illisible est
+    désormais mis de côté plutôt qu'écrasé : il reste récupérable à la main.
+    """
     data: dict = {}
     if _CWD_FILE.exists():
         try:
             data = json.loads(_CWD_FILE.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("table de cwd corrompue")
         except Exception:
-            pass
+            data = {}
+            horodatage = datetime.now().strftime("%Y%m%d-%H%M%S")
+            try:
+                _CWD_FILE.rename(_CWD_FILE.with_name(f"{_CWD_FILE.name}.corrompu-{horodatage}"))
+            except OSError:
+                pass
+
     data[thread_id] = cwd
-    _CWD_FILE.write_text(json.dumps(data), encoding="utf-8")
+    # Écriture par lecture-modification-écriture : deux sessions AXON simultanées
+    # peuvent encore se perdre mutuellement leur DERNIÈRE entrée. C'est une entrée,
+    # pas la table entière, et poser un verrou coûterait plus que ce cas ne pèse.
+    _ecrire_atomique(_CWD_FILE, json.dumps(data))
 
 
 def load_thread_cwd(thread_id: str) -> Optional[str]:

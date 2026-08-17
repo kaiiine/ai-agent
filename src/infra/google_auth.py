@@ -1,6 +1,6 @@
 # src/infra/google_auth.py
 from __future__ import annotations
-import json, pickle
+import json, os, pickle, stat
 from pathlib import Path
 from typing import Sequence, Set
 from googleapiclient.discovery import build
@@ -11,8 +11,56 @@ from google.auth.exceptions import RefreshError
 # === SETTIGNS ===
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CREDENTIALS_PATH = (PROJECT_ROOT / "gcp-oauth.keys.json").resolve()
-TOKEN_PATH = Path.home() / ".ai-agent" / "google_token.pickle"   
-TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+TOKEN_PATH = Path.home() / ".ai-agent" / "google_token.pickle"
+
+
+def _restreindre(chemin: Path) -> None:
+    """Retire les droits de groupe et d'autrui sur un secret.
+
+    Mesuré sur la machine : le jeton était en 0644 dans un répertoire 0755, donc
+    lisible par tout compte local. Il porte `gmail.send`, `documents`,
+    `spreadsheets`, `drive.file` et `calendar` — l'exposer revient à exposer la
+    boîte mail et le Drive, pas seulement une session.
+
+    Le voisin immédiat suit pourtant la bonne convention : `~/.axon/mcp_servers.json`
+    est en 0600. Ce n'était donc pas un choix, mais l'umask par défaut appliqué à
+    un `open(..., "wb")` sans mode.
+
+    Le rattrapage vaut pour les fichiers DÉJÀ écrits : sans lui, celui qui existe
+    aujourd'hui resterait ouvert indéfiniment, la correction ne valant que pour
+    les prochaines écritures.
+    """
+    try:
+        actuel = chemin.stat().st_mode
+        if actuel & (stat.S_IRWXG | stat.S_IRWXO):
+            chemin.chmod(actuel & ~(stat.S_IRWXG | stat.S_IRWXO))
+    except OSError:
+        pass
+
+
+def _ouvrir_prive(chemin: Path):
+    """Ouvre en écriture avec 0600 dès la CRÉATION.
+
+    Écrire puis `chmod` laisserait le secret lisible entre les deux appels.
+    """
+    return os.fdopen(os.open(chemin, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb")
+
+
+# `mode=` de mkdir ne vaut QUE pour une création : sur une machine où le
+# répertoire existe déjà — le cas de toute installation antérieure — il reste tel
+# qu'il a été créé. Mesuré : 0755 après correction du seul mkdir. D'où le
+# resserrement explicite, qui rattrape l'existant.
+TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+_restreindre(TOKEN_PATH.parent)
+
+# Les clés client sont le même genre de secret, et le resserrement qui vit dans
+# `_load_credentials` ne les atteint que lors d'un NOUVEAU flux OAuth — soit
+# presque jamais, une fois le jeton obtenu. Elles resteraient donc en 0644 pour
+# toujours. Le fichier est absent sur beaucoup de machines : `_restreindre` s'en
+# accommode sans lever.
+_restreindre(CREDENTIALS_PATH)
+
+
 SCOPES_GMAIL  = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
@@ -43,6 +91,7 @@ SCOPES_ALL: list[str] = list({
 def _load_credentials(scopes: Sequence[str]):
     creds = None
     if TOKEN_PATH.exists():
+        _restreindre(TOKEN_PATH)
         with open(TOKEN_PATH, "rb") as f:
             creds = pickle.load(f)
 
@@ -57,12 +106,13 @@ def _load_credentials(scopes: Sequence[str]):
     if need_flow:
         if not CREDENTIALS_PATH.exists():
             raise FileNotFoundError(f"Credentials introuvables: {CREDENTIALS_PATH}")
+        _restreindre(CREDENTIALS_PATH)
         with open(CREDENTIALS_PATH, "r", encoding="utf-8") as f:
             client_config = json.load(f)
 
         flow = InstalledAppFlow.from_client_config(client_config, SCOPES_ALL)
         creds = flow.run_local_server(port=0, open_browser=False)
-        with open(TOKEN_PATH, "wb") as f:
+        with _ouvrir_prive(TOKEN_PATH) as f:
             pickle.dump(creds, f)
 
     elif not creds.valid and getattr(creds, "refresh_token", None):
@@ -74,7 +124,7 @@ def _load_credentials(scopes: Sequence[str]):
                 TOKEN_PATH.unlink()
             return _load_credentials(scopes)
         else:
-            with open(TOKEN_PATH, "wb") as f:
+            with _ouvrir_prive(TOKEN_PATH) as f:
                 pickle.dump(creds, f)
 
     return creds
