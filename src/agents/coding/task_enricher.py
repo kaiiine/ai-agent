@@ -121,6 +121,13 @@ _MIN_SPEC_CHARS = 500
 _SPEC_INLINE_LIMIT = 4_000
 _SPEC_FILE_PREFIX = "/tmp/axon_spec_"
 
+#: En-tête que `build_runner._inventaire_du_projet()` pose dans une tâche de phase.
+#: Sa présence signifie « la surface du projet est déjà décrite ici » — donc que
+#: moissonner des noms de fichiers pour les pré-lire serait redondant. Le marqueur
+#: est repris littéralement de build_runner ; un test lie les deux pour qu'un
+#: renommage d'un côté ne rende pas ce garde-fou muet de l'autre.
+_INVENTAIRE_MARQUEUR = "FICHIERS DÉJÀ PRÉSENTS"
+
 
 def _extract_inline_spec(task: str) -> Optional[tuple[str, str]]:
     """Detect a pasted design brief (≥2 ## sections, ≥500 chars).
@@ -300,7 +307,18 @@ def _find_file_in_scope(filename: str) -> Optional[Path]:
     """
     Locate a bare filename (e.g. 'script.py') without a path.
     Search order: cwd → cwd parents (3 levels) → project roots (shallow, depth 4).
-    Returns the first match to avoid loading many results.
+
+    Un nom AMBIGU ne résout rien. La version précédente rendait le PREMIER match
+    rencontré, et ce silence-là coûtait cher : `_cwd` vaut `$HOME` par défaut et
+    le build ne le déplace jamais — il passe `cwd=` à ses sous-processus, pas à la
+    session shell. Une phase construisant un projet voyait donc injecter, sous
+    l'en-tête « SOURCES PRÉ-LUES — contenu disponible directement », le
+    `Footer.tsx` d'un AUTRE projet du disque, arrivé premier dans le parcours.
+
+    Injecter le mauvais fichier est pire que n'en injecter aucun : l'agent ne peut
+    pas savoir qu'il lit le mauvais, alors que rien du tout le laisse lire lui-même
+    avec `local_read_file`, où le chemin est explicite. En cas d'homonymie, on se
+    taît donc, dans la base où l'ambiguïté apparaît.
     """
     try:
         from src.agents.shell.tools import _cwd as shell_cwd
@@ -316,6 +334,7 @@ def _find_file_in_scope(filename: str) -> Optional[Path]:
 
         needle = filename.lower()
         for base in bases:
+            trouves: list[Path] = []
             try:
                 for p in base.rglob(filename):
                     if p.is_file() and p.name.lower() == needle:
@@ -323,12 +342,17 @@ def _find_file_in_scope(filename: str) -> Optional[Path]:
                         parts = set(p.parts)
                         if parts & _SKIP_DIRS:
                             continue
-                        return p
+                        trouves.append(p)
+                        if len(trouves) > 1:
+                            return None      # homonymes : on se taît
+                        continue
                     # rglob depth guard: skip deep hits from project roots
                     if base in _PROJECT_ROOTS and len(p.relative_to(base).parts) > 4:
                         break
             except (PermissionError, OSError):
                 continue
+            if trouves:
+                return trouves[0]
     except Exception:
         pass
     return None
@@ -384,14 +408,27 @@ def enrich_task(task: str) -> str:
 
     # Also detect bare filenames (e.g. "script.py", "config.json") not caught by _PATH_RE.
     # Cap at 3 filenames to avoid context bloat; skip if already in refs.
-    _existing_refs_lower = {r.lower() for r in refs}
-    _filename_matches = _FILENAME_RE.findall(task)
-    for fname in _filename_matches:
-        if len(refs) >= _MAX_SOURCES:
-            break
-        if fname.lower() not in _existing_refs_lower:
-            refs.append(fname)
-            _existing_refs_lower.add(fname.lower())
+    #
+    # Sauf si la tâche PORTE DÉJÀ son inventaire. Une tâche de phase de build liste
+    # les fichiers présents avec leurs exports, et dit explicitement de n'en ouvrir
+    # un que si son CONTENU est nécessaire. Y pré-lire les noms qu'elle vient de
+    # citer défait cet inventaire au lieu de le compléter.
+    #
+    # Mesuré sur une phase « Pages » réaliste : 2 672 caractères de tâche
+    # devenaient 10 872, soit +8 200 (≈ 2 000 tokens) à CHAQUE phase de CHAQUE
+    # build. Et les noms moissonnés ne venaient pas tous de l'inventaire —
+    # `tailwind.config.js` et `globals.css` étaient récoltés dans l'EXEMPLE de
+    # steps du bloc Instructions, où ils n'illustrent qu'une bonne granularité de
+    # plan et ne désignent aucun fichier du projet.
+    if _INVENTAIRE_MARQUEUR not in task:
+        _existing_refs_lower = {r.lower() for r in refs}
+        _filename_matches = _FILENAME_RE.findall(task)
+        for fname in _filename_matches:
+            if len(refs) >= _MAX_SOURCES:
+                break
+            if fname.lower() not in _existing_refs_lower:
+                refs.append(fname)
+                _existing_refs_lower.add(fname.lower())
 
     # When a spec is detected, strip it from task — the spec_prefix carries
     # the preview; keeping the full spec in task would double it in context.

@@ -226,3 +226,104 @@ def test_enrich_task_passthrough_when_ref_not_found():
     # No injection if nothing found — task returned unchanged
     assert "SOURCES PRÉ-LUES" not in result
     assert result == task
+
+
+# ── Une tâche qui porte son inventaire ne se fait pas pré-lire ────────────────
+#
+# Mesuré sur une phase « Pages » réaliste, avant correction : 2 672 caractères de
+# tâche devenaient 10 872, soit +8 200 (≈ 2 000 tokens) à CHAQUE phase de CHAQUE
+# build. Le contenu injecté venait de `Footer.tsx`, `Header.tsx`, `page.tsx` —
+# noms lus dans l'inventaire que la tâche vient d'énoncer — plus
+# `tailwind.config.js` et `globals.css`, récoltés dans l'EXEMPLE de steps du bloc
+# Instructions, où ils n'illustrent qu'une granularité de plan.
+
+def _tache_de_phase(tmp_path):
+    from src.agents.coding.build_runner import _build_phase_task
+    from src.agents.coding.task_decomposer import Phase
+
+    phases = [Phase(1, "Setup", "scaffold"), Phase(2, "Composants", "ui"),
+              Phase(3, "Pages", "sections"), Phase(4, "Polish", "vérif")]
+    for nom in ("Header.tsx", "Footer.tsx", "page.tsx"):
+        (tmp_path / nom).write_text("export function X() {}")
+    spec = "\n".join(f"## Module {i}\n" + "Contenu de spec. " * 30 for i in range(1, 9))
+    return _build_phase_task(phases[2], spec, "un-projet", tmp_path, phases)
+
+
+def test_une_tache_de_phase_n_est_pas_re_enrichie(tmp_path):
+    from src.agents.coding.task_enricher import enrich_task
+
+    tache = _tache_de_phase(tmp_path)
+    assert enrich_task(tache) == tache
+
+
+def test_l_enrichissement_ne_mange_pas_les_instructions_de_phase(tmp_path):
+    """Le bloc Instructions vient APRÈS la spec dans une tâche de phase, et c'est
+    lui qui porte « ÉCRIS TÔT » et l'appel obligatoire à axon_note — les deux
+    correctifs de la boucle de build. Les perdre les annulerait en silence."""
+    from src.agents.coding.task_enricher import enrich_task
+
+    enrichie = enrich_task(_tache_de_phase(tmp_path))
+
+    for marqueur in ("ÉCRIS TÔT", "axon_note", "SCOPE DE CETTE PHASE", "Instructions :"):
+        assert marqueur in enrichie, f"perdu à l'enrichissement : {marqueur}"
+
+
+def test_le_marqueur_d_inventaire_est_bien_celui_que_le_build_ecrit(tmp_path):
+    """Le garde-fou repose sur une chaîne partagée entre deux modules. Sans ce
+    test, la renommer dans build_runner rendrait l'autre muet — et le silence
+    d'un garde-fou ne se voit pas."""
+    from src.agents.coding.task_enricher import _INVENTAIRE_MARQUEUR
+
+    assert _INVENTAIRE_MARQUEUR in _tache_de_phase(tmp_path)
+
+
+def test_une_demande_utilisateur_reste_enrichie(tmp_path):
+    """Non-régression du chemin pour lequel l'enrichissement existe : quand
+    l'utilisateur cite une source, elle est bien pré-lue."""
+    from src.agents.coding.task_enricher import enrich_task
+
+    (tmp_path / "README.md").write_text("# Projet\n" + "Description. " * 50)
+    enrichie = enrich_task(f"lis le fichier {tmp_path / 'README.md'} et résume-le")
+
+    assert "SOURCES PRÉ-LUES" in enrichie
+    assert "Description." in enrichie
+
+
+# ── Un nom de fichier ambigu ne résout rien ───────────────────────────────────
+
+def test_un_nom_de_fichier_homonyme_n_injecte_rien(tmp_path, monkeypatch):
+    """`_cwd` vaut `$HOME` par défaut et le build ne le déplace jamais — il passe
+    `cwd=` à ses sous-processus, pas à la session shell. La version précédente
+    rendait le PREMIER match du parcours : une phase construisant un projet
+    voyait injecter, sous « SOURCES PRÉ-LUES — contenu disponible directement »,
+    le fichier homonyme d'un AUTRE projet du disque.
+
+    Injecter le mauvais fichier est pire que n'en injecter aucun : l'agent ne
+    peut pas savoir qu'il lit le mauvais, alors que rien du tout le laisse lire
+    lui-même avec un chemin explicite.
+    """
+    import src.agents.shell.tools as shell_tools
+    from src.agents.coding import task_enricher
+
+    for projet in ("projet_a", "projet_b"):
+        (tmp_path / projet).mkdir()
+        (tmp_path / projet / "Footer.tsx").write_text(f"// {projet}")
+    monkeypatch.setattr(shell_tools, "_cwd", tmp_path)
+    monkeypatch.setattr(task_enricher, "_PROJECT_ROOTS", [])
+
+    assert task_enricher._find_file_in_scope("Footer.tsx") is None
+
+
+def test_un_nom_de_fichier_unique_resout_toujours(tmp_path, monkeypatch):
+    """Le contrepoids : se taire sur l'ambiguïté ne doit pas rendre muet sur le
+    cas certain."""
+    import src.agents.shell.tools as shell_tools
+    from src.agents.coding import task_enricher
+
+    (tmp_path / "projet").mkdir()
+    (tmp_path / "projet" / "Unique.tsx").write_text("// seul")
+    monkeypatch.setattr(shell_tools, "_cwd", tmp_path)
+    monkeypatch.setattr(task_enricher, "_PROJECT_ROOTS", [])
+
+    trouve = task_enricher._find_file_in_scope("Unique.tsx")
+    assert trouve is not None and trouve.name == "Unique.tsx"
