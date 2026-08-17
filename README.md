@@ -353,11 +353,38 @@ Slash commands available from Zed (prefix with a space to bypass Zed's own `/` p
 
 | Shortcut | Action |
 |----------|--------|
+| `Enter` | Send the message |
+| `Ctrl+J` · `Alt+Enter` | New line without sending |
+| `Shift+Enter` | New line — **requires terminal setup**, see below |
 | `Ctrl+T` | Toggle plan mode (read-only) |
 | `Ctrl+O` | Attach a file (= `/attach`) |
 | `Ctrl+P` | Paste an image (= `/paste`) |
 | `@file` + `Tab` | Inject a file into the message (fuzzy search) |
 | `↑` / `↓` | Navigate message history |
+
+#### Why `Shift+Enter` needs terminal setup
+
+Most terminals send the **same byte** (`\r`) for `Enter` and `Shift+Enter`, so no
+application can tell them apart — `prompt_toolkit` has no key for it at all.
+`Ctrl+J` and `Alt+Enter` always work; `Shift+Enter` needs one line of terminal
+config that makes it send the `Alt+Enter` sequence instead:
+
+```conf
+# kitty — ~/.config/kitty/kitty.conf   (reload with Ctrl+Shift+F5)
+map shift+enter send_text all \x1b\r
+
+# WezTerm — ~/.wezterm.lua
+{ key = "Enter", mods = "SHIFT", action = wezterm.action.SendString("\x1b\r") }
+
+# Alacritty — ~/.config/alacritty/alacritty.toml
+[[keyboard.bindings]]
+key = "Return"
+mods = "Shift"
+chars = "\r"
+```
+
+Terminals that enable the **kitty keyboard protocol** send `ESC [ 13 ; 2 u` for
+`Shift+Enter`; Axon binds that sequence too, so it works there with no config.
 
 ---
 
