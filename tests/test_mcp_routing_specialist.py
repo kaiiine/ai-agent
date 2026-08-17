@@ -389,22 +389,29 @@ def test_installer_ou_builder_donne_toujours_un_shell(selection):
 
 
 _SANS_SHELL = [
-    "explique-moi ce que fait cette fonction",
     "renomme le fichier du formulaire de contact",
     "lis le contenu de page.tsx",
 ]
 
 
-def test_lire_ou_expliquer_ne_tire_pas_le_shell(selection):
-    """Le contrepoids de l'ancre ci-dessus. Une seconde ancre avait été essayée,
-    « ajouter une dépendance au projet », et retirée : « au projet » remontait
-    sur « explique-moi ce que fait cette fonction », qui passait de zéro à cinq
-    outils shell. Une requête d'install gagnée ne payait pas cette fuite.
+def test_lire_un_fichier_ne_tire_pas_le_shell(selection):
+    """Le contrepoids des ancres de dépendances, resserré après mesure.
 
-    « écris le composant Header en react » n'est PAS dans cette liste : il tire
-    les cinq outils via `shell_cd`/`shell_pwd`, et c'est assumé — écrire un
-    composant précède presque toujours un build, et resserrer davantage
-    demanderait des signaux négatifs dont le coût dépasse la pollution.
+    « explique-moi ce que fait cette fonction » était dans cette liste, et c'est
+    LUI qui avait fait rejeter l'ancre « ajouter une dépendance au projet » au
+    tour précédent. Mesuré plus largement, le compromis s'inverse : ces ancres
+    font passer les tâches de dépendances de 101/120 à 114/120, contre 5→8
+    négatifs pollués et 22→23 outils en moyenne. Treize tâches débloquées pour un
+    outil de plus dans une liste que le modèle ignore.
+
+    Cette requête est donc retirée de la liste en connaissance de cause, pas par
+    commodité : « fonction » et « fait » sont trop proches du vocabulaire
+    d'exécution pour être séparés, et le premier jeu de quatre négatifs était trop
+    petit pour arbitrer.
+
+    « écris le composant Header en react » n'y est pas non plus : il tire les cinq
+    outils via `shell_cd`/`shell_pwd`, et c'est assumé — écrire un composant
+    précède presque toujours un build.
     """
     from src.agents.coding.tool_retriever import _TOOL_GROUPS
 
@@ -554,3 +561,88 @@ def test_installer_une_lib_donne_quand_meme_le_shell(selection):
     """
     reel = "ajoute la librairie framer-motion au projet"   # meilleure graine 0.643
     assert "shell_run" in selection(reel), "aucun shell pour installer une lib"
+
+
+# ── Chaque retriever a son propre index ────────────────────────────────────
+#
+# Défaut de production trouvé par accident, en cherchant à comparer des ancres :
+# `Chroma.from_documents` sans `collection_name` écrit dans la collection
+# « langchain » par défaut, partagée par tout le processus. Chaque construction
+# AJOUTAIT donc ses documents aux précédents — 138, 276, 414, 552.
+#
+# `specialist.py` garde le retriever en cache mais le reconstruit dès que
+# l'ensemble d'outils change : un serveur MCP qui tombe ou revient suffit. Les
+# doublons mangent alors le budget des k=8 places, et la sélection perd en
+# largeur ce qu'elle gagne en redondance :
+#
+#     138 docs   navigateur 4/5   blender 6/6   état 5/5   22 outils en moyenne
+#     276 docs   navigateur 3/5   blender 5/6   état 4/5   16 outils
+#
+# Aucun test ne pouvait le voir : chacun ne construisait qu'un retriever.
+
+def test_deux_retrievers_n_empilent_pas_leurs_documents():
+    from src.agents.coding.specialist import _get_coding_tools
+    from src.agents.coding.tool_retriever import CodingToolRetriever
+
+    outils = _get_coding_tools()
+    premier = CodingToolRetriever(outils, k=8)
+    if premier._store is None:
+        pytest.skip("embeddings indisponibles")
+    second = CodingToolRetriever(outils, k=8)
+
+    assert premier._store._collection.count() == second._store._collection.count()
+    assert premier._store._collection.name != second._store._collection.name
+
+
+def test_reconstruire_le_retriever_ne_degrade_pas_la_selection():
+    """Le symptôme, pas la cause : c'est ce que l'utilisateur constatait — des
+    phases qui routent moins bien à mesure que la session dure."""
+    from src.agents.coding.specialist import _get_coding_tools
+    from src.agents.coding.tool_retriever import CodingToolRetriever
+
+    outils = _get_coding_tools()
+    if CodingToolRetriever(outils, k=8)._store is None:
+        pytest.skip("embeddings indisponibles")
+
+    tailles = []
+    for _ in range(3):
+        r = CodingToolRetriever(outils, k=8)
+        tailles.append(len({t.name for t in r.get("lis le fichier src/app/page.tsx")}))
+
+    assert len(set(tailles)) == 1, f"la sélection dérive entre reconstructions : {tailles}"
+
+
+# ── Gérer les dépendances demande un shell ─────────────────────────────────
+_GESTION_DEPENDANCES = [
+    "ajoute openai au projet",
+    "retire langchain des dépendances",
+    "configure google-auth-httplib2",
+    "mets à jour googlemaps",
+    "ajoute la librairie framer-motion au projet",
+]
+
+
+def test_gerer_une_dependance_donne_toujours_un_shell(selection):
+    """Deux ancres avaient été rejetées sur un jeu de quatre négatifs. Mesuré sur
+    120 requêtes bâties depuis les dépendances RÉELLES du dépôt croisées avec
+    cinq gabarits, le verdict s'inverse : 101/120 → 114/120 paquets avec un
+    shell, pour 5→8 négatifs pollués et un outil de plus en moyenne (22→23).
+
+    L'asymétrie décide, pas le décompte : sans shell, « retire langchain des
+    dépendances » est une tâche BLOQUÉE — l'agent éditerait requirements.txt sans
+    jamais désinstaller. Avec un shell en trop, une requête de lecture reçoit un
+    outil qu'elle ignore.
+
+    Le seuil est à 3 sur 5 parce que deux cas résistent, nommés plutôt que
+    retirés du jeu : « mets à jour googlemaps » et « configure
+    google-auth-httplib2 ». Le verbe « mettre à jour » a été mesuré comme non
+    couvrable par une ancre — le candidat correspondant apportait ZÉRO tâche de
+    plus pour un négatif pollué de plus, du coût pur. Et un nom de paquet à
+    tirets se dilue : le meilleur voisin de la seconde est à 0.920.
+    """
+    reussis = sum(1 for q in _GESTION_DEPENDANCES if "shell_run" in selection(q))
+
+    assert reussis >= 3, (
+        f"régression de la gestion de dépendances "
+        f"({reussis}/{len(_GESTION_DEPENDANCES)}) — manqués : "
+        f"{[q for q in _GESTION_DEPENDANCES if 'shell_run' not in selection(q)]}")

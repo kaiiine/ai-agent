@@ -6,6 +6,8 @@ workflow tools regardless of the query.
 """
 from __future__ import annotations
 
+from uuid import uuid4
+
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
@@ -125,12 +127,29 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
         # Le trou existait avant, masqué : `browser_screenshot` était alors dans
         # le groupe shell et l'y tirait par accident. Le retirer a découvert un
         # agent à qui l'on demande d'installer une lib sans lui donner de shell.
-        # Une seule ancre, pas deux : « ajouter une dépendance au projet » a été
-        # essayée et retirée. « au projet » est assez générique pour remonter sur
-        # « explique-moi ce que fait cette fonction », qui passait alors de zéro
-        # à cinq outils shell. Le gain d'une requête d'install ne payait pas cette
-        # fuite.
         "installer une librairie ou un paquet par son nom",
+        # Ces deux-là ont d'abord été REJETÉES, sur un jeu de quatre négatifs :
+        # « ajouter une dépendance au projet » faisait remonter le shell sur
+        # « explique-moi ce que fait cette fonction », et le gain d'une requête
+        # d'install ne semblait pas payer cette fuite.
+        #
+        # Mesuré plus largement — 120 requêtes bâties sur les dépendances RÉELLES
+        # du dépôt croisées avec cinq gabarits, contre 15 négatifs de lecture,
+        # d'écriture et de note — le verdict s'inverse :
+        #
+        #     sans elles ....  101/120 paquets ont un shell   5/15 négatifs, 22 outils
+        #     avec elles ....  114/120                        8/15 négatifs, 23 outils
+        #
+        # Treize tâches de plus peuvent lancer une commande, pour trois négatifs
+        # de plus et UN outil de plus en moyenne. L'asymétrie décide : sans shell,
+        # « retire langchain des dépendances » est une tâche bloquée — l'agent
+        # éditerait requirements.txt sans jamais désinstaller ; avec un shell en
+        # trop, « explique-moi cette fonction » reçoit un outil qu'il ignore.
+        #
+        # Le premier jeu était trop petit pour voir ça, et son verdict tenait à
+        # une seule requête.
+        "ajouter ou retirer une dépendance du projet",
+        "configurer un outil ou une librairie installée",
         "builder le projet tsc next build",
         "lancer les tests jest pytest",
         "compiler le code",
@@ -416,7 +435,25 @@ class CodingToolRetriever:
                         page_content=anchor,
                         metadata={"tool_name": t.name},
                     ))
-            self._store = Chroma.from_documents(docs, embeddings)
+            # Une collection PROPRE à cette instance. Sans `collection_name`,
+            # `from_documents` écrit dans la collection « langchain » par défaut,
+            # partagée par tout le processus : chaque construction AJOUTAIT ses
+            # documents aux précédents. Mesuré, 138 → 276 → 414 → 552.
+            #
+            # Ce n'est pas théorique. `specialist.py` garde le retriever en cache
+            # mais le reconstruit dès que l'ensemble d'outils change — un serveur
+            # MCP qui tombe ou revient suffit. Les doublons mangent alors le
+            # budget des k=8 places, et la sélection perd en largeur ce qu'elle
+            # gagne en redondance :
+            #
+            #     138 docs   navigateur 4/5   blender 6/6   état 5/5   22 outils
+            #     276 docs   navigateur 3/5   blender 5/6   état 4/5   16 outils
+            #
+            # Aucun test ne pouvait le voir : chacun ne construit qu'un retriever.
+            self._store = Chroma.from_documents(
+                docs, embeddings,
+                collection_name=f"axon_outils_{uuid4().hex[:12]}",
+            )
         except Exception:
             pass  # fallback to all tools
 
