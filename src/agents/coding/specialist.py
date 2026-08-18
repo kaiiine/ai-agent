@@ -27,6 +27,37 @@ def set_progress_callback(cb: Optional[Callable[[str, dict, Optional[dict]], Opt
     _progress_cb = cb
 
 
+#: Observateurs PASSIFS d'appels d'outils. Volontairement séparés de
+#: `_progress_cb`, qui peut remplacer un résultat (`override`) : un canal capable
+#: de modifier ce que le modèle lit ne convient pas à un observateur, quelle que
+#: soit la discipline de celui qui s'y branche.
+#:
+#: La valeur de retour d'un observateur est IGNORÉE. Il reçoit le résultat pour le
+#: lire ; le contrat est de ne pas le muter, et il est vérifié par un test côté
+#: appelant plutôt que par une copie défensive — copier chaque résultat d'outil
+#: coûterait à chaque appel pour protéger d'un défaut qui ne s'est pas produit.
+_observateurs: list[Callable[[str, object], None]] = []
+
+
+def ajouter_observateur(cb: Callable[[str, object], None]) -> None:
+    if cb not in _observateurs:
+        _observateurs.append(cb)
+
+
+def retirer_observateur(cb: Callable[[str, object], None]) -> None:
+    if cb in _observateurs:
+        _observateurs.remove(cb)
+
+
+def _observer(nom: str, resultat: object) -> None:
+    """Prévient les observateurs. Ne rend rien, ne propage aucune exception."""
+    for obs in tuple(_observateurs):
+        try:
+            obs(nom, resultat)
+        except Exception:   # noqa: BLE001
+            pass
+
+
 def _notifier(evenement: str, donnees: dict | None = None) -> None:
     """Un événement d'affichage ne doit jamais faire échouer le travail."""
     if not _progress_cb:
@@ -696,6 +727,11 @@ def _run(task: str) -> str:
                         except Exception:
                             pass    
                     result = {"status": "error", "error": str(e)}
+
+            # Observateurs passifs AVANT le hook de progression : ils doivent voir
+            # le résultat tel que l'outil l'a produit, pas tel qu'un override l'a
+            # remplacé. Aucun d'eux ne peut influencer la suite.
+            _observer(name, result)
 
             # Post-execution hook: notify UI of result — MUST run before record() so
             # propose_file_change gets the "accepted" override before being tracked.

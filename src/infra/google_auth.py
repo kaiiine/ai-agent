@@ -77,9 +77,20 @@ SCOPES_SHEETS = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.file",
 ]
+#: `drive.file` seul ne donne le CONTENU que des fichiers qu'Axon a lui-même
+#: créés. Avec `drive.metadata.readonly` par-dessus, `drive_find_file_id`
+#: trouvait n'importe quel document et `drive_read_file` refusait de l'ouvrir —
+#: l'agent voyait ton Drive sans pouvoir le lire.
+#:
+#: `drive.readonly` lève cette limite et couvre déjà les métadonnées, d'où le
+#: retrait de la ligne devenue redondante. `drive.file` reste nécessaire : c'est
+#: lui qui autorise l'ÉCRITURE dans les documents qu'Axon crée.
+#:
+#: Conséquence à connaître : tout fichier lu entre dans le contexte du modèle,
+#: donc chez le fournisseur LLM. Élargir la lecture élargit ce qui peut sortir.
 SCOPES_DRIVE = [
     "https://www.googleapis.com/auth/drive.file",
-    "https://www.googleapis.com/auth/drive.metadata.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
 ]
 SCOPES_CALENDAR = [
     "https://www.googleapis.com/auth/calendar",
@@ -144,6 +155,13 @@ def get_slides_service():
     return get_service("slides", "v1", SCOPES_SLIDES)
 
 def get_sheets_service():
+    """Le vrai constructeur, celui que `agents/google_sheet` n'appelait pas.
+
+    Il en avait un local, resté à l'état de brouillon : il construisait un client
+    Docs sans identifiants pour lui voler `._http.credentials`. Mesuré,
+    `DefaultCredentialsError` avant tout appel réseau — les deux outils Sheets
+    étaient morts depuis toujours, alors que `SCOPES_SHEETS` attendait ici.
+    """
     return get_service("sheets", "v4", SCOPES_SHEETS)
 
 def get_drive_service():

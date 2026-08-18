@@ -9,9 +9,20 @@ import re
 
 _PATTERNS: list[tuple[str, str]] = [
     # Generic (.env and config style)
+    #
+    # Les segments de préfixe — `(?:[a-z0-9]+[-_])*` — sont là pour les EN-TÊTES
+    # HTTP, qui glissent un mot entre le préfixe et « key ». Mesuré :
+    # `x-apisports-key: 9f8e…` passait intact, alors que c'est exactement la clé
+    # que `stats_aggregator` envoie. Le motif exigeait `api` collé à `key`.
+    #
+    # Le mot sensible doit rester un SEGMENT entier, sinon « keyboard: azerty »
+    # serait masqué : après le groupe vient `\s*[=:]`, donc « key » suivi de
+    # « board » ne matche pas.
     (
-        r'(?i)(api[_-]?key|apikey|secret[_-]?key|access[_-]?key|auth[_-]?token'
-        r'|private[_-]?key|client[_-]?secret|password|passwd|pwd|token|credentials)'
+        r'(?i)\b((?:[a-z0-9]+[-_])*'
+        r'(?:api[_-]?key|apikey|secret[_-]?key|access[_-]?key|auth[_-]?token'
+        r'|private[_-]?key|client[_-]?secret|password|passwd|pwd|token'
+        r'|credentials|key|secret))'
         r'\s*[=:]\s*([^\s\n"\'`]{6,})',
         r'\1=***',
     ),

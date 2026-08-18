@@ -358,19 +358,37 @@ def slack_send_message(
 
     Mots-clés : slack, envoyer message, poster, channel, DM, écrire, notifier
 
-    Le message est envoyé tel quel — le LLM doit le rédiger proprement avant d'appeler ce tool.
+    Écris du MARKDOWN NORMAL — il est traduit pour Slack automatiquement.
+
+    Avant, le message partait tel quel avec, pour seule garantie, une consigne dans
+    cette docstring demandant au modèle d'écrire du mrkdwn Slack. Un modèle qui
+    rédige un rapport produit spontanément `## Titre`, `**gras**` et des tableaux,
+    qui s'affichaient en caractères bruts. La traduction est maintenant faite ici,
+    par le même module que les Docs et le mail :
+
+        # Titre        → bloc header          **gras**   → *gras*
+        ### Titre      → *gras*               [t](url)   → <url|t>
+        - point        → •  point             | a | b |  → grille alignée
+        ---            → séparateur
 
     Args:
         channel: nom (#general, @username) ou ID du channel/DM
-        text: contenu du message (markdown Slack supporté : *gras*, _italique_, `code`, ```bloc```)
+        text: contenu du message, en markdown
         thread_ts: timestamp du message parent pour répondre dans un thread (optionnel)
     Returns:
-        {"status": "ok", "ts": "...", "channel": "..."}
+        {"status": "ok", "ts": "...", "channel": "...", "blocs": N}
     """
+    from src.infra.markdown_rendu import en_blocs_slack, en_texte
+
     client = _client()
     try:
         channel_id = _resolve_channel(client, channel)
-        kwargs: Dict[str, Any] = {"channel": channel_id, "text": text}
+        blocs = en_blocs_slack(text)
+        # `text` reste renseigné : c'est lui que Slack utilise pour les
+        # notifications et les clients qui ne rendent pas les blocs.
+        kwargs: Dict[str, Any] = {"channel": channel_id, "text": en_texte(text)[:3000]}
+        if blocs:
+            kwargs["blocks"] = blocs
         if thread_ts:
             kwargs["thread_ts"] = thread_ts
         resp = client.chat_postMessage(**kwargs)
@@ -378,6 +396,7 @@ def slack_send_message(
             "status": "ok",
             "ts": resp.get("ts"),
             "channel": resp.get("channel"),
+            "blocs": len(blocs),
             "message": "Message envoyé.",
         }
     except SlackApiError as e:

@@ -57,9 +57,19 @@ def _repair_json(s: str) -> dict | None:
 
 from src.agents.search.tools import web_research_report, web_search_news
 from src.agents.weather.tools import get_weather_by_city
-from src.agents.gmail.tools import gmail_search, gmail_edit_draft, gmail_confirm_send, gmail_send_email, gmail_summarize
+from src.agents.gmail.tools import (
+    gmail_search, gmail_edit_draft, gmail_confirm_send, gmail_send_email,
+    gmail_summarize, gmail_reply,
+)
 from src.agents.google_drive.tools import drive_find_file_id, drive_list_files, drive_delete_file, drive_get_file_metadata, drive_read_file
-from src.agents.google_doc.tools import google_docs_create, google_docs_update, google_docs_read
+from src.agents.google_doc.tools import google_docs_create, google_docs_write, google_docs_read
+# Sheets et Slides n'étaient PAS enregistrés : leurs outils existaient sur le
+# disque et l'agent ne pouvait pas les appeler. C'est ce qui a laissé passer un
+# constructeur de service mort et un `add_slide` qui jetait son contenu.
+from src.agents.google_sheet.tools import sheets_create, sheets_append_rows, sheets_read
+from src.agents.google_slide.tools import (
+    slides_create, slides_add_slide, slides_from_markdown,
+)
 from src.agents.filesystem.tools import local_find_file, local_read_file, local_list_directory, local_grep, local_glob
 from src.agents.google_calendar.tools import (
     calendar_list_events, calendar_create_event, calendar_update_event,
@@ -169,6 +179,7 @@ def build_all_tools() -> List[BaseTool]:
         gmail_confirm_send,
         gmail_send_email,
         gmail_summarize,
+        gmail_reply,
         # === GOOGLE DRIVE ===
         drive_list_files,
         drive_find_file_id,
@@ -177,8 +188,16 @@ def build_all_tools() -> List[BaseTool]:
         drive_get_file_metadata,
         # === GOOGLE DOCS ===
         google_docs_create,
-        google_docs_update,
+        google_docs_write,
         google_docs_read,
+        # === GOOGLE SHEETS ===
+        sheets_create,
+        sheets_append_rows,
+        sheets_read,
+        # === GOOGLE SLIDES ===
+        slides_create,
+        slides_add_slide,
+        slides_from_markdown,
         # === FILESYSTEM LOCAL ===
         local_find_file,
         local_list_directory,

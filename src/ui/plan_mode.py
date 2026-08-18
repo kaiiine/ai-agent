@@ -15,7 +15,7 @@ BLOCKED_TOOLS: frozenset[str] = frozenset({
     "run_coding_agent",
     "propose_file_change", "edit_file",
     "dev_plan_create", "dev_plan_update", "dev_plan_step_done", "download_asset",
-    "google_docs_create", "google_docs_update",
+    "google_docs_create", "google_docs_write",
     "create_presentation", "add_slide",
     "gmail_send_email", "gmail_confirm_send", "gmail_edit_draft",
     "drive_delete_file",
