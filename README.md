@@ -7,7 +7,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11+-orange?style=flat-square&logo=python&logoColor=white)
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-blue?style=flat-square)
 ![Ollama](https://img.shields.io/badge/Ollama-local%20%2B%20cloud-black?style=flat-square)
-![Tests](https://img.shields.io/badge/tests-1256%20passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-3901%20passing-brightgreen?style=flat-square)
 ![Gemini](https://img.shields.io/badge/Gemini-2.5%20Flash-4285F4?style=flat-square&logo=google)
 ![Mistral](https://img.shields.io/badge/Mistral-small%202603-FF7000?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
@@ -64,8 +64,10 @@ axon
                              │
 ┌────────────────────────────▼────────────────────────────────────────┐
 │                       Orchestrator (LangGraph)                       │
-│   Two-stage tool routing: query → group → tools (22 groups)         │
-│     hybrid — exact term match complements vector similarity          │
+│   Two-stage tool routing: query → group → tools (26 groups)         │
+│     hybrid — exact term match complements vector similarity         │
+│     composite queries routed clause by clause, then unioned         │
+│     deterministic gates: money · code · recurrence                  │
 │   CachedToolNode (TTL + invalidation) · Cloud redaction             │
 │   Context compression (tiktoken-counted, 40-75% of window by backend)│
 │   Error recovery: retry → provider switch → drop tools → explain     │
@@ -132,9 +134,9 @@ dev_plan_create → analysis → dev_explain → propose_file_change
 - **`/mode ask`** (default): approval required for each file
 - **`/mode auto`**: writes directly without confirmation
 - **`/undo`**: restores all files modified since the last round (automatic snapshot)
-- **Skills**: Next.js · Angular · Vue · Svelte · Three.js · Blender · Python · Rust · Go · Node.js · Java · Kotlin · Systems — Markdown files in `skills/`, each declaring its `scope` (coding, orchestrator, or both) and the phrasings that should retrieve it. Loaded via `load_skill()`, available to the orchestrator too — not just the coding agent.
+- **Skills** (48): Markdown files in `skills/`, each declaring its `scope` (coding, orchestrator, or both) and the phrasings that should retrieve it. Loaded via `load_skill()`, available to the orchestrator too — not just the coding agent. See [Skills](#skills--48-of-them-and-adding-one-is-safe) below.
 - **Task enrichment**: repos and files mentioned in the task are pre-read before the LLM starts
-- **Semantic tool selection**: only the 6 most relevant tools are exposed per turn (Chroma embeddings)
+- **Semantic tool selection**: the turn is routed to a handful of tool groups rather than the full catalogue (Chroma embeddings, `nomic-embed-text`)
 
 ### `/build` — Phase-based project builder
 
@@ -145,6 +147,62 @@ Builds an entire project from a `spec.md` by splitting it into independent phase
 ```
 
 Each phase is retried on failure. Progress streams live. Token budget is auto-tuned per backend.
+
+### Skills — 48 of them, and adding one is safe
+
+A skill is a Markdown file that teaches Axon a stack or a role. Three families:
+
+| Family | Examples |
+|--------|----------|
+| **Stacks** — write new code | `nextjs` · `frontend` · `vue` · `svelte` · `angular` · `python` · `php` · `go` · `rust` · `java` · `kotlin` · `node_backend` · `systems` · `threedee` · `blender` · `apple-design` |
+| **Reviewers** — read existing code | `python-reviewer` · `typescript-reviewer` · `react-reviewer` · `vue-reviewer` · `java-reviewer` · `php-reviewer` · `go-reviewer` · `rust-reviewer` · `kotlin-reviewer` · `cpp-reviewer` · `django-reviewer` · `fastapi-reviewer` · `database-reviewer` · `security-reviewer` · `silent-failure-hunter` · `code-simplifier` · `refactor-cleaner` |
+| **Resolvers & specialists** — a build fails, a page is slow | `build-error-resolver` · `react-build-resolver` · `java-build-resolver` · `kotlin-build-resolver` · `go-build-resolver` · `rust-build-resolver` · `cpp-build-resolver` · `django-build-resolver` · `performance-optimizer` · `a11y-architect` · `seo-specialist` · `tdd-guide` · `shell-execution` |
+
+**Skills compose**: `load_skill()` returns one skill per call and is meant to be
+called once per skill that applies, not once in total.
+
+**A skill served names its neighbours.** `python` and `fastapi-reviewer` both
+answer to "FastAPI"; `frontend` and `react-reviewer` both answer to "React". The
+embedder cannot tell *create* from *review* on a French sentence — six
+disambiguation mechanisms were built and measured, none beat the baseline on a
+held-out query set. So the first pick is not made infallible, it is made
+**recoverable**: the skill that is served lists the siblings covering the same
+domain, and `load_skill` can be called again.
+
+The consequence is the property that matters when a catalogue grows: a newly
+added skill can never silently steal a query — at worst it adds one pointer
+line. Measured across 38 reference queries, going from 29 to 48 skills cost 2
+points of first-pick accuracy (29/38 → 27/38) while reachability rose to
+**33/38**, above what the smaller catalogue could reach at all.
+
+`tests/test_routage_skills.py` holds both corpora and the floors. One of the two
+was written afterwards and never used for tuning — which is what caught a
+mechanism scoring 22/22 on the tuning set and 7/16 on the held-out one.
+
+### Code graph — ask the repo instead of reading it
+
+The coding specialist queries a symbol graph built by
+[graphify](https://github.com/safishamsi/graphify) rather than opening files:
+
+| Tool | Answers | Cost |
+|------|---------|------|
+| `graph_affected(sym)` | what breaks if I touch this — **before editing** | ~150 tk |
+| `graph_explain(sym)` | definition, neighbours, degree | ~330 tk |
+| `graph_path(a, b)` | how these two are connected | small |
+| `graph_query(question)` | wide traversal, adjustable ceiling | ≤ 2000 tk |
+
+### Scheduled tasks
+
+```
+› Send me a recap of my unread emails every morning at 9
+```
+
+`schedule_task` collects every missing parameter in a single clarification
+round, then registers the job. A daemon (`src/cron_daemon.py`) runs it and
+delivers the result to the channel you chose — terminal, Slack or email.
+Recurrence phrasings ("every day", "daily", "at the same time", "alert me
+if…") are caught by a deterministic gate rather than by similarity, which took
+that route from 64% to 100% recall on its reference corpus.
 
 ### Persistent project memory
 
@@ -186,7 +244,37 @@ Injected into future sessions on the same repo. Browsable in Obsidian (auto-conf
 › Create a presentation on microservices architecture
 ```
 
-Generates professional Reveal.js (HTML) slides with alternating dark/light theme. Export to PPTX available if `python-pptx` is installed.
+One call produces the **whole deck** — Reveal.js HTML plus PPTX — and opens it.
+Nineteen slide types, in four families:
+
+| family | types |
+|---|---|
+| **Diagrams** | `tree` (org chart) · `flow` (arrowed process) · `cycle` (loop) · `quadrant` (2 axes) |
+| **Technical** | `code` (offline syntax highlighting) · `compare` (two code panels + verdict) |
+| **Emphasis** | `punch` (one statement, full screen) · `quote` · `stats` |
+| **Layout** | title · agenda · timeline · section · content · split · split3 · table · cases · closing |
+
+Diagrams are HTML boxes over an SVG link layer, positions computed in Python:
+SVG alone has no text wrapping, HTML alone cannot draw a curve between two
+boxes, so each does what it is good at.
+
+**Variety is enforced twice.** The tool description sets the rules — never more
+than two `content` in a row, at least four types past ten slides, show code on a
+technical subject. And after rendering, the tool counts the types it actually
+received and says so if the deck is flat: a real 18-slide deck came back with
+eight `content` and four types never used at all. It does not rewrite the deck —
+doing that for the author would be worse — it reports, while the model can still
+do better.
+
+The theme is Python, not prompt: every deck comes out in the same Axon identity,
+whichever backend wrote the content. Amber `#ffaf00` — the terminal's own accent
+— on warm near-black, one accent graded in intensity rather than a colour per
+card, and grid columns that follow the item count so the last row is never left
+with an orphan.
+
+Google Slides is a separate group, reached only when it is named. Building a
+deck through its API costs one call per slide, which exhausts the turn budget
+before the deck is finished.
 
 ### Plan mode (`Ctrl+T`)
 
@@ -196,6 +284,76 @@ Switches to read-only — all write tools removed. The LLM analyses and proposes
 ·············· ◆ PLAN ················
  PLAN   Analyse my project and propose an auth architecture refactor
 ```
+
+### The machine is detected, never assumed
+
+Which OS, which package manager, which service manager — resolved once per
+process by `src/infra/systeme.py` and injected into the system prompt only when
+shell tools are routed:
+
+```
+━━ MACHINE ━━
+linux / endeavouros · shell zsh
+install pacman -S <pkg> · update pacman -Syu · search pacman -Ss <motif>
+AUR : yay -S <pkg>
+services systemctl restart <svc> (--user si unité utilisateur) · journalctl -u <svc> -e
+```
+
+Detection reads the **binaries actually present** (`shutil.which`) rather than
+the name the distribution declares — the two diverge in exactly the case that
+matters, a Debian container launched from an Arch host, and the first one is
+right. Only the column that applies is injected: the full five-OS table would
+cost ~900 tokens to serve one fifth of it, this block costs 121.
+
+Switch machine and it follows: macOS reports its **product** version (15.1) and
+`brew` / `launchctl`, Windows separates cmd from PowerShell 5 from pwsh 7 — and
+yields to `$SHELL` when Git Bash or WSL is in charge, since that is what will
+interpret the command. A machine with no known package manager says so rather
+than borrowing one. Four simulated machines are covered in
+`tests/test_contexte_systeme.py`, because "it adapts" verified only on the
+developer's own Arch box is not a verification.
+
+When a command comes back not-found — exit 127, exit 9009, or PowerShell's own
+wording — the context is **invalidated automatically**, so the next turn is
+re-detected instead of being told to re-detect.
+
+**The safety guards do not depend on any of this.** `shell_run` requires
+confirmation across all three vocabularies at once — POSIX, PowerShell/cmd and
+VCS — rather than picking a list from the detected OS: a detection that gets it
+wrong (container, WSL, POSIX shell under Windows) would silently disarm the
+guard, whereas a union can only err on the safe side. Before this, `Remove-Item
+-Recurse -Force C:\Users`, `del /f /s /q C:\`, `Format-Volume` and `diskpart`
+ran with no confirmation at all.
+
+### Action journal — one action, one line
+
+While Axon works, each step is written as it happens, and closes with its own
+outcome:
+
+```
+ ⠋  reading     src/app/page.tsx
+ ✓  reading     src/app/page.tsx                                 1.4s
+ ✓  searching   « nomic-embed-text » — 3 sources
+ ✗  fetching    example.com — timed out
+```
+
+A web search names the sites it actually visited. Parallel calls to the same
+tool are paired by call id, so two simultaneous reads never collapse into one
+line. A step that fails says so and the run continues.
+
+### ASCII previews & animations
+
+The browser-driving tools render their page as an ASCII frame anchored to the
+right of the conversation, refreshed by events rather than polled. The same
+surface hosts standalone animations, driven by time instead of events —
+`src/ui/ascii/` keeps the two behind one `Cadre` contract, so neither can slow
+down what it accompanies.
+
+### One markdown, four destinations
+
+The model writes Markdown once; each destination renders it natively — Google
+Docs as real headings and tables, email as HTML, Slack as mrkdwn, slides as
+Reveal.js. Previously only email converted anything, and it dropped tables.
 
 ### `@mention` files
 
@@ -303,7 +461,8 @@ Slash commands available from Zed (prefix with a space to bypass Zed's own `/` p
 
 | Category | Tools |
 |----------|-------|
-| **Search** | Tavily web search, Tavily research report, Arxiv, weather, translation |
+| **Search** | Tavily web search, Tavily research report, Arxiv, weather |
+| **Translate** | translator (any language pair, tone instruction) |
 | **Local files** | find, list, read, grep, glob |
 | **Shell & System** | shell_run, fuzzy navigation, clipboard, screenshot, processes |
 | **Git** | status, log, diff, add, commit, stash, checkout, suggest_commit |
@@ -312,7 +471,11 @@ Slash commands available from Zed (prefix with a space to bypass Zed's own `/` p
 | **Jira** | read, create, transitions, bulk (Epic→Story→Task), workload |
 | **Code** | coding specialist HITL, plan, propose_file_change, /build phases |
 | **Notebooks** | notebook_read, notebook_edit_cell, notebook_insert_cell, notebook_run |
-| **Visuals** | Mermaid (diagrams → HTML), slides (Reveal.js + PPTX), /fiche, /exo |
+| **Visuals** | Mermaid (diagrams → HTML), create_slides (Reveal.js + PPTX), /fiche, /exo |
+| **Google Slides** | slides_create, slides_add_slide, slides_from_markdown (online decks only) |
+| **Code graph** | graph_affected, graph_explain, graph_path, graph_query (graphify) |
+| **Scheduled** | schedule_task + cron daemon (delivery to terminal, Slack or email) |
+| **MCP** | any external MCP server's tools, routed alongside the native ones |
 
 ---
 
@@ -338,6 +501,7 @@ Slash commands available from Zed (prefix with a space to bypass Zed's own `/` p
 | `/keys` | Show API key pool status (provider, health, cooldown) |
 | `/new` | Start a new thread |
 | `/history` | List past threads and resume one |
+| `/dump` | Print every message of the current thread |
 | `/branch` | Fork the current thread to explore another approach |
 | `/compact` | Manually compress the current session context |
 | `/mcp <sub>` | Manage MCP servers: `list` · `add` · `test` · `tools` · `refresh` |
@@ -460,8 +624,9 @@ ollama pull qwen2.5:7b          # Local backend (optional)
 PYTHONPATH=. venv/bin/python -m pytest tests/ -q
 ```
 
-**1256 tests**, 5 skipped. The suite covers tool routing, provider error
-recovery, MCP invariants, and identity resolution.
+**3901 tests**. The suite covers tool routing (two reference corpora, one of
+them held out from tuning), provider error recovery, MCP invariants, prompt
+invariants, and identity resolution.
 
 ---
 
@@ -474,11 +639,14 @@ ai-agent/
 ├── .env.sample
 ├── AXON.md                        # (create this) Auto-injected project context
 │
-├── skills/                        # Skill content (Markdown + frontmatter: scope, anchors)
+├── skills/                        # 48 skills (Markdown + frontmatter: scope, aliases, anchors)
+├── outils/                        # Maintenance scripts (e.g. importing external agent catalogues)
 ├── docs/                          # Design notes, addenda, technical debt
 │
 └── src/
     ├── ui/                        # Terminal (streaming, commands, completer, attachments)
+    │   ├── journal.py             #   one action, one line — verbs, targets, outcomes
+    │   └── ascii/                 #   right-anchored page previews and animations
     ├── orchestrator/              # LangGraph graph + the questions it delegates:
     │   ├── graph.py               #   wiring and the chat node
     │   ├── tool_retriever.py      #   two-stage routing (group → tools)
@@ -488,6 +656,7 @@ ai-agent/
     │   ├── resilience.py          #   tool errors as results, failure log
     │   └── provider_quirks.py     #   per-provider workarounds
     ├── llm/                       # LLM factories, key pool, adaptive prompt
+    │   └── prompts/               #   one file per prompt (orchestrator, spec review, cron…)
     ├── skills/                    # Skill loader and scoping (content lives in skills/)
     ├── mcp_client/                # MCP client: connection, adapter, registry, /mcp
     ├── api/                       # OpenAI-compatible API server (models, streaming, commands)
@@ -497,7 +666,8 @@ ai-agent/
     ├── infra/                     # Settings, cache, redactor, browser, auth, failure log
     └── agents/
         ├── coding/                # HITL specialist, /build phases, per-stack skills
-        │   └── prompts/           # nextjs · angular · vue · svelte · threedee · python · …
+        │   ├── graphe.py          # symbol-graph queries (graphify) — ask, don't read
+        │   └── prompts/           # base rules, task decomposition, phase budgets
         ├── memory/                # Persistent session memory (.axon/memory/)
         ├── slides/                # Reveal.js + PPTX renderer
         ├── mermaid/               # Diagram generation (flowchart, sequence, ER, C4…)
