@@ -60,10 +60,31 @@ def test_tout_tableau_declare_le_type_de_ses_elements(tool):
 
 def test_ask_clarification_reste_typé():
     """L'outil qui a causé la panne : épinglé partout, donc son schéma casse
-    TOUTES les requêtes du provider strict, pas seulement celles qui l'appellent."""
-    spec = _schema(next(t for t in TOOLS if t.name == "ask_clarification"))
+    TOUTES les requêtes du provider strict, pas seulement celles qui l'appellent.
+
+    Ce qui avait provoqué le 400 est `items: {}` — VIDE. Le test exigeait donc
+    `items.type == "object"`, ce qui était la seule forme décrite à l'époque.
+    Depuis, `questions` porte un vrai modèle et `items` est un `$ref` vers
+    `$defs.Question` : plus de `type` à cet endroit, mais une description
+    strictement plus riche.
+
+    L'invariant garde n'est donc pas la forme littérale, c'est que `items`
+    DÉCRIVE ses éléments — inline ou par référence résolue. Vérifié en réel :
+    Gemini, Mistral et Ollama Cloud acceptent tous les trois le schéma à `$ref`.
+    """
+    outil = next(t for t in TOOLS if t.name == "ask_clarification")
+    spec = _schema(outil)
     items = spec["properties"]["questions"].get("items")
-    assert items and items.get("type") == "object"
+
+    assert items, "items vide — c'est exactement ce qui a fait tomber Gemini"
+
+    if "$ref" in items:
+        cible = items["$ref"].rsplit("/", 1)[-1]
+        modele = (spec.get("$defs") or {}).get(cible)
+        assert modele and modele.get("properties"), (
+            f"$ref vers {cible} non résolu dans $defs")
+    else:
+        assert items.get("type") == "object"
 
 
 def test_l_outil_fautif_etait_epingle_partout():

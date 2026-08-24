@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Literal, Optional
 from requests.auth import HTTPBasicAuth
 import requests
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field, field_validator
 
 
 # === CLIENT ===
@@ -530,8 +531,51 @@ def _create_single(project_key: str, item: dict, epic_key: str | None = None) ->
     return _post("issue", {"fields": fields})
 
 
-@tool("jira_create_issues_bulk")
-def jira_create_issues_bulk(project_key: str, issues: list[dict]) -> dict:
+class Issue(BaseModel):
+    """Un ticket à créer.
+
+    Déclaré pour que le SCHÉMA porte ce que la docstring décrivait seule. En
+    `list[dict]`, le modèle recevait « un tableau d'objets quelconques » : rien
+    ne lui disait que `summary` est obligatoire ni quelles valeurs `issue_type`
+    accepte, et le contrat ne se vérifiait qu'à l'exécution, ticket par ticket.
+    """
+
+    summary: str = Field(description="Titre du ticket.")
+    issue_type: Literal["Epic", "Story", "Task", "Bug", "Subtask"] = Field(
+        default="Story", description="Type du ticket.")
+    description: str = Field(default="", description="Description complète.")
+    priority: Optional[Literal["Highest", "High", "Medium", "Low", "Lowest"]] = Field(
+        default=None, description="Priorité, si elle est connue.")
+    epic_name: Optional[str] = Field(
+        default=None, description="Nom court de l'epic — pour les Epics uniquement.")
+    epic_key: Optional[str] = Field(
+        default=None, description="Clé de l'epic parent (ex. « KAN-1 »), pour "
+                                  "rattacher une Story à un Epic.")
+    parent_key: Optional[str] = Field(
+        default=None, description="Clé du ticket parent (ex. « KAN-42 ») — "
+                                  "OBLIGATOIRE pour une Subtask.")
+
+
+class ArgsBulk(BaseModel):
+    project_key: str = Field(description="Clé du projet, ex. « KAN ».")
+    issues: list[Issue] = Field(
+        description="Les tickets à créer. Les Epics sont créés en premier "
+                    "automatiquement, quel que soit leur rang dans la liste.")
+
+    @field_validator("issues", mode="before")
+    @classmethod
+    def _tolerer_un_ticket_seul(cls, brut):
+        """Un dict unique vaut un ticket, jamais une erreur de validation.
+
+        Typer guide le modèle ; ceci rattrape celui qui envoie le ticket seul au
+        lieu d'une liste d'un élément — le cas le plus fréquent quand il n'y en a
+        qu'un à créer.
+        """
+        return [brut] if isinstance(brut, dict) else brut
+
+
+@tool("jira_create_issues_bulk", args_schema=ArgsBulk)
+def jira_create_issues_bulk(project_key: str, issues: list[Issue]) -> dict:
     """
     Crée plusieurs tickets Jira en une seule fois, en respectant la hiérarchie Epic → Story → Task → Subtask.
 
@@ -551,19 +595,15 @@ def jira_create_issues_bulk(project_key: str, issues: list[dict]) -> dict:
 
     Args:
         project_key: clé du projet (ex: "KAN")
-        issues: liste de dicts avec les champs suivants :
-            - summary (str, obligatoire) : titre du ticket
-            - issue_type (str) : "Epic", "Story", "Task", "Bug", "Subtask" (défaut: "Story")
-            - description (str, optionnel) : description complète
-            - priority (str, optionnel) : "Highest", "High", "Medium", "Low", "Lowest"
-            - epic_name (str, optionnel) : nom court de l'epic (pour les Epics uniquement)
-            - epic_key (str, optionnel) : clé de l'epic parent (ex: "KAN-1") pour lier une Story à un Epic
-            - parent_key (str, obligatoire si Subtask) : clé du ticket parent (ex: "KAN-42") pour les sous-tâches
+        issues: les tickets à créer — chaque champ est décrit dans le schéma.
     Returns:
         {"status": "ok", "created": [{"key", "summary", "type", "url"}, ...], "errors": [...]}
     """
     created = []
     errors = []
+    # Le corps travaille sur des dicts depuis toujours ; le schéma valide en
+    # amont, on repasse en dict plutôt que de réécrire les vingt accès `.get`.
+    issues = [i.model_dump() if isinstance(i, Issue) else dict(i) for i in issues]
     ordered = sorted(issues, key=lambda x: 0 if x.get("issue_type") == "Epic" else 1)
 
     for item in ordered:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field, field_validator
 
 from src.agents.coding.pending import FileChange, pending_changes, dev_plan, recent_tools, _ANALYSIS_TOOLS
 
@@ -297,8 +298,45 @@ def normaliser_questions(brut: Any) -> List[Dict[str, Any]]:
     return propres
 
 
-@tool("ask_clarification")
-def ask_clarification(questions: List[Dict[str, Any]]) -> Dict[str, Any]:
+class Question(BaseModel):
+    """Une question, et les réponses proposées s'il y en a.
+
+    Déclarée pour que le SCHÉMA dise sa forme. En `List[Dict[str, Any]]`, le
+    modèle recevait « un tableau d'objets quelconques » et la structure réelle ne
+    vivait que dans la prose de la docstring — un modèle moyen finit alors par
+    écrire l'appel en texte au lieu de l'émettre. Vu sur `gpt-oss:120b-cloud`.
+    """
+
+    question: str = Field(description="La question posée à l'utilisateur.")
+    choices: List[str] = Field(
+        default_factory=list,
+        description="3 à 5 réponses proposées. Laisser vide pour une question "
+                    "ouverte. Ne jamais ajouter « Autre » : l'interface le fait.",
+    )
+
+
+class ArgsClarification(BaseModel):
+    questions: List[Question] = Field(
+        description=f"1 à {MAX_QUESTIONS} questions à poser d'un seul coup.")
+
+    @field_validator("questions", mode="before")
+    @classmethod
+    def _tolerer_les_formes_approchantes(cls, brut):
+        """Typer guide le modèle ; ceci rattrape ceux qui envoient autre chose.
+
+        `normaliser_questions` existe déjà et documente l'incident qui l'a
+        motivée — une chaîne devenue 1312 questions d'un caractère. La réutiliser
+        ici garde une seule définition du « format acceptable », et durcir sans
+        elle transformerait une erreur récupérable en échec dur.
+        """
+        try:
+            return normaliser_questions(brut)
+        except ValueError:
+            return brut                      # laisse pydantic nommer le défaut
+
+
+@tool("ask_clarification", args_schema=ArgsClarification)
+def ask_clarification(questions: List[Question]) -> Dict[str, Any]:
     """
     Asks the user one or more questions and WAITS for the answers, then continues
     the same run — the plan, the files already written and the whole context are kept.
@@ -314,8 +352,17 @@ def ask_clarification(questions: List[Dict[str, Any]]) -> Dict[str, Any]:
     Returns:
         {"answers": {question: answer, ...}} — act on them immediately.
     """
+    # Le schéma a normalisé la FORME ; il reste à valider le FOND. Le validateur
+    # rend l'entrée telle quelle quand `normaliser_questions` la refuse, pour ne
+    # pas transformer une erreur récupérable en `ValidationError` opaque — c'est
+    # donc ici que le refus doit redevenir exploitable par le modèle. Sans ce
+    # second passage, une liste vide filait en silence et le plafond de
+    # MAX_QUESTIONS questions ne s'appliquait plus.
     try:
-        normaliser_questions(questions)
+        normaliser_questions([
+            q.model_dump(exclude_defaults=True) if isinstance(q, Question) else q
+            for q in questions
+        ])
     except ValueError as e:
         return {"status": "error", "reason": str(e)}
     # Le vrai questionnaire est rendu par l'UI, qui remplace ce résultat par les
