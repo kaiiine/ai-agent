@@ -57,6 +57,25 @@ TRANSIENT_MARKERS = (
     "readtimeout",
     "timed out",
     "econnreset",
+    # PANNES SERVEUR. Un 500/502/503 n'est ni un rate-limit, ni un contexte trop
+    # long, ni une requête invalide : le serveur a échoué APRÈS avoir accepté.
+    # Rien n'a été livré, aucun outil n'a pu s'exécuter — réémettre est aussi sûr
+    # qu'après une coupure de flux, et c'est le seul remède qui ait du sens.
+    #
+    # Vécu : « erreur : Internal Server Error (ref: …) (status code: -1) » a tué
+    # un tour en plein milieu d'un nettoyage disque. La classe `unknown` s'en
+    # chargeait, mais avec le mauvais traitement — elle fait tourner les clés
+    # puis retire les outils, ce qui ne répare pas une panne serveur et dégrade
+    # le tour pour rien.
+    "internal server error",
+    "500 server error",
+    "502",
+    "bad gateway",
+    "503",
+    "service unavailable",
+    "504",
+    "gateway timeout",
+    "overloaded",
 )
 
 MAX_TRANSIENT_RETRIES = 3
@@ -199,9 +218,14 @@ def invoke_with_recovery(
             if genre == "transient":
                 transient_retries += 1
                 if transient_retries > MAX_TRANSIENT_RETRIES:
+                    # On renonce ICI, volontairement. Basculer sur l'échelle
+                    # dégradée retirerait les outils — et répondre SANS outils à
+                    # « supprime ces fichiers » produit un texte plausible au
+                    # lieu d'une action. Face à un réseau qui reste coupé, une
+                    # erreur franche vaut mieux qu'une réponse qui fait semblant.
                     _log_failure(provider, exc, "retry", False)
                     raise
-                notify(f"flux interrompu — reprise {transient_retries}/{MAX_TRANSIENT_RETRIES}…")
+                notify(f"panne passagère — reprise {transient_retries}/{MAX_TRANSIENT_RETRIES}…")
                 sleep(2 ** (transient_retries - 1))
                 _log_failure(provider, exc, "retry", True)
                 continue
