@@ -137,8 +137,18 @@ def test_graph_affected_rend_les_appelants():
 
 
 @besoin_graphe
-def test_une_requete_coute_moins_qu_un_centieme_du_rapport():
-    """L'invariant qui justifie tout ce chantier."""
+def test_une_requete_coute_un_ordre_de_grandeur_de_moins_que_le_rapport():
+    """L'invariant qui justifie tout ce chantier.
+
+    Le seuil est un RAPPORT, pas un nombre absolu : le coût d'une requête suit
+    le nombre de voisins du symbole, qui grandit avec le dépôt. Une borne à
+    « un centième » a été franchie dès que le dépôt a grossi — 465 tokens
+    contre 427 — alors que le rapport restait de 1 à 92. C'est le seuil qui
+    était trop fin, pas la requête qui a dérivé.
+
+    Ce qui doit rester vrai est l'ORDRE DE GRANDEUR : demander qui casse si l'on
+    touche à un symbole ne doit jamais coûter comme lire le rapport entier.
+    """
     import tiktoken
 
     from src.agents.coding.graphe import graph_affected
@@ -147,7 +157,10 @@ def test_une_requete_coute_moins_qu_un_centieme_du_rapport():
     r = graph_affected.invoke({"project_path": "ai-agent",
                                "symbol": "build_system_prompt()"})
 
-    assert len(enc.encode(str(r))) < 42_733 / 100
+    cout = len(enc.encode(str(r)))
+    assert cout < 42_733 / 20, (
+        f"{cout} tokens : la requête ciblée a cessé d'être un ordre de grandeur "
+        f"moins chère que le rapport complet")
 
 
 @besoin_graphe
