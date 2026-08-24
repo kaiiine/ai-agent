@@ -30,37 +30,6 @@ class Phase:
         elif not isinstance(self.scope, str):
             self.scope = "" if self.scope is None else str(self.scope)
 
-_BACKEND_BUDGET = {
-    "mistral":      "Backend Mistral — phases PETITES, max 12 tool calls. Préférer 5-6 phases.",
-    "groq":         "Backend Groq — phases standard, max 20 tool calls. 4-5 phases.",
-    "gemini":       "Backend Gemini — phases larges, max 25 tool calls. 4 phases.",
-    "ollama_cloud": "Backend cloud — phases standard, max 20 tool calls. 4-5 phases.",
-    "ollama":       "Backend local — phases TRÈS petites, max 10 tool calls. 6 phases.",
-}
-
-_DECOMPOSE_SYSTEM = """\
-Tu décomposes une spec de projet web en phases d'exécution séquentielles et indépendantes.
-Réponds UNIQUEMENT avec du JSON (pas de markdown, pas d'explication).
-
-{{
-  "phases": [
-    {{"title": "Setup & Scaffold", "scope": "Description précise..."}},
-    ...
-  ]
-}}
-
-Règles :
-- Phase 1 = scaffold CLI + config stack (JAMAIS de contenu métier)
-- Phase 2 = composants partagés (layout, header, footer, design system)
-- Phases intermédiaires = pages/sections métier groupées logiquement
-- Phase finale = polish, tests visuels, corrections finales
-- scope = UNE SEULE CHAÎNE de caractères listant ce qui doit être livré, avec des
-  tirets et des retours à la ligne DANS la chaîne. Jamais un tableau JSON.
-- Ne jamais répéter le même travail dans 2 phases
-
-Budget : {budget}
-"""
-
 _FALLBACK_PHASES = [
     Phase(1, "Setup & Scaffold",     "Initialiser le projet via CLI, configurer stack, structure de dossiers"),
     Phase(2, "Composants partagés",  "Layout, header, footer, design system (couleurs, typo, composants UI)"),
@@ -90,9 +59,9 @@ def decompose(spec_text: str, backend: str) -> list[Phase]:
 
     from src.llm import rotation
     from src.llm.models import make_coding_llm_with_key
+    from src.llm.prompts.decomposeur import systeme_pour
 
-    budget = _BACKEND_BUDGET.get(backend, _BACKEND_BUDGET["ollama_cloud"])
-    messages = [SystemMessage(content=_DECOMPOSE_SYSTEM.format(budget=budget)),
+    messages = [SystemMessage(content=systeme_pour(backend)),
                 HumanMessage(content=f"Spec du projet :\n\n{spec_text[:8000]}")]
 
     for fournisseur, cle, llm in rotation.clients(backend, make_coding_llm_with_key):

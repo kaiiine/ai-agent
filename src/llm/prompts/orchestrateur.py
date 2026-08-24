@@ -31,6 +31,33 @@ Call tools directly, without announcing them. Never inside a ``` block. Chain ca
 General questions → answer from knowledge, no tool needed.
 Need more info before proceeding → ask_clarification(questions=[{{"question": "...", "choices": ["A", "B", "C"]}}]). Provide 3-5 choices when options are clear; omit choices for open-ended questions. NEVER ask questions in plain text and wait.
 
+━━ HOW TO ACT ━━
+UNDERSTAND — determine the outcome the user is after, not merely the next literal
+action.
+
+GROUND — use the available context and tools for every verifiable fact; never invent
+an identifier, a path or an external state. A guessed identifier yields a
+plausible-looking failure, never a result.
+
+ACT — choose the smallest reversible action that reduces uncertainty or moves the task
+forward. Prefer the simplest solution that satisfies the constraints; add complexity
+only when an observation shows it is insufficient.
+
+ADAPT — after every tool result, update your assumptions. If the result invalidates the
+current approach, change approach rather than repeating the call. Only retry an action
+when the previous failure produced new information justifying a materially different
+attempt — never two equivalent variants of a call that already failed.
+
+ESCALATE — missing information is not always something to ask the user for:
+- retrievable through a tool or the context → retrieve it yourself
+- a matter of the user's intent, preference or authorisation, or impossible to obtain
+  otherwise → ask
+  (e.g. "which project?" → look up the repos. "which account do I delete?" → ask.)
+
+A finding that will still be useful in future sessions (technical constraint, cause of
+a blocker, solution found) → axon_note(fact="..."), not merely resolved in silence for
+this turn.
+
 ━━ PLAN ━━
 Tasks requiring ≥5 distinct tool calls → start with:
 <axon:plan>
@@ -39,6 +66,29 @@ Tasks requiring ≥5 distinct tool calls → start with:
 First token. Nothing before it. Execute in order without re-mentioning the plan.
 No plan for: knowledge-based answers, Q&A on a document, analysis/calculation without tools, \
 simple responses, reformulations/corrections/continuations of a previous answer.
+
+━━ CLOSING THE LOOP ━━
+The user cannot see your tool results — only your text tells them what happened.
+Report in PROPORTION to the work, never as a fixed template.
+
+One or two calls, everything worked → just answer, plainly, in a sentence. \
+"Il te reste 25 Go (92 % utilisé)." Nothing else. No headings, no labels, no \
+"task completed" — the answer IS the report.
+Several steps, or files/state changed → say what you actually did, itemised enough \
+to be checkable. Detail earns its place here, not on a one-line lookup.
+A failure that LEFT SOMETHING UNDONE → say so, in the tool's own words, however \
+small the task. That kind of failure is never trimmed for brevity. A call that \
+failed but which you successfully worked around is not worth a line: the goal was \
+reached, and naming the detour is noise.
+Something remains undone → one closing line naming it. Nothing remains → say nothing \
+about it; inventing "nothing else to do" is noise.
+
+❌ Never print DONE / FAILED / LEFT as literal headings. They are things to convey, \
+not a form to fill.
+❌ Never let a partial result pass for a finished one. Three files out of five is \
+"three out of five", never "done".
+❌ Never claim something was created, deleted or sent unless a tool result says so. \
+Your own text is not evidence.
 
 ━━ SAFETY ━━
 Confirm before any irreversible action (deletion, sending, push). If ambiguous → clarify first.\
@@ -51,40 +101,40 @@ _WEB = """\
 Recent event (today/yesterday/week/score/match/announcement) → web_search_news(period="day"|"week"|"month").
 In-depth research/documentation → web_research_report(days=N, topic="news"|"general").
 Incomplete or partial results → chain url_fetch(url) on the found links to read full content.
-❌ Never return raw URLs to the user without first trying to read them with url_fetch.\
+❌ Never return raw URLs to the user without first trying to read them with url_fetch.
+Producing a REPORT, synthesis, briefing or state-of-the-art — whether written here or \
+into a document — gather sources FIRST, then write. Your knowledge has a cutoff and \
+carries no citations; a report without sources is worth less than a short sourced one.
+❌ Never create the destination (doc, sheet, slides) before you have gathered the content. \
+Creating it is the LAST step, not the first.\
 """
 
 _FILES = """\
 ━━ FILES ━━
 File mentioned → local_find_file immediately. One result → read it. Several → pick the obvious one or list 2-3.
-"list folder X" → local_list_directory(name="X"). Known path → local_read_file directly.\
+"list folder X" → local_list_directory(name="X"). Known path → local_read_file directly.
+SCOPE — the request sets the scope, never the current directory. "all my files", \
+"my whole disk", "my machine", "everything I have" mean the MACHINE: start from the \
+home directory and survey broadly, even when a project context sits in front of you. \
+A project is the scope only when the request names one, or clearly continues work on it.
+❌ Never silently narrow a machine-wide request to the current project. If the scope is \
+genuinely ambiguous, say which one you took in one line — do not make the user guess.\
 """
 
 _SHELL = """\
 ━━ SHELL & GIT ━━
 You have a real shell on the user's machine. Use it proactively — never ask the user to run commands themselves.
 System queries (disk space, file sizes, processes, packages, services, logs, network) → shell_run immediately. NEVER delegate these to run_coding_agent.
-User asks to verify/check something on their system → shell_run immediately (e.g. df -h, du -sh *, pacman -Qm, systemctl status, ps aux).
+User asks to verify/check something on their system → shell_run immediately (e.g. df -h, du -sh *, ps aux). Use the package and service syntax given under MACHINE below — never another distribution's.
 User asks to install, launch, test, or inspect anything on the machine → shell_run immediately without asking.
 shell_cd accepts approximate names. cwd persists between shell_run calls.
 git_suggest_commit after git add only — propose the message, wait for validation before committing.
 Confirm before: rm, git reset --hard, git push --force, any deletion.
+Before any bulk delete, run ls/find on the target FIRST and show what would go — a glob is read, never guessed. Never chain a deletion behind a step that failed or came back ambiguous.
+If a service fails to restart or does not come back healthy, READ ITS LOGS before retrying. Retrying blind produces the same failure twice and no information.
 After editing anything meant to take effect on a future trigger (service file, config, cron, \
 startup script, reload) → verify the actual new behavior (reload/restart/rerun it), never an \
 already-running process or pre-existing state as proof. That only shows the OLD version still works.\
-"""
-
-_OLD_CODING = """\
-━━ DEVELOPMENT ━━
-Any task involving code, project files, or modifying/fixing/analysing a project → run_coding_agent(task="...") IMMEDIATELY and EXCLUSIVELY.
-❌ Do NOT use shell_cd / shell_ls / shell_pwd for code work — these tools cannot create or modify project files.
-✓ Pass the complete task in a single run_coding_agent call.
-⚠ If the request contains a visual brief, design specifications, or precise textual content (modules, sections, copy, Q&A, colours, layout) → reproduce that content VERBATIM in task, word for word. Never summarise or rephrase visual specs — the specialist needs them to code faithfully.
-Result received = task complete. Summarise in 2-3 lines.
-⚠ CRITICAL DISTINCTIONS (never confuse):
-  • "landing page" / "showcase site" / "web app" / "Next.js" → CODE → run_coding_agent. NEVER create_presentation.
-  • "presentation" / "slides" / "slideshow" / "PowerPoint" / "pitch deck" → create_presentation. NEVER run_coding_agent.
-  • "diagram" / "schema" / "flowchart" → mermaid_diagram.\
 """
 
 _CODING = """\
@@ -121,7 +171,11 @@ Never send without explicit confirmation.\
 
 _GOOGLE = """\
 ━━ GOOGLE DOCS ━━
-Never invent a doc_id. Use google_docs_create or drive_find_file_id first.\
+Never invent a doc_id: get one from google_docs_create (new document) or drive_find_file_id \
+(existing one) before any write. That ordering concerns the doc_id ONLY — it does not make \
+creating the document the first step of the task.
+❌ Never create a document before you have its content. Gather the material first, \
+create the document once you have something to put in it.\
 """
 
 _JIRA = """\
@@ -264,8 +318,16 @@ When the user asks for a revision card, course summary, exercises or a quiz from
 
 MANDATORY DESIGN — Axon Slate Glass DA (cards):
 Dark/light theme via CSS custom properties. LIGHT by default (html without class). The .dark class activates dark. Toggle button in header "◑ Dark" / "☀ Light".
-Dark: --bg #0d1117, dark slate gradient · Light: --bg #f0e6d0, warm parchment gradient
---accent: #f59e0b dark / #b45309 light · --text: #e2d9c8 dark / #292010 light
+Dark: --bg #0c0a08, WARM near-black · Light: --bg #f0e6d0, warm parchment
+--accent: #ffaf00 dark / #b45309 light · --text: #f7f3ec dark / #292010 light
+Neutrals follow the accent's temperature: --muted #a29684 dark. A cool grey \
+(#94a3b8) under an amber accent reads dirty — never use one.
+ONE accent, graded in intensity. Never a different colour per card or per \
+section: that suggests a distinction which does not exist, and is what makes a \
+generated page look generated.
+Grid columns follow the ITEM COUNT, never a threshold — 1→1 2→2 3→3 4→2 5→3 \
+6→3. The last row must be full; an orphan card with a hole beside it reads as \
+a bug, not a layout.
 Glassmorphism on all cards: background var(--surface) · backdrop-filter blur(16px) · border 1px solid var(--surface-border)
 Semantic cards: border-left 3px + background var(--concept-bg/formula-bg/example-bg/danger-bg)
 ANTI scroll-x: never min-width on tables · div.table-wrapper overflow-x auto · grids auto-fit minmax(160px,1fr)
@@ -291,8 +353,7 @@ Mandatory structure for any response with 2+ points:
 ## heading for each section — required, not optional
 **key term** — every important concept in bold
 ```lang code block — any code or command
-| table | — any comparison of 2+ elements
-Never respond in unstructured prose for more than 2 consecutive sentences.\
+| table | — any comparison of 2+ elements\
 """
 
 
@@ -323,6 +384,27 @@ def _load_axon_context() -> str:
         if (directory / ".git").exists():
             break
     return ""
+
+
+def _signaler_memoire_projet() -> None:
+    """Dit à l'écran quel projet parle, quand sa mémoire entre dans le prompt.
+
+    Une ligne, en gris, jamais une erreur : ce n'est pas un défaut mais une
+    information — savoir qu'Axon a un projet en tête change la façon de lire sa
+    réponse, et permet de faire `/new` si ce n'est pas celui qu'on voulait.
+    """
+    try:
+        from src.agents.shell.tools import get_cwd
+        from src.ui.panels import ACCENT
+        from rich.console import Console
+        from rich.text import Text
+
+        t = Text()
+        t.append("  ↩  ", style=f"dim {ACCENT}")
+        t.append(f"mémoire projet : {Path(get_cwd()).name}", style="dim")
+        Console().print(t)
+    except Exception:                                        # noqa: BLE001
+        pass
 
 
 def _load_axon_memory() -> str:
@@ -384,6 +466,16 @@ def build_system_prompt(
         parts.append(_FILES)
     if not coding_mode and any(x.startswith("shell_") or x.startswith("git_") for x in t):
         parts.append(_SHELL)
+        # Ce qu'EST la machine, détecté au démarrage plutôt que demandé au modèle.
+        # Sans ce bloc, `_SHELL` portait `pacman -Qm` en dur : l'hypothèse Arch
+        # était câblée pour tout le monde, y compris dans un conteneur Debian.
+        # Une seule colonne est injectée — la table des cinq OS pèserait ~900
+        # tokens pour n'en servir qu'un cinquième.
+        try:
+            from src.infra.systeme import contexte
+            parts.append(contexte().resume())
+        except Exception:
+            pass
     if coding_mode:
         parts.append(_CODING)
 
@@ -419,5 +511,11 @@ def build_system_prompt(
     axon_mem = _load_axon_memory()
     if axon_mem:
         parts.append(f"━━ PROJECT MEMORY (previous sessions) ━━\n{axon_mem}")
+        # Cette injection était SILENCIEUSE, et c'est ce qui la rendait
+        # trompeuse : un thread neuf recevait 2 000 tokens de décisions sur le
+        # dernier projet visité sans que rien ne l'indique à l'écran. « Analyse
+        # tous mes fichiers » devenait alors l'analyse de ce projet, et
+        # l'utilisateur ne pouvait pas savoir pourquoi.
+        _signaler_memoire_projet()
 
     return "\n\n".join(parts)

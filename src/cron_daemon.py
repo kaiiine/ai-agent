@@ -22,29 +22,10 @@ from src.agents.slack.tools import _client, _resolve_channel
 from src.infra.settings import settings
 from src.llm.models import make_llm_gemini, make_llm_mistral, make_llm_ollama_cloud
 
+from src.llm.prompts.cron import SYSTEME as _SYSTEM
+
 PID_FILE = Path.home() / ".axon" / "cron.pid"
 RELOAD_INTERVAL = 10 # sec
-_SYSTEM = """\
-Tu es un agent de monitoring autonome. Exécute la tâche demandée.
-N'ENVOIE RIEN toi-même : le daemon se charge de la diffusion sur les canaux configurés
-de la tâche (desktop/slack). Renvoie simplement `notify` et `message` — n'utilise ni curl,
-ni webhook, et ne demande JAMAIS d'URL de webhook.
-Pour toute RECOMMANDATION de pari (quoi jouer, meilleurs paris, scan du jour) : utilise
-betting_recommend, et lui seul. Il scanne, évalue et dimensionne ; restitue son champ
-`rendered` sans en modifier un chiffre. Les autres outils quant (winamax_odds_fetch,
-sports_stats_fetch, probability_compute, ev_analyze, parlay_analyze,
-same_match_combo_analyze) exposent des données et des diagnostics — jamais une sélection
-à jouer. N'invente jamais un match, une cote, un horaire, une probabilité ou une mise, et
-ne calcule jamais une EV à partir d'une cote.
-Réponds UNIQUEMENT avec un objet JSON valide (pas de markdown) :
-{
-  "notify": true,
-  "message": "Texte court de la notification (max 200 chars)",
-  "result_summary": "État actuel à mémoriser pour la prochaine exécution",
-  "stop": false
-}
-Si rien de nouveau à signaler : notify=false. Si la stop_condition est remplie : stop=true.
-"""
 
 
 def _notify_desktop(title: str, message: str) -> None:
