@@ -129,7 +129,6 @@ def normalise_hockey_regulation(jeux: Iterable[dict]) -> list[dict]:
         date = _instant(jeu)
         if not date or not domicile.get("id") or not exterieur.get("id"):
             continue
-        scores = jeu.get("scores") or {}
         periodes = jeu.get("periods") or {}
         reglementaire = periodes.get("third") or ""
         if isinstance(reglementaire, str) and "-" in reglementaire:
@@ -138,7 +137,11 @@ def normalise_hockey_regulation(jeux: Iterable[dict]) -> list[dict]:
             except ValueError:
                 continue
         else:
-            sd, se = _total(scores.get("home")), _total(scores.get("away"))
+            # `_scores` fait exactement ceci, et il est déjà importé. La ligne
+            # d'avant appelait `_total` — jamais importé dans ce module, donc un
+            # `NameError` garanti dès qu'un match sans score de période passait
+            # ici. Le helper public évite de redire la même chose deux fois.
+            sd, se = _scores(jeu)
             # Prolongation : le score final ne dit plus l'issue réglementaire.
             if _statut(jeu) in ("AOT", "AP", "AET"):
                 sd = se = None
