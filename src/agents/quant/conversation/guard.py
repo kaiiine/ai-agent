@@ -194,13 +194,37 @@ def _faits_sans_source(text: str) -> list[str]:
 
 
 #: §17 — vocabulaire qui ne peut décrire aucun pari.
-_TROMPEUR = re.compile(
+#: Tournures qui nomment le PARI elles-mêmes : « banco », « argent facile »,
+#: « pari sûr ». Elles n'ont pas besoin de contexte — elles SONT le contexte.
+_TROMPEUR_DE_PARI = re.compile(
     r"(?i)\b("
-    r"pari\s+s[ûu]r|s[ûu]r\s+(?:de\s+)?(?:passer|gagner)|quasi[- ]?certain"
-    r"|garanti[es]?|sans\s+risque|sans\s+aucun\s+risque|z[ée]ro\s+risque"
-    r"|s[ée]curis[ée]|va\s+passer|ne\s+peut\s+pas\s+perdre|banco"
+    r"pari\s+s[ûu]r|s[ûu]r\s+(?:de\s+)?(?:passer|gagner)"
+    r"|ne\s+peut\s+pas\s+perdre|banco"
     r"|argent\s+facile|rendement\s+garanti"
+    # Le verbe copule peut s'intercaler (« ce pari EST sécurisé »).
+    r"|(?:pari|mise|gain|profit|b[ée]n[ée]fice|combin[ée])s?"
+    r"(?:\s+(?:est|sont|semble|para[îi]t|reste|serait|sera))?\s+s[ée]curis[ée]e?s?"
+    r"|s[ée]curis[ée]e?s?\s+(?:pari|mise|gain)s?"
     r")\b")
+
+#: Tournures trompeuses DANS UN CONTEXTE DE PARI, mais ordinaires ailleurs.
+#: « garanti », « sans risque », « quasi-certain » se disent d'un déploiement,
+#: d'une migration ou d'un protocole sans rien promettre d'illicite. Elles
+#: n'engagent que si le texte parle par ailleurs d'argent.
+_TROMPEUR_GENERIQUE = re.compile(
+    r"(?i)\b("
+    r"quasi[- ]?certain|garanti[es]?|sans\s+risque|sans\s+aucun\s+risque"
+    r"|z[ée]ro\s+risque|va\s+passer"
+    r")\b")
+
+#: L'union des deux, pour les appelants qui ne veulent qu'un « oui/non ». Les
+#: `(?i)` en tête de chaque motif sont retirés : Python refuse un drapeau global
+#: ailleurs qu'au tout début, et l'insensibilité est portée par `re.I` ici.
+_TROMPEUR = re.compile(
+    "(?:{})|(?:{})".format(
+        _TROMPEUR_DE_PARI.pattern.replace("(?i)", "", 1),
+        _TROMPEUR_GENERIQUE.pattern.replace("(?i)", "", 1)),
+    re.I)
 
 #: §10 — une borne basse élevée reste une ESTIMATION.
 #:
@@ -281,6 +305,44 @@ class GuardVerdict:
 
 
 _OK = GuardVerdict(True, None, None)
+
+
+#: Signaux qui appartiennent VRAIMENT au domaine du pari. `trompeur` et
+#: `promesse_infondee` n'en font pas partie : ce sont des tournures de langue,
+#: présentes dans n'importe quel sujet.
+_SIGNAUX_DE_PARI = ("provenance", "cote", "mise", "ev_positive",
+                    "combo_pricing", "recommande")
+
+
+def _parle_de_pari(signaux: dict[str, bool], text: str) -> bool:
+    """Le texte affirme-t-il quelque chose du domaine du pari ?
+
+    Deux voies : un signal structurel (cote, mise, EV, recommandation…), ou le
+    vocabulaire du pari lui-même — la même porte lexicale que celle qui route
+    les outils, pour que le garde et le routage aient la même idée de ce qu'est
+    une demande d'argent.
+    """
+    if any(signaux[nom] for nom in _SIGNAUX_DE_PARI):
+        return True
+    # Certaines tournures nomment le pari à elles seules — « banco »,
+    # « argent facile » — sans qu'aucun signal structurel n'apparaisse.
+    if _TROMPEUR_DE_PARI.search(text):
+        return True
+    # Une CERTITUDE CHIFFRÉE reste interdite partout. « garanti à 95 % »,
+    # « certitude de 90 % », « 90 % certain » présentent une probabilité comme
+    # un fait : c'est une fausse déclaration dans n'importe quel domaine, et le
+    # contrat produit l'interdit depuis l'origine (tests/test_review_ux.py §10).
+    #
+    # Ne pas la ranger avec « sécurisé » : ce dernier est du français ordinaire,
+    # la certitude chiffrée ne l'est jamais. Le défaut à corriger était le mot
+    # courant, pas la règle.
+    if _CERTITUDE_CHIFFREE.search(text):
+        return True
+    try:
+        from src.orchestrator.tool_retriever import _money_intent
+        return _money_intent(text)
+    except Exception:
+        return False
 
 
 def _claims(text: str) -> dict[str, bool]:
@@ -393,7 +455,16 @@ def enforce(
         return GuardVerdict(False, _promesse_infondee(), "UNFOUNDED_PROCESS_CLAIM")
 
     if evidence is None:
-        if signaux["trompeur"]:
+        # « sûr », « garanti », « sans risque » ne sont trompeurs QUE dans un
+        # texte de pari. Le garde s'appliquait à toute réponse finale, quel que
+        # soit le sujet du tour : une explication d'architecture logicielle a
+        # ainsi été remplacée par « DATA_UNAVAILABLE — réponse bloquée », avec
+        # une liste de griefs vide puisque aucun signal de pari n'avait été vu.
+        #
+        # On exige donc au moins UN signal propre au domaine. Sans lui, il n'y a
+        # rien à protéger : aucune sélection, aucune cote, aucune mise n'est
+        # affirmée, et bloquer ne fait que détruire une réponse légitime.
+        if signaux["trompeur"] and _parle_de_pari(signaux, text):
             return GuardVerdict(False, _sans_preuve(signaux), "MISLEADING_LANGUAGE")
         if _asserts_opportunity(signaux):
             return GuardVerdict(False, _sans_preuve(signaux), "NO_STRUCTURED_EVIDENCE")
@@ -453,8 +524,13 @@ def _identites_inventees(identifiants: list[str]) -> str:
 
 
 def _sans_preuve(signaux: dict[str, bool]) -> str:
-    faits = [nom for nom in ("provenance", "cote", "mise", "ev_positive", "recommande")
-             if signaux[nom]]
+    # `trompeur` manquait : un blocage pour langage trompeur affichait donc
+    # « affirmations non sourcées », c'est-à-dire rien. Un garde qui retire une
+    # réponse doit pouvoir nommer son grief.
+    _LIBELLES = {"provenance": "provenance", "cote": "cote", "mise": "mise",
+                 "ev_positive": "espérance positive", "recommande": "recommandation",
+                 "trompeur": "langage trompeur"}
+    faits = [libelle for nom, libelle in _LIBELLES.items() if signaux.get(nom)]
     return (
         "**DATA_UNAVAILABLE** — réponse bloquée : aucune sortie structurée n'a été "
         "produite pendant ce tour.\n\n"
