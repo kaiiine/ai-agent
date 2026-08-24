@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from langchain_core.tools import tool
 
+from .ecriture import analyser_ecriture
+
 _HOME = Path.home()
 _cwd: Path = _HOME  # répertoire de travail courant de la session
 _bg_procs: dict[str, subprocess.Popen] = {}  # label → processus background actif
@@ -75,34 +77,98 @@ def _wrap_rtk(cmd: str) -> str:
         return cmd  # commande composée — RTK ne sait pas gérer sans shell
     return f"{_RTK} {stripped}"  # chemin absolu pour éviter les problèmes de PATH
 
-# Commandes qui modifient l'état système — nécessitent confirmation explicite de l'utilisateur
-_DESTRUCTIVE_PREFIXES = (
-    "rm ", "rmdir", "dd ", "mkfs", "sudo rm", "sudo dd",
-    "git reset --hard", "git clean -f", "git push --force",
-    "pip uninstall", "pacman -R", "yay -R",
+# Commandes qui modifient l'état système — nécessitent confirmation explicite.
+#
+# L'UNION des vocabulaires, jamais celui de l'OS détecté. Ces listes étaient
+# purement POSIX, si bien que `Remove-Item -Recurse -Force C:\Users`,
+# `del /f /s /q C:\`, `Format-Volume` et `diskpart` passaient SANS confirmation :
+# le filet de sécurité disparaissait en silence en changeant de machine.
+#
+# Choisir la liste d'après l'OS détecté aurait rouvert la même faille par un
+# autre chemin — une détection qui se trompe (conteneur, WSL, shell POSIX sous
+# Windows) désarmerait le garde. Une union ne peut se tromper que dans le sens
+# sûr : un `del /f /s` tapé sous Linux ne coûte qu'une confirmation de trop.
+_DESTRUCTIVE_POSIX = (
+    "rm ", "rmdir", "dd ", "mkfs", "sudo rm", "sudo dd", "shred ",
+    "pip uninstall", "pacman -R", "yay -R", "apt remove", "apt purge",
+    "apt-get remove", "apt-get purge", "dnf remove", "zypper remove",
+    "apk del", "brew uninstall",
 )
+_DESTRUCTIVE_WINDOWS = (
+    "remove-item", "ri ", "del ", "erase ", "rd ", "rmdir ", "format ",
+    "format-volume", "clear-disk", "diskpart", "winget uninstall",
+    "cipher /w", "takeown", "icacls",
+)
+_DESTRUCTIVE_VCS = (
+    "git reset --hard", "git clean -f", "git push --force", "git push -f",
+)
+_DESTRUCTIVE_PREFIXES = _DESTRUCTIVE_POSIX + _DESTRUCTIVE_WINDOWS + _DESTRUCTIVE_VCS
 
 # Écriture de fichiers — doit passer par propose_file_change dans le coding specialist
-_WRITE_PATTERNS = ("sed -i", "cat >", "cat >>", "tee /", "echo > /", "echo >> /")
+_WRITE_PATTERNS = (
+    "sed -i", "cat >", "cat >>", "tee /", "echo > /", "echo >> /",
+    "set-content", "out-file", "add-content",
+)
 
+# Cibles dont la suppression détruirait le système ou le dossier courant.
+# POSIX et Windows ensemble, pour la même raison que ci-dessus.
 _RM_CATASTROPHIC_TARGETS = (
     ".", "./", "..", "../", "/", "~", "~/", "*",
     "$home", "${home}", "$pwd", "${pwd}",
+    "c:", "c:\\", "d:", "d:\\", "%userprofile%", "%homepath%", "%systemroot%",
+    "$env:userprofile", "$env:homepath", "$env:systemroot", "$home\\",
+    ".\\", "..\\", "*.*",
+)
+
+#: Verbes de suppression, tous OS confondus. `rm` seul laissait passer
+#: `Remove-Item`, `del` et `rd`, qui font exactement la même chose ailleurs.
+_VERBES_SUPPRESSION = r"(?:sudo\s+)?(?:rm|rmdir|remove-item|ri|del|erase|rd)"
+
+
+#: Ce que « commande introuvable » vaut selon le shell : 127 pour les POSIX,
+#: 9009 pour cmd.exe, et un simple 1 pour PowerShell — qui ne le dit que dans
+#: son texte. Reconnaître les trois est la condition pour que la re-détection
+#: parte quel que soit l'OS.
+_CODES_INTROUVABLE = (127, 9009)
+_TEXTES_INTROUVABLE = (
+    "command not found", "not found", "not recognized",
+    "no such file or directory", "commandnotfoundexception",
+    "n'est pas reconnu",
 )
 
 
+def _commande_introuvable(exit_code: int, sortie: str) -> bool:
+    """Vrai quand l'échec est « ce binaire n'existe pas », pas « il a échoué ».
+
+    La condition testait aussi que la sortie soit VIDE. Avec `rtk` installé,
+    elle ne l'est jamais — il écrit son propre message — si bien que toute cette
+    branche était morte sur la machine où elle comptait le plus.
+    """
+    if exit_code in _CODES_INTROUVABLE:
+        return True
+    bas = (sortie or "").lower()
+    return exit_code != 0 and any(t in bas for t in _TEXTES_INTROUVABLE)
+
+
 def _is_catastrophic_rm(cmd: str) -> bool:
-    """Détecte rm sur des cibles qui détruiraient le système ou le dossier courant."""
+    """Suppression visant une cible qui détruirait le système ou le dossier courant.
+
+    Reconnaît les verbes des trois familles : `rm`/`rmdir` (POSIX),
+    `Remove-Item`/`ri` (PowerShell), `del`/`erase`/`rd` (cmd).
+    """
     import re
     c = cmd.strip()
-    # Normalise : rm [-options] <target>
-    m = re.match(r"^(?:sudo\s+)?rm\s+(-[a-zA-Z]+\s+)*(.+)$", c)
+    # Normalise : <verbe> [-options | /options] <cible>
+    m = re.match(rf"^{_VERBES_SUPPRESSION}\s+((?:[-/][a-zA-Z:]+\s+)*)(.+)$", c, re.I)
     if not m:
         return False
-    target = m.group(2).strip().lower().rstrip("/")
-    # Ajoute /  pour matcher "rm -rf /" → target=""
-    bare = target if target else "/"
-    return bare in {t.rstrip("/") or "/" for t in _RM_CATASTROPHIC_TARGETS}
+    cible = m.group(2).strip().strip('"\'').lower()
+    # Un chemin PowerShell peut porter un préfixe de fournisseur.
+    cible = cible.removeprefix("filesystem::")
+    cible = cible.rstrip("/").rstrip("\\")
+    # Rend "" pour « rm -rf / » une fois la barre retirée.
+    nu = cible if cible else "/"
+    return nu in {t.rstrip("/").rstrip("\\") or "/" for t in _RM_CATASTROPHIC_TARGETS}
 
 
 def _is_file_write(cmd: str) -> bool:
@@ -111,8 +177,15 @@ def _is_file_write(cmd: str) -> bool:
 
 
 def _is_destructive(cmd: str) -> bool:
+    """La commande exige-t-elle une confirmation explicite ?
+
+    Les préfixes sont normalisés en minuscules à la comparaison. Sans cela
+    `pacman -R` et `yay -R`, écrits avec un R majuscule dans la liste, ne
+    déclenchaient JAMAIS de confirmation : la commande était abaissée, le
+    préfixe non. Deux désinstallations de paquets passaient donc librement.
+    """
     c = cmd.strip().lower()
-    return any(c.startswith(p) for p in _DESTRUCTIVE_PREFIXES)
+    return any(c.startswith(p.lower()) for p in _DESTRUCTIVE_PREFIXES)
 
 
 @tool("shell_run")
@@ -159,12 +232,39 @@ def shell_run(
             "message": "Commande destructive détectée. Demander confirmation explicite à l'utilisateur avant d'exécuter.",
         }
 
-    if _is_file_write(command):
-        return {
-            "status": "blocked",
-            "command": command,
-            "message": "Écriture de fichier via shell bloquée. Utilise edit_file(path, old_string, new_string) pour modifier une partie d'un fichier existant, propose_file_change(path, content, description) pour en créer un.",
-        }
+    ecriture = analyser_ecriture(command)
+    if ecriture is not None:
+        if not ecriture.distante:
+            # LOCAL — inchangé. `edit_file` fait mieux : il n'envoie que le
+            # fragment modifié, et l'utilisateur relit un diff avant écriture.
+            return {
+                "status": "blocked",
+                "command": command,
+                "target": ecriture.cible,
+                "message": "Écriture de fichier via shell bloquée. Utilise edit_file(path, old_string, new_string) pour modifier une partie d'un fichier existant, propose_file_change(path, content, description) pour en créer un.",
+            }
+        if not confirmed:
+            # DISTANT — aucun équivalent : `edit_file` ne prend qu'un chemin
+            # local. Refuser ici enfermait l'agent, qui n'avait plus qu'à rendre
+            # un mode d'emploi à l'utilisateur.
+            #
+            # On confirme donc, mais pas « à la manière de rm -rf » : approuver
+            # une commande sans voir ce qu'elle écrit, c'est approuver un effet
+            # qu'on ne connaît pas. L'aperçu montre le fichier, le mode, et le
+            # CONTENU quand il se lit dans la commande.
+            return {
+                "status": "requires_confirmation",
+                "command": command,
+                "host": ecriture.hote,
+                "target": ecriture.cible,
+                "append": ecriture.ajoute,
+                "preview": ecriture.apercu(),
+                "message": (
+                    "Écriture sur une machine DISTANTE. Montre l'aperçu ci-dessous "
+                    "à l'utilisateur TEL QUEL et attends son accord explicite, puis "
+                    "rappelle shell_run avec confirmed=True. Ne résume pas le "
+                    "contenu : il doit voir ce qui sera écrit."),
+            }
 
     work_dir = Path(cwd) if cwd else None
     if work_dir and not work_dir.exists():
@@ -285,13 +385,25 @@ def shell_run(
         stdout_text = _compact_shell_output("\n".join(output_lines))
         stderr = ""
 
-        if exit_code == 127 and not stdout_text.strip():
+        if _commande_introuvable(exit_code, stdout_text):
             cmd_token = command.strip().split()[0] if command.strip() else command
+            # « Commande introuvable » est le symptôme d'un contexte machine
+            # périmé : on croyait pacman, on est dans un conteneur Debian. Le
+            # cache est vidé ici pour que le PROCHAIN prompt reparte d'une
+            # détection fraîche — sans quoi la consigne « re-détecter » du skill
+            # reste un vœu que rien n'exauce.
+            try:
+                from src.infra.systeme import oublier
+                oublier()
+            except Exception:
+                pass
             stderr = (
                 f"exit 127: commande introuvable — '{cmd_token}' n'est pas dans le PATH "
                 f"ou le chemin est incorrect.\n"
-                f"Essaie : which {cmd_token.split('/')[-1]}  ou utilise le nom court (pnpm, npm, npx…) "
-                f"sans chemin absolu."
+                f"Le contexte MACHINE a été re-détecté : relis-le avant de retenter, "
+                f"il peut désigner un autre gestionnaire de paquets.\n"
+                f"Essaie : command -v {cmd_token.split('/')[-1]}  ou utilise le nom court "
+                f"(pnpm, npm, npx…) sans chemin absolu."
             )
 
         return {
