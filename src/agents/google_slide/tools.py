@@ -38,13 +38,17 @@ def _url(pid: str, slide_id: str = "") -> str:
 @tool("slides_create")
 def slides_create(title: str) -> dict:
     """
-    Crée une nouvelle présentation Google Slides.
+    Crée une présentation dans GOOGLE SLIDES (le service en ligne).
 
-    Utilise ce tool quand l'utilisateur veut :
-    - créer une présentation, un diaporama, un deck
-    - préparer des slides pour une réunion ou un exposé
+    N'utilise ce tool QUE si l'utilisateur nomme explicitement Google Slides,
+    Google Drive, ou demande une présentation partageable en ligne.
 
-    Mots-clés : présentation, slides, diaporama, deck, Google Slides, créer
+    Pour « fais-moi une présentation sur X » sans autre précision → `create_slides`,
+    qui produit le deck ENTIER en UN SEUL appel, avec la charte graphique d'Axon.
+    Ce tool-ci construit à l'inverse une diapositive par appel : sur un sujet de
+    dix diapos, il épuise le budget de tours avant la fin.
+
+    Mots-clés : Google Slides, Google Drive, présentation en ligne, partageable
 
     Args:
         title: Nom de la présentation
@@ -64,13 +68,16 @@ def slides_create(title: str) -> dict:
 def slides_add_slide(presentation_id: str, titre: str,
                      puces: list[str] | None = None) -> dict:
     """
-    Ajoute une diapositive AVEC son titre et ses puces à une présentation.
+    Ajoute une diapositive à une présentation GOOGLE SLIDES existante.
 
-    Utilise ce tool quand l'utilisateur veut :
-    - ajouter une diapositive à une présentation existante
-    - construire un deck slide par slide
+    `presentation_id` doit venir d'un appel PRÉCÉDENT à `slides_create` ou d'une
+    URL fournie par l'utilisateur. Ne jamais l'inventer : un identifiant fabriqué
+    fait échouer l'appel côté Google, sans rien créer.
 
-    Mots-clés : ajouter slide, diapositive, présentation, Google Slides, insérer
+    Ne pas s'en servir pour construire un deck depuis zéro diapo par diapo —
+    `create_slides` le fait en un seul appel.
+
+    Mots-clés : Google Slides, ajouter une diapositive à un deck EXISTANT
 
     La diapositive est ajoutée à la FIN de la présentation. Le texte est inséré
     réellement : si l'insertion échoue, le tool le dit au lieu d'annoncer un succès.
@@ -138,13 +145,13 @@ def slides_add_slide(presentation_id: str, titre: str,
 @tool("slides_from_markdown")
 def slides_from_markdown(presentation_id: str, md: str) -> dict:
     """
-    Construit une présentation entière depuis du markdown, en un seul appel.
+    Remplit une présentation GOOGLE SLIDES existante depuis du markdown.
 
-    Utilise ce tool quand l'utilisateur veut :
-    - transformer un plan, un rapport ou des notes en présentation
-    - créer plusieurs diapositives d'un coup
+    Comme les autres tools de ce fichier, il vise Google Slides et exige un
+    `presentation_id` réel. Pour produire un deck localement — c'est le cas par
+    défaut — utiliser `create_slides`.
 
-    Mots-clés : présentation depuis markdown, deck, plan en slides, générer diaporama
+    Mots-clés : Google Slides, remplir un deck existant depuis un plan markdown
 
     Chaque titre de niveau 1 ou 2 ouvre une diapositive ; les listes et paragraphes
     qui suivent en deviennent les puces. Le nombre de diapositives réellement

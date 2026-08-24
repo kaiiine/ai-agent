@@ -44,15 +44,6 @@ def _accent_rgb(idx: int):
 def _is_light(s: dict) -> bool:
     return s.get("type", "content") in _LIGHT_TYPES
 
-def _bg_color(s: dict):
-    return _LIGHT_BG if _is_light(s) else _DARK_BG
-
-def _text_color(s: dict):
-    return _LIGHT_TEXT if _is_light(s) else _DARK_TEXT
-
-def _card_color(s: dict):
-    return _LIGHT_CARD if _is_light(s) else _DARK_CARD
-
 # ── Slide dimensions 16:9 ─────────────────────────────────────────────────────
 _W = Inches(13.33)
 _H = Inches(7.5)
