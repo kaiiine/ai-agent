@@ -3,58 +3,6 @@ from typing import List
 import json
 
 
-def _repair_json(s: str) -> dict | None:
-    """Attempt to repair a truncated JSON string and return parsed dict, or None."""
-    # Walk the string tracking open structures, then close them
-    open_braces = 0
-    open_brackets = 0
-    in_string = False
-    escape_next = False
-    last_valid_pos = 0
-
-    for i, ch in enumerate(s):
-        if escape_next:
-            escape_next = False
-            continue
-        if ch == '\\' and in_string:
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == '{':
-            open_braces += 1
-        elif ch == '}':
-            open_braces = max(0, open_braces - 1)
-        elif ch == '[':
-            open_brackets += 1
-        elif ch == ']':
-            open_brackets = max(0, open_brackets - 1)
-        if open_braces == 0 and open_brackets == 0:
-            last_valid_pos = i + 1
-
-    # If the string was cut mid-string literal, close it
-    candidate = s if not in_string else s + '"'
-    # Strip trailing comma before closing (common in truncated arrays/objects)
-    candidate = candidate.rstrip().rstrip(',')
-    candidate += ']' * open_brackets + '}' * open_braces
-
-    try:
-        return json.loads(candidate)
-    except json.JSONDecodeError:
-        pass
-
-    # Last resort: try up to the last known balanced position
-    if last_valid_pos > 0:
-        try:
-            return json.loads(s[:last_valid_pos])
-        except json.JSONDecodeError:
-            pass
-
-    return None
-
 from src.agents.search.tools import web_research_report, web_search_news
 from src.agents.weather.tools import get_weather_by_city
 from src.agents.gmail.tools import (
@@ -67,6 +15,9 @@ from src.agents.google_doc.tools import google_docs_create, google_docs_write, g
 # disque et l'agent ne pouvait pas les appeler. C'est ce qui a laissé passer un
 # constructeur de service mort et un `add_slide` qui jetait son contenu.
 from src.agents.google_sheet.tools import sheets_create, sheets_append_rows, sheets_read
+from src.agents.coding.tools import edit_file, propose_file_change
+from src.agents.slides.tools import create_slides
+from src.agents.translator.tools import translator
 from src.agents.google_slide.tools import (
     slides_create, slides_add_slide, slides_from_markdown,
 )
@@ -194,6 +145,33 @@ def build_all_tools() -> List[BaseTool]:
         sheets_create,
         sheets_append_rows,
         sheets_read,
+        # === ÉCRITURE DE FICHIERS ===
+        # `shell_run` REFUSE `sed -i`, `cat >` et consorts, et renvoie le modèle
+        # vers `edit_file` / `propose_file_change` — deux outils que
+        # l'orchestrateur n'avait pas. Le message le dirigeait donc vers une
+        # porte qui n'existait pas pour lui, et il n'avait plus qu'à expliquer à
+        # l'utilisateur comment faire à la main. Vécu sur « commente ces deux
+        # lignes dans ~/.config/hypr/keybindings.conf » : le modèle a tenté
+        # `run_coding_agent`, dont la description ne parle que de projets de
+        # code, s'est trompé d'argument, puis a rendu un mode d'emploi.
+        #
+        # Ce n'est pas une couche de plus : les changements proposés sont déjà
+        # drainés après chaque tour par `streaming.py` (auto_write_all en mode
+        # auto, review_pending sinon). L'outil existait, son consommateur
+        # existait ; seul le fil entre les deux manquait.
+        edit_file,
+        propose_file_change,
+        # === TRADUCTION ===
+        # Documenté dans le README, jamais importé : même panne silencieuse que
+        # `create_slides`.
+        translator,
+        # === PRÉSENTATION LOCALE (Reveal.js + PPTX) ===
+        # `create_slides` existait, était testé et documenté dans le README —
+        # mais n'était importé NULLE PART. Le paquet `src/agents/slides/` entier
+        # était donc mort côté agent : « fais-moi une présentation » ne pouvait
+        # qu'atterrir sur l'API Google Slides, un appel par diapositive, ce qui
+        # épuise le budget de tours avant la fin du deck.
+        create_slides,
         # === GOOGLE SLIDES ===
         slides_create,
         slides_add_slide,
