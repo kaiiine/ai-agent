@@ -79,6 +79,12 @@ def _get_coding_tools():
         find_git_repos, propose_file_change, edit_file, load_skill,
         project_graph_query,
     )
+    # Les quatre requêtes du graphe. `project_graph_query` reste en repli : il ne
+    # fait qu'une correspondance de sous-chaîne, mais il n'a besoin d'aucun
+    # sous-processus si graphify venait à manquer.
+    from src.agents.coding.graphe import (
+        graph_affected, graph_explain, graph_path, graph_query,
+    )
     from src.agents.filesystem.tools import (
         local_find_file, local_read_file, local_list_directory,
         local_grep, local_glob,
@@ -99,6 +105,7 @@ def _get_coding_tools():
     return [
         dev_plan_create, dev_plan_update, dev_plan_step_done, dev_explain, ask_clarification,
         find_git_repos, propose_file_change, edit_file, load_skill,
+        graph_affected, graph_explain, graph_path, graph_query,
         project_graph_query,
         local_find_file, local_read_file, local_list_directory,
         local_grep, local_glob,

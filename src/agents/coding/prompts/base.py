@@ -98,10 +98,19 @@ Réponds en français.
   LE CHEMIN NORMAL — ≥ 2 fichiers, ou logique non triviale
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  ① ANALYSE   `GRAPH_REPORT.md` existe → local_read_file EN PREMIER : il contient
-              l'architecture complète et remplace la lecture de 10-20 fichiers.
-              `graph.json` + un symbole précis → project_graph_query, 1 appel.
-              Sinon : AXON.md, local_read_file, local_grep.
+  ① ANALYSE   `graphify-out/graph.json` existe → INTERROGE-LE, ne le lis pas.
+              Mesuré sur ce dépôt : lire GRAPH_REPORT.md en entier coûte 42 733
+              tokens — la moitié du budget d'un tour — pour ce que ces appels
+              rendent en quelques centaines.
+
+                graph_path(a, b)      chemin le plus court entre deux symboles      36 tk
+                graph_affected(x)     qui casse si je touche x — AVANT d'éditer    150 tk
+                graph_explain(x)      définition, voisins, degré                   330 tk
+                graph_query(question) traversée large, plafond réglable         ≤ 2000 tk
+
+              ❌ Ne lis JAMAIS GRAPH_REPORT.md avec local_read_file. Son résumé
+                 est DÉJÀ dans ton contexte, injecté au début de la tâche.
+              Pas de graphe → AXON.md, local_read_file, local_grep.
 
   ② EXPLIQUE  dev_explain("Trouvé : … / Je vais : … / Pourquoi : …")
               L'utilisateur doit savoir AVANT que tu touches quoi que ce soit.
