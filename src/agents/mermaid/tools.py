@@ -371,10 +371,27 @@ def mermaid_diagram(
         + _REACT_SNIPPET.format(definition_escaped=embed_def.replace("`", "\\`"))
     )
 
+    # Le CHEMIN d'abord, et l'ordre de le transmettre.
+    #
+    # L'ancien retour ouvrait sur une ligne de chemin puis enchaînait deux murs
+    # de code d'intégration : le chemin n'en faisait que 4 %. Vécu — le modèle a
+    # répondu « le diagramme ci-dessus, accessible via le lien fourni », sans
+    # jamais donner le lien. L'utilisateur avait un fichier qu'il ne pouvait pas
+    # retrouver.
+    #
+    # Les snippets restent : ils font partie du contrat de l'outil, et servent à
+    # intégrer le diagramme dans un projet web. Ils passent simplement APRÈS ce
+    # que l'utilisateur doit recevoir.
     return (
-        f"Diagramme généré : {target}\n\n"
-        f"Si le navigateur affiche 'Syntax error', voici la définition sanitizée utilisée "
-        f"(vérifie la syntaxe Mermaid 11) :\n```mermaid\n{definition}\n```\n\n"
+        # Le chemin sur la PREMIÈRE ligne : c'est ce que l'utilisateur doit
+        # recevoir, et un test de longue date le vérifie à cette position.
+        f"{target}\n"
+        f"Diagramme généré et ouvert dans le navigateur.\n\n"
+        f"Donne ce chemin à l'utilisateur dans ta réponse — sans lui, il ne peut "
+        f"pas retrouver le diagramme. Ne réécris pas la définition Mermaid en "
+        f"texte : elle est déjà rendue.\n\n"
+        f"Si le navigateur affiche 'Syntax error', voici la définition sanitizée "
+        f"utilisée (syntaxe Mermaid 11) :\n```mermaid\n{definition}\n```\n\n"
         f"--- Embed HTML ---\n{embed_html}\n\n"
         f"--- React/Next.js ---\n{react_snippet}"
     )

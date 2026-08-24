@@ -82,6 +82,15 @@ def _mock_geo_response(city="Paris", lat=48.8566, lon=2.3522, country="France"):
 
 
 def _mock_weather_response(temp=18.0, wind=10.5, precip=0.0, code=0):
+    """Les conditions de l'instant — DEUXIÈME appel météo depuis que les
+    prévisions ont leur propre requête.
+
+    Le tool en fait trois : géocodage, prévisions quotidiennes, instant présent.
+    Les prévisions ont été séparées parce que demander `current` et `daily` dans
+    la même requête fait basculer Open-Meteo sur un autre modèle : mesuré sur
+    Suresnes au même instant, 0,63 mm de pluie contre 16,4 mm selon qu'on joint
+    `current` ou non. Voir `tests/test_meteo_previsions.py`.
+    """
     mock = MagicMock()
     mock.json.return_value = {
         "current": {
@@ -94,6 +103,21 @@ def _mock_weather_response(temp=18.0, wind=10.5, precip=0.0, code=0):
     mock.raise_for_status = MagicMock()
     return mock
 
+def _mock_forecast_response():
+    """Les prévisions quotidiennes — premier appel météo."""
+    mock = MagicMock()
+    mock.json.return_value = {"daily": {
+        "time": ["2026-08-18", "2026-08-19"],
+        "weathercode": [3, 61],
+        "temperature_2m_max": [25.8, 22.2],
+        "temperature_2m_min": [18.0, 17.7],
+        "precipitation_sum": [0.0, 0.63],
+        "precipitation_probability_max": [5, 80],
+        "wind_speed_10m_max": [16.7, 13.7],
+    }}
+    mock.raise_for_status = MagicMock()
+    return mock
+
 
 def test_weather_returns_city_data():
     from src.agents.weather.tools import get_weather_by_city
@@ -101,6 +125,7 @@ def test_weather_returns_city_data():
     with patch("requests.get") as mock_get:
         mock_get.side_effect = [
             _mock_geo_response("Paris", 48.8566, 2.3522),
+            _mock_forecast_response(),
             _mock_weather_response(22.0),
         ]
         result = get_weather_by_city.invoke({"city": "Paris"})
@@ -129,6 +154,7 @@ def test_weather_returns_coordinates():
     with patch("requests.get") as mock_get:
         mock_get.side_effect = [
             _mock_geo_response("Lyon", 45.75, 4.85),
+            _mock_forecast_response(),
             _mock_weather_response(15.0),
         ]
         result = get_weather_by_city.invoke({"city": "Lyon"})
@@ -144,6 +170,7 @@ def test_weather_includes_wind_and_precip():
     with patch("requests.get") as mock_get:
         mock_get.side_effect = [
             _mock_geo_response(),
+            _mock_forecast_response(),
             _mock_weather_response(temp=10.0, wind=25.0, precip=2.5),
         ]
         result = get_weather_by_city.invoke({"city": "Brest"})
@@ -179,6 +206,7 @@ def test_weather_different_cities():
     with patch("requests.get") as mock_get:
         mock_get.side_effect = [
             _mock_geo_response("Tokyo", 35.6762, 139.6503, "Japan"),
+            _mock_forecast_response(),
             _mock_weather_response(28.0),
         ]
         result = get_weather_by_city.invoke({"city": "Tokyo"})

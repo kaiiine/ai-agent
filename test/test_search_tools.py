@@ -47,20 +47,62 @@ def test_web_research_report_fallback_imports_ddgs():
     assert "test query" in result
 
 
-def test_web_research_report_tavily_sufficient_skips_ddg():
-    """When Tavily returns ≥ 3 results, DDGS.text() must NOT be called."""
+def test_web_research_report_always_queries_ddg():
+    """DuckDuckGo is a COMPLEMENT now, not a fallback — it always runs.
+
+    This test used to assert the opposite: with ≥ 3 Tavily results, DDGS.text()
+    must NOT be called. That gate made the second engine almost never fire —
+    measured on four real queries, it fired ZERO times — so its coverage was
+    installed (the package is there, no API key) and never used.
+
+    Nothing legitimate was traded away: DuckDuckGo costs no credit, and latency
+    did not move (2.4 / 1.9 / 3.3 / 1.5 s after, against 3.0 / 1.5 / 3.3 / 2.3 s
+    before). Distinct domains across the same four queries went from 27 to 33.
+    """
     from src.agents.search.tools import web_research_report
 
     mock_client = _make_tavily_client(_tavily_results(5))
 
     mock_ddgs_instance = MagicMock()
+    mock_ddgs_instance.text.return_value = [
+        {"title": "DDG only", "href": "http://ddg-only.com", "body": "…"},
+    ]
 
     with patch(_TAVILY_CLS, return_value=mock_client), \
          patch(_DDGS_CLS, return_value=mock_ddgs_instance):
         result = web_research_report.invoke({"query": "python async"})
 
-    mock_ddgs_instance.text.assert_not_called()
+    mock_ddgs_instance.text.assert_called_once()
     assert "python async" in result
+    assert "ddg-only.com" in result, "the second engine must reach the report"
+
+
+def test_web_research_report_merges_without_duplicates():
+    """The same page found by both engines counts once.
+
+    Without normalisation, `http://r1.com` and `https://www.r1.com/` would be
+    listed as two separate sources — the user would count coverage that does
+    not exist.
+    """
+    from src.agents.search.tools import web_research_report
+
+    mock_client = _make_tavily_client(_tavily_results(3))
+
+    mock_ddgs_instance = MagicMock()
+    mock_ddgs_instance.text.return_value = [
+        {"title": "same page", "href": "https://www.r1.com/", "body": "…"},
+    ]
+
+    with patch(_TAVILY_CLS, return_value=mock_client), \
+         patch(_DDGS_CLS, return_value=mock_ddgs_instance):
+        result = web_research_report.invoke({"query": "dedup"})
+
+    # Compter les occurrences BRUTES serait faux : chaque résultat figure dans
+    # la liste des sources ET dans son bloc de citation, où l'URL apparaît deux
+    # fois. On compte les ENTRÉES numérotées de la liste de sources.
+    import re
+    entrees = [l for l in result.splitlines() if re.match(r"^\s*\d+\.\s+\*\*", l)]
+    assert sum(1 for l in entrees if "r1.com" in l) <= 1
 
 
 def test_web_research_report_returns_markdown_structure():

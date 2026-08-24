@@ -56,6 +56,22 @@ def _ensure_list(obj: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _cle_url(url: str) -> str:
+    """Identité d'un résultat, pour dédoublonner entre moteurs.
+
+    Deux moteurs rendent la même page avec des URL qui ne sont pas identiques au
+    caractère près : `https://` ou `http://`, `www.` ou non, slash final,
+    paramètres de suivi. Comparer les chaînes brutes laisserait passer des
+    doublons que l'utilisateur compterait comme deux sources.
+    """
+    try:
+        p = urlparse(url)
+        hote = p.netloc.lower().removeprefix("www.")
+        return f"{hote}{p.path.rstrip('/')}"
+    except Exception:                                        # noqa: BLE001
+        return url
+
+
 def _ddg_period(days: int) -> str:
     """Convertit un nombre de jours en timelimit DuckDuckGo."""
     if days <= 1:
@@ -119,24 +135,64 @@ def web_research_report(
 
     data: Dict[str, Any] = client.search(**kwargs)
     results: List[Dict[str, Any]] = _ensure_list(data)
-    results = sorted(results, key=_score, reverse=True)[:max_results]
+    # Trié, PAS tronqué : la coupe se fait après la fusion avec DuckDuckGo,
+    # sinon on garderait 10 résultats Tavily puis on en empilerait 10 autres.
+    results = sorted(results, key=_score, reverse=True)
 
-    # ── Fallback DuckDuckGo si Tavily renvoie trop peu de résultats ───────────
-    if len(results) < 3:
-        try:
-            from ddgs import DDGS
-            tl = _ddg_period(days) if days > 0 else None
-            ddg_raw = DDGS().text(query, max_results=max_results, timelimit=tl)
-            for r in ddg_raw:
-                results.append({
-                    "title": r.get("title", ""),
-                    "url":   r.get("href", r.get("url", "")),
-                    "content": r.get("body", ""),
-                    "score": 0.0,
-                    "_source": "duckduckgo",
-                })
-        except Exception:
-            pass   # DuckDuckGo indisponible — on continue avec ce qu'on a
+    # ── DuckDuckGo en COMPLÉMENT, plus en secours ────────────────────────────
+    # Il ne se déclenchait qu'en dessous de 3 résultats Tavily, donc presque
+    # jamais : mesuré sur quatre requêtes réelles, ZÉRO fois. La couverture d'un
+    # second moteur était donc installée — le paquet est là, sans clé — et
+    # jamais utilisée. Systématique, il apporte les pages que Tavily classe mal,
+    # pour zéro crédit et un aller-retour réseau.
+    try:
+        from ddgs import DDGS
+        tl = _ddg_period(days) if days > 0 else None
+        for r in DDGS().text(query, max_results=max_results, timelimit=tl):
+            results.append({
+                "title":   r.get("title", ""),
+                "url":     r.get("href", r.get("url", "")),
+                "content": r.get("body", ""),
+                "score":   0.0,
+                "_source": "duckduckgo",
+            })
+    except Exception:                                        # noqa: BLE001
+        pass   # DuckDuckGo indisponible — on continue avec ce qu'on a
+
+    # Dédoublonnage APRÈS fusion, en gardant la PREMIÈRE occurrence : Tavily est
+    # devant, et sa version d'une page porte un score et le markdown complet là
+    # où DuckDuckGo ne donne qu'un extrait.
+    #
+    # On ne re-trie pas : les résultats DuckDuckGo ont `score: 0.0` et
+    # couleraient tous en bas. L'ordre voulu est « Tavily par pertinence, puis
+    # les apports du second moteur ».
+    vus: set[str] = set()
+    uniques: List[Dict[str, Any]] = []
+    for r in results:
+        cle = _cle_url(r.get("url", ""))
+        if cle and cle not in vus:
+            vus.add(cle)
+            uniques.append(r)
+
+    # Des places RÉSERVÉES au second moteur, sinon il n'en obtient aucune.
+    # Première version mesurée : couper à `max_results` après fusion ne changeait
+    # rien — Tavily remplit déjà les dix places, DuckDuckGo arrive derrière et
+    # tombe hors de la coupe. Gain constaté : +2 domaines sur QUATRE requêtes,
+    # et seulement là où Tavily avait rendu moins de dix résultats.
+    #
+    # On garde donc le haut du classement Tavily, puis on complète avec ce que
+    # DuckDuckGo apporte EN PLUS, et on retombe sur Tavily si le second moteur
+    # n'a rien de neuf. Le total reste borné à `max_results`.
+    part_seconde = max(2, max_results // 3)
+    premiers = [r for r in uniques if r.get("_source") != "duckduckgo"]
+    seconds = [r for r in uniques if r.get("_source") == "duckduckgo"]
+
+    retenus = premiers[:max_results - part_seconde] + seconds[:part_seconde]
+    if len(retenus) < max_results:
+        deja = {id(r) for r in retenus}
+        retenus += [r for r in premiers + seconds if id(r) not in deja][
+            : max_results - len(retenus)]
+    results = retenus[:max_results]
 
     # ── Construction du rapport Markdown ──────────────────────────────────────
     sources_lines: List[str] = []
