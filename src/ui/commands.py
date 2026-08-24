@@ -292,10 +292,8 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
     cmd = cmd.strip()
 
     if cmd == "/clear":
-        if console:
-            console.clear()
-            console.print(banner())
-        return None
+        rs = clear(console)
+        return rs
 
     if cmd in {"/help", "/h"}:
         from rich.table import Table
@@ -311,7 +309,12 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         cfg.thread_id = str(uuid.uuid4())[:8]
         state["messages"] = []
         save_last_thread(cfg.thread_id)
-        return command_panel(f"nouveau thread : {cfg.thread_id}")
+        from src.agents.shell.tools import set_cwd as _set_cwd
+        _set_cwd(Path.home())
+        save_thread_cwd(cfg.thread_id, str(Path.home()))
+        clear(console)
+        return None
+        # return command_panel(f"nouveau thread : {cfg.thread_id}  ·  {Path.home()}")
 
     if cmd == "/history":
         return _handle_history(cfg, state, console)
@@ -510,11 +513,11 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         from src.utils.paths import get_projects_dir
 
         raw_path = cmd[len("/graph"):].strip()
-        if raw_path:
-            project_path = Path(raw_path).expanduser()
+        chemin_seul = raw_path.replace("--update", "").strip()
+        if chemin_seul:
+            project_path = Path(chemin_seul).expanduser()
             if not project_path.is_absolute():
-                candidate = get_projects_dir() / raw_path
-                project_path = candidate
+                project_path = get_projects_dir() / chemin_seul
         else:
             project_path = Path(get_cwd())
 
@@ -525,6 +528,30 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         env = {**os.environ, "PYTHONPATH": str(graphify_repo)}
 
         out_dir = project_path / "graphify-out"
+
+        # `/graph <projet> --update` réextrait SANS appel modèle — c'est la
+        # commande que graphify prévoit pour suivre le code. Sans elle, le
+        # graphe vieillissait en silence : celui de ce dépôt annonçait
+        # « Built from commit bdeba46c » avec sept commits d'écart, et rendait
+        # des chemins de fichiers déplacés depuis.
+        mise_a_jour = "--update" in raw_path
+        if mise_a_jour and (out_dir / "graph.json").exists():
+            if console:
+                t = Text()
+                t.append("  ⚙  ", style="bold color(214)")
+                t.append(f"graphify update · {project_path.name} (sans modèle)…", style="dim")
+                console.print(t)
+            try:
+                proc_u = subprocess.run(
+                    [sys.executable, "-m", "graphify", "update", str(project_path)],
+                    env=env, capture_output=True, text=True, timeout=300,
+                )
+            except Exception as e:
+                return command_panel(f"graphify update erreur : {e}", error=True)
+            if proc_u.returncode != 0:
+                err = (proc_u.stderr or proc_u.stdout or "")[-400:].strip()
+                return command_panel(f"graphify update erreur :\n{err}", error=True)
+            return command_panel(f"✓  graphe mis à jour  →  {out_dir}")
 
         if console:
             t = Text()
@@ -640,4 +667,11 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         except Exception as e:
             return command_panel(f"erreur compression : {e}", error=True)
 
+    return None
+
+
+def clear(console=None):
+    if console:
+        console.clear()
+        console.print(banner())
     return None

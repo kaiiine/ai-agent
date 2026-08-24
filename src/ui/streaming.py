@@ -1,5 +1,6 @@
 import re
 import subprocess
+import os
 import threading
 from pathlib import Path
 from time import perf_counter
@@ -22,6 +23,10 @@ from .config import fmt_ms, SessionConfig
 from .language import detect_lang, enforce_lang_output
 from .panels import live_panel_initial, tool_call_panel, command_panel, plan_panel, compile_panel, ACCENT, _BOX
 from .render import update_live_markdown, finalize_live
+from .journal import (
+    Journal, SortieDirecte, bilan, cible_de_l_appel, compte_rendu_de_secours,
+    inscrire_resultat, verbe,
+)
 from .commands import debug_state
 from .attachments import AttachmentStore, open_file_picker, get_clipboard_image, build_message_with_attachments
 from .completer import SlashCompleter
@@ -91,6 +96,40 @@ def _make_thinking_loop(stop_event: threading.Event, live: "Live",
         except Exception:
             pass
     return _loop
+
+def _redemarrer_animation(stop_event, live, holder, compile_mode=None, activity=None):
+    """Arrête l'animation en cours AVANT d'en relancer une. Rend le nouveau fil.
+
+    Les fils partagent tous le MÊME `stop_event`. Faire `clear()` puis démarrer
+    un second fil ne tue donc pas le premier : il voit le drapeau baissé et
+    repart. Deux fils peignent alors la même zone, chacun avec son propre
+    compteur d'images, et l'écran affiche :
+
+        thinking
+        thinking..
+        thinking.
+
+    C'est le symptôme que l'utilisateur signale depuis le début. Un site sur
+    trois faisait la séquence juste — `set()`, `join()`, `clear()` — les deux
+    autres l'omettaient. La séquence vit désormais à UN seul endroit.
+    """
+    stop_event.set()
+    if holder:
+        try:
+            holder[0].join(timeout=_ARRET_ANIMATION)
+        except Exception:                                    # noqa: BLE001
+            pass
+    stop_event.clear()
+    fil = threading.Thread(
+        target=_make_thinking_loop(stop_event, live, compile_mode, activity=activity),
+        daemon=True)
+    fil.start()
+    if holder:
+        holder[0] = fil
+    else:
+        holder.append(fil)
+    return fil
+
 
 _pt_style = Style.from_dict({
     "axon":       "bold ansiyellow",
@@ -298,7 +337,11 @@ def build_session(**overrides) -> PromptSession:
         # Le tampon accepte les retours à la ligne ; ce sont les liaisons de
         # `_make_keybindings` qui décident quelle touche envoie et laquelle va à
         # la ligne. Sans `multiline`, aucune touche ne peut insérer de retour.
-        multiline=True,
+        # Bascule de DIAGNOSTIC : `AXON_SAISIE_SIMPLE=1` revient à la saisie
+        # d'une seule ligne. Elle sert à trancher une question qu'on ne peut
+        # pas trancher sans vrai terminal — le multi-ligne change la hauteur
+        # de l'invite, donc la position où Rich croit démarrer sa région.
+        multiline=not os.getenv("AXON_SAISIE_SIMPLE"),
         prompt_continuation=_continuation,
     )
     options.update(overrides)
@@ -832,6 +875,10 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
     # Un skill chargé reste en contexte jusqu'à la fin du tour : le label le
     # reflète jusque-là, et se réinitialise au tour suivant.
     activity: dict = {"label": "thinking"}
+    # Le journal n'écrit que des lignes définitives : la ligne vivante reste à
+    # l'animation, qui possède déjà le `Live`. Un seul peintre par toile.
+    journal = Journal(SortieDirecte(console))
+    cibles: dict[str, str] = {}          # `tool_call_id` → cible de l'appel
 
     try:
         with Live(live_panel_initial(), console=console, refresh_per_second=_REFRESH_RATE, vertical_overflow="crop") as live:
@@ -876,9 +923,21 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
                         t = new_t
                         last_node = "tools"
                     else:
-                        live.update(tool_call_panel(tool_name))
+                        # La ligne d'action est IMPRIMÉE, pas posée dans le Live :
+                        # elle doit rester quand la réponse arrive. Posée, elle
+                        # était écrasée par l'image d'animation suivante — on
+                        # voyait passer l'outil sans jamais pouvoir y revenir.
+                        inscrire_resultat(
+                            journal, tool_name, msg,
+                            cibles.pop(getattr(msg, "tool_call_id", "") or "", ""))
                     if tool_name == "load_skill" and activity.get("skill"):
                         activity["label"] = f"thinking · {activity['skill']}"
+                    elif activity.get("skill"):
+                        activity["label"] = f"thinking · {activity['skill']}"
+                    else:
+                        # L'outil est fini : on retombe sur l'attente générique,
+                        # sinon le label mentirait jusqu'au prochain outil.
+                        activity["label"] = "thinking"
                     last_node = "tools"
                     continue
                 if isinstance(msg, AIMessageChunk):
@@ -895,6 +954,17 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
                         tool_calls = getattr(msg, "tool_calls", None) or []
                         for tc in tool_calls:
                             name = tc.get("name") or ""
+                            # C'est ICI qu'on apprend qu'un outil DÉMARRE — le
+                            # `ToolMessage`, lui, n'arrive qu'une fois fini. Le
+                            # label rend donc l'attente honnête : « cherche sur
+                            # le web » pendant qu'il cherche, au lieu du
+                            # « thinking » indifférencié qu'on voyait quoi qu'il
+                            # se passe.
+                            if name:
+                                activity["label"] = verbe(name)
+                            if (_id := tc.get("id")):
+                                if (_c := cible_de_l_appel(tc.get("args"))):
+                                    cibles[_id] = _c
                             if name == "run_coding_agent":
                                 live.update(tool_call_panel("run_coding_agent"))
                             elif name == "load_skill":
@@ -1011,32 +1081,6 @@ def _resolve_at_mentions(text: str) -> str:
             pass
 
     return text
-
-
-def _separator_rule() -> Rule:
-    """Build the separator rule with optional plan badge, attachment hint and token gauge."""
-    from src.ui.token_gauge import gauge_markup, has_tokens
-    from src.ui.plan_mode import is_active as _is_plan_mode
-    from src.infra.settings import settings
-
-    hint  = _attachment_hint().strip()
-    gauge = gauge_markup(settings.llm_backend) if has_tokens() else ""
-    plan  = _is_plan_mode()
-
-    if plan or hint or gauge:
-        title = Text()
-        if plan:
-            title.append_text(Text.from_markup(f"[bold {ACCENT}]◆ PLAN[/bold {ACCENT}]"))
-        if plan and (hint or gauge):
-            title.append("  ·  ", style="dim")
-        if hint:
-            title.append(hint, style=f"dim {ACCENT}")
-        if hint and gauge:
-            title.append("  ·  ", style="dim")
-        if gauge:
-            title.append_text(Text.from_markup(gauge))
-        return Rule(title, characters="·", style=f"dim {ACCENT}")
-    return Rule(characters="·", style=f"dim {ACCENT}")
 
 
 def _prune_after_compression(graph, config: dict) -> None:
@@ -1366,6 +1410,18 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     stop_thinking = threading.Event()
     compile_mode = threading.Event()  # shared with thinking thread — switches panel
     _thinking_thread: list[threading.Thread] = []  # mutable holder so _coding_progress can join it
+    # Le label de l'attente est relu à CHAQUE image : il suit l'outil en cours
+    # sans qu'on relance le fil d'animation. Sans lui, `stream_once` affichait
+    # « thinking » quoi qu'il fasse — recherche web comprise.
+    activity: dict = {"label": "thinking"}
+    # Le journal n'écrit que des lignes définitives ; la ligne vivante reste à
+    # l'animation, seule propriétaire du `Live`. Un seul peintre par toile.
+    journal = Journal(SortieDirecte(console))
+    # `tool_call_id` → ce sur quoi porte l'appel. L'appariement par identifiant
+    # est le seul juste : deux recherches lancées en parallèle portent le même
+    # nom d'outil, et une table indexée par nom en perdrait une. Vu à l'écran —
+    # deux lignes « cherche l'actualité » rigoureusement indiscernables.
+    cibles: dict[str, str] = {}
     live = Live(live_panel_initial(), console=console, refresh_per_second=_REFRESH_RATE, vertical_overflow="crop")
 
     def _on_compile() -> None:
@@ -1391,7 +1447,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         def _resume_thinking():
             stop_thinking.clear()
             new_t = threading.Thread(
-                target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True
+                target=_make_thinking_loop(stop_thinking, live, compile_mode, activity=activity), daemon=True
             )
             new_t.start()
             if _thinking_thread:
@@ -1639,7 +1695,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 except Exception:
                     pass
                 new_t = threading.Thread(
-                    target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True
+                    target=_make_thinking_loop(stop_thinking, live, compile_mode, activity=activity), daemon=True
                 )
                 new_t.start()
                 if _thinking_thread:
@@ -1713,7 +1769,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 except Exception:
                     pass
                 new_t = threading.Thread(
-                    target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True
+                    target=_make_thinking_loop(stop_thinking, live, compile_mode, activity=activity), daemon=True
                 )
                 new_t.start()
                 if _thinking_thread:
@@ -1764,7 +1820,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         deb = {"DEBOUNCE": 0.03, "last_update": 0.0}
         t0 = perf_counter()
 
-        t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
+        t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode, activity=activity), daemon=True)
         t.start()
         _thinking_thread.append(t)
 
@@ -1790,14 +1846,9 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                             pending_refinements.append("Envoi annulé par l'utilisateur.")
                         elif action == "modify" and refinement:
                             pending_refinements.append(f"L'utilisateur veut modifier le mail : {refinement}")
-                        stop_thinking.clear()
                         live.start(refresh=False)
-                        new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
-                        new_t.start()
-                        if _thinking_thread:
-                            _thinking_thread[0] = new_t
-                        else:
-                            _thinking_thread.append(new_t)
+                        new_t = _redemarrer_animation(
+                            stop_thinking, live, _thinking_thread, compile_mode, activity)
                     elif tool_name == "ask_clarification":
                         import json as _json
                         try:
@@ -1909,34 +1960,27 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                             # Ne JAMAIS perdre les réponses en silence.
                             console.print(Text(
                                 f"  ⚠ échec d'injection des réponses : {_ue}", style="yellow"))
-                        stop_thinking.clear()
                         try:
                             live.start(refresh=False)
                         except Exception:
                             pass
-                        new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
-                        new_t.start()
-                        if _thinking_thread:
-                            _thinking_thread[0] = new_t
-                        else:
-                            _thinking_thread.append(new_t)
+                        new_t = _redemarrer_animation(
+                            stop_thinking, live, _thinking_thread, compile_mode, activity)
                         _needs_stream_restart = True
                         break
                     elif tool_name == "run_coding_agent":
                         # Stop coding-specialist thinking thread, restart for orchestrator response
-                        stop_thinking.set()
-                        if _thinking_thread:
-                            _thinking_thread[0].join(timeout=_ARRET_ANIMATION)
                         compile_mode.clear()
-                        stop_thinking.clear()
-                        new_t = threading.Thread(target=_make_thinking_loop(stop_thinking, live, compile_mode), daemon=True)
-                        new_t.start()
-                        if _thinking_thread:
-                            _thinking_thread[0] = new_t
-                        else:
-                            _thinking_thread.append(new_t)
+                        new_t = _redemarrer_animation(
+                            stop_thinking, live, _thinking_thread, compile_mode, activity)
                     else:
-                        live.update(tool_call_panel(tool_name))
+                        # IMPRIMÉE, pas posée dans le `Live` : une ligne posée est
+                        # écrasée par l'image d'animation suivante — on voyait
+                        # l'outil passer sans jamais pouvoir y revenir.
+                        inscrire_resultat(
+                            journal, tool_name, msg,
+                            cibles.pop(getattr(msg, "tool_call_id", "") or "", ""))
+                    activity["label"] = "thinking"
                     if cfg.debug:
                         live.console.print(Panel(
                             Pretty(msg.content),
@@ -1959,6 +2003,20 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                     if not chunk_text:
                         tool_calls = getattr(msg, "tool_calls", None) or []
                         for tc in tool_calls:
+                            # C'est ICI qu'on apprend qu'un outil DÉMARRE — le
+                            # `ToolMessage`, lui, n'arrive qu'une fois fini. Le
+                            # label rend donc l'attente honnête : « cherche sur
+                            # le web » pendant qu'il cherche, au lieu du
+                            # « thinking » indifférencié affiché jusqu'ici quoi
+                            # qu'Axon soit en train de faire.
+                            if (_nom := tc.get("name") or ""):
+                                activity["label"] = verbe(_nom)
+                            # Les arguments arrivent par morceaux : on retient la
+                            # dernière valeur vue, seule complète à l'arrivée du
+                            # `ToolMessage`.
+                            if (_id := tc.get("id")):
+                                if (_c := cible_de_l_appel(tc.get("args"))):
+                                    cibles[_id] = _c
                             if (tc.get("name") or "") == "run_coding_agent":
                                 # Commit any accumulated orchestrator text to scrollback
                                 # BEFORE specialist starts printing — fixes visual ordering
@@ -2034,8 +2092,14 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             final_state = graph.invoke(_stream_input, config=config)
             text = _dernier_texte_du_modele(final_state.get("messages") or [])
             if not text.strip():
-                text = ("_Le modèle n'a rien rédigé pour ce tour. Relance ta "
-                        "demande — rien n'a été perdu de la conversation._")
+                # Le modèle s'est tu, mais les outils, eux, ont agi. Dire « rien
+                # rédigé » et s'arrêter là laissait l'utilisateur devant dix
+                # commandes — dont quatre en échec — sans savoir si VirtualBox
+                # avait été supprimé. Le journal sait ce qui s'est passé : on le
+                # rend, en constat, sans conclure à la place du modèle.
+                text = compte_rendu_de_secours(journal) or (
+                    "_Le modèle n'a rien rédigé pour ce tour. Relance ta "
+                    "demande — rien n'a été perdu de la conversation._")
             safe = _guard_sanitize(enforce_lang_output(text, user_lang))
             finalize_live(live, safe, footer, console=console)
         live.stop()

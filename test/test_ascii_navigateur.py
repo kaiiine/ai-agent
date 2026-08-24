@@ -215,10 +215,21 @@ def test_la_racine_autorisee_est_apprise_du_refus(observateur, tmp_path):
     assert dossier.is_dir()
 
 
-def test_un_refus_illisible_ne_produit_aucune_capture(observateur):
-    """Sans racine connue, écrire au hasard sèmerait des PNG chez l'utilisateur."""
+def test_un_refus_illisible_ne_produit_aucune_capture(observateur, monkeypatch):
+    """Sans racine connue, écrire au hasard sèmerait des PNG chez l'utilisateur.
+
+    Le mock doit être injecté dans la RÉSOLUTION de l'outil, pas seulement passé
+    à `_dossier_de_captures`. `_capturer()` va chercher le sien dans
+    `mcp_runtime()` : sans ce `monkeypatch`, il trouvait le vrai serveur
+    Playwright quand un navigateur tournait, prenait une capture réelle, et le
+    test échouait — après avoir fait exactement ce qu'il prétend interdire.
+
+    Le défaut ne se voyait qu'en suite complète, un test antérieur amorçant le
+    runtime MCP ; seul, le fichier passait. D'où un échec qui semblait aléatoire.
+    """
     outil = MagicMock()
     outil.invoke.return_value = "### Error\nquelque chose d'inattendu"
+    monkeypatch.setattr(observateur, "_outil_de_capture", lambda: outil)
 
     assert observateur._dossier_de_captures(outil) is None
     assert observateur._capturer() is None

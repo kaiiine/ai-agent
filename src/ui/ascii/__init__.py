@@ -33,12 +33,3 @@ __all__ = [
 ]
 
 
-def observateur_navigateur(**kwargs):
-    """L'observateur Playwright, importé à la demande.
-
-    Il est derrière une fonction et non un import direct : lui seul touche au
-    runtime MCP, et importer `ui.ascii` pour une animation ne doit pas entraîner
-    le client MCP dans son sillage.
-    """
-    from .navigateur import ObservateurNavigateur
-    return ObservateurNavigateur(**kwargs)
