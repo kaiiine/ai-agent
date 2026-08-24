@@ -68,18 +68,22 @@ def test_aucune_requete_hors_sujet_n_ouvre_la_porte(requete):
     assert not _money_intent(requete), f"faux positif : {requete!r}"
 
 
-def test_la_porte_ne_retire_jamais_un_groupe():
-    """Elle ADJOINT `quant`, elle ne substitue rien. Le rang 1 reste celui du
-    sémantique — sans quoi le dépouillement `coding` changerait de déclencheur et
-    « lis le fichier src/main.py » reperdrait son outil de lecture."""
-    import inspect
+def test_le_depouillement_coding_reste_declenche_par_le_semantique():
+    """Le rang 1 qui commande le dépouillement de `git`/`filesystem` est celui du
+    SÉMANTIQUE, pas celui qu'une porte lexicale vient de poser. Sans quoi
+    « lis le fichier src/main.py » reperdrait son outil de lecture.
 
-    from src.orchestrator import tool_retriever
+    Vérifié par le comportement : cette requête doit garder `local_read_file`.
+    L'ancienne version cherchait la chaîne `groups.append(_MONEY_GROUP)` dans le
+    source de `get()` — chaîne qui avait déjà disparu du fichier, si bien que le
+    test était rouge sans que personne ne l'ait cassé ce jour-là.
+    """
+    from src.orchestrator.registry import build_all_tools
+    from src.orchestrator.tool_retriever import ToolRetriever
 
-    source = inspect.getsource(tool_retriever.ToolRetriever.get)
-
-    assert "groups.append(_MONEY_GROUP)" in source
-    assert "ranked[0] == \"coding\"" in source
+    outils = {t.name for t in ToolRetriever(build_all_tools()).get(
+        "lis le fichier src/main.py")}
+    assert "local_read_file" in outils
 
 
 def test_la_porte_precede_le_semantique_et_ne_depend_pas_de_lui():

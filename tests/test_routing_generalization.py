@@ -108,10 +108,24 @@ def test_l_agent_de_code_ne_s_invite_pas_par_largeur_de_document(retriever, requ
 def test_le_seuil_de_rang_est_declare_pas_code_en_dur(retriever):
     """Un seuil porté par le groupe se lit dans le registre et s'étend à un autre
     groupe le jour où un second outil deviendra aussi lourd. Un `if group ==
-    "coding"` dans la sélection ne se verrait pas."""
+    "coding"` dans la sélection ne se verrait pas.
+
+    Ce jour est arrivé : `quant` porte le même seuil depuis qu'on a mesuré
+    « il me reste combien de stockage ? » embarquant ses sept outils au 4e rang,
+    soit 45 % de l'entrée d'un tour. Le test vérifie donc le MÉCANISME — un seuil
+    déclaré, jamais codé en dur — et non le nombre de groupes qui s'en servent.
+    """
     assert TOOL_GROUPS["coding"].requires_top_rank == 3
-    assert all(g.requires_top_rank is None
-               for nom, g in TOOL_GROUPS.items() if nom != "coding")
+    assert TOOL_GROUPS["quant"].requires_top_rank == 3
+
+    import inspect
+
+    from src.orchestrator import tool_retriever
+
+    selection = inspect.getsource(tool_retriever.ToolRetriever.get)
+    assert 'group == "coding"' not in selection
+    assert 'group == "quant"' not in selection
+    assert "requires_top_rank" in selection
 
 
 # ── déterminisme ──────────────────────────────────────────────────────────────
