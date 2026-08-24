@@ -1,6 +1,6 @@
 ---
 name: systems
-description: C C++ CMake systems programming Makefile POSIX sanitizers valgrind
+description: Builds and scaffolds C and C++ projects from scratch: CMake, Makefile, POSIX, sanitizers, valgrind. Use when writing new systems code.
 aliases: [cmake, c++, cpp]
 ---
 

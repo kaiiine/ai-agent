@@ -1,6 +1,6 @@
 ---
 name: svelte
-description: Svelte SvelteKit stores runes Composition API TypeScript pnpm
+description: Builds and scaffolds Svelte applications from scratch: SvelteKit, stores, runes, Composition API, TypeScript, pnpm. Use when writing new Svelte code.
 aliases: [sveltekit]
 ---
 

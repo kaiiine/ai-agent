@@ -1,6 +1,6 @@
 ---
 name: vue
-description: Vue Nuxt Composition API Pinia TypeScript pnpm
+description: Builds and scaffolds Vue applications from scratch: Nuxt, Composition API, Pinia, TypeScript, pnpm. Use when writing new Vue code.
 aliases: [nuxt, vue3]
 ---
 

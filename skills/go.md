@@ -1,6 +1,6 @@
 ---
 name: go
-description: Go Golang modules goroutines gin chi Echo concurrency
+description: Builds and scaffolds Go services from scratch: modules, goroutines, gin, chi, Echo, concurrency. Use when writing new Go code.
 aliases: [golang]
 ---
 

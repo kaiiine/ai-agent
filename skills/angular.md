@@ -1,6 +1,6 @@
 ---
 name: angular
-description: Angular NgModule RxJS standalone components signals inject
+description: Builds and scaffolds Angular applications from scratch: NgModule, RxJS, standalone components, signals, inject.
 aliases: [ng]
 ---
 

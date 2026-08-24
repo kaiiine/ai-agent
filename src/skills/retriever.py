@@ -36,6 +36,125 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
     return meta, content
 
 
+def _document(name: str, skill: dict) -> str:
+    """Ce qu'on indexe pour un skill : son nom, ses alias, sa description.
+
+    Mesuré sur dix requêtes de référence en français, réponse attendue connue,
+    avec le filtrage de portée en place :
+
+        description seule                    4/10
+        + nom + alias                       10/10
+        + nom + alias + ancres               9/10
+
+    Les descriptions sont des chapelets de mots-clés anglais et les questions
+    arrivent en français : le nom et les alias rapprochent les deux.
+
+    Les ANCRES, elles, dégradent — et c'est contre-intuitif, puisqu'elles sont
+    justement écrites dans la langue de l'utilisateur. Le skill Blender en
+    déclare huit ; les ajouter allonge son document d'autant de phrases
+    françaises, et « un serveur en Go » se met à rendre Blender. Le volume de
+    texte joue ici le rôle que le NOMBRE de documents jouait dans l'index
+    d'outils (voir l'en-tête de `orchestrator/tool_retriever.py`) : dans les deux
+    cas, en écrire davantage sur un skill augmente sa probabilité d'être choisi
+    indépendamment de la pertinence.
+
+    Les ancres gardent leur emploi ailleurs : `tool_retriever._skill_topics()`
+    les lit pour router vers le GROUPE d'outils. Elles ne servent pas à
+    départager les skills entre eux.
+    """
+    morceaux = [name, " ".join(skill.get("aliases") or []),
+                skill.get("description") or ""]
+    return ". ".join(m for m in morceaux if m.strip())
+
+
+#: Radicaux qui ne nomment PAS une technologie : ce qui reste après le suffixe
+#: de rôle est un mot générique. Ajouter un langage n'y touche pas — c'est ce
+#: qui rend l'ajout de skills sans effet sur les requêtes qui ne le nomment pas.
+_RADICAUX_GENERIQUES = frozenset({
+    "code", "build-error", "refactor", "silent-failure", "security", "tdd",
+    "performance", "type-design", "a11y", "seo",
+})
+
+
+_TERME = re.compile(r"[\w+#]+", re.UNICODE)
+#: Suffixes de RÔLE : ce qui reste une fois retiré est le DOMAINE du skill.
+#: `react-reviewer` et `frontend` (alias `react`) parlent donc du même domaine.
+_SUFFIXES_DE_ROLE = ("-reviewer", "-resolver", "-cleaner", "-simplifier",
+                     "-hunter", "-guide", "-optimizer", "-architect",
+                     "-specialist", "-analyzer")
+
+
+def termes_identifiants(name: str, skill: dict) -> set[str]:
+    """Les mots qui DÉSIGNENT ce skill : son nom, son domaine, ses alias.
+
+    Sert à repérer qu'une requête vise un domaine revendiqué par plusieurs
+    skills — `python` (alias `fastapi`) et `fastapi-reviewer` par exemple.
+    """
+    termes = {name.lower()} | {a.lower() for a in skill.get("aliases") or []}
+    for suffixe in _SUFFIXES_DE_ROLE:
+        if name.endswith(suffixe):
+            base = name[: -len(suffixe)].lower()
+            termes.add(base)
+            # Le PREMIER segment aussi : `java-build-resolver` se désigne par
+            # « java », pas seulement par « java-build » — sans quoi « mon build
+            # Maven échoue » ne le trouvait ni ne le citait. Un seul suffixe est
+            # retiré par la boucle, et les noms ECC en portent deux.
+            tete = base.split("-", 1)[0]
+            if tete and tete not in _RADICAUX_GENERIQUES:
+                termes.add(tete)
+            break
+    return {t for t in termes if t}
+
+
+def voisins_de_domaine(requete: str, visible: dict, choisi: str) -> list[str]:
+    """Les autres skills que la requête désigne aussi, par un terme partagé.
+
+    C'est le mécanisme qui rend l'ajout de skills ADDITIF. Mesuré : importer
+    douze skills n'a cassé qu'une seule requête préexistante — « crée une API
+    FastAPI », parce que `fastapi-reviewer` revendique un terme que `python`
+    déclarait déjà comme alias. Le premier choix ne peut pas être réparé :
+    quatre mécanismes de désambiguïsation ont été mesurés (filet lexical,
+    lexique de verbes, centroïdes d'intention, comparaison à la première
+    phrase), tous sous la baseline, parce que `nomic-embed-text` ne sépare pas
+    « créer » de « relire » sur une phrase française.
+
+    Alors on ne répare pas le premier choix, on le rend RÉCUPÉRABLE : le skill
+    servi cite ses voisins, et le modèle rappelle `load_skill` s'il s'est trompé
+    de rôle. Un nouveau skill ne peut donc plus voler une requête sans recours —
+    au pire il ajoute une ligne de renvoi.
+    """
+    mots = {m.group(0).lower() for m in _TERME.finditer(requete or "")}
+    partages = [n for n, s in visible.items()
+                if n != choisi and termes_identifiants(n, s) & mots]
+    if partages:
+        return partages
+
+    # Aucune technologie nommée : la requête décrit un RÔLE (« ce module est
+    # illisible », « quelles fonctions ne sont plus appelées »). Les skills de
+    # rôle sans domaine sont alors tous plausibles et se départagent mal — cinq
+    # mécanismes de désambiguïsation ont été mesurés sans en battre aucun. On
+    # les cite plutôt que de faire semblant d'avoir tranché.
+    if choisi not in _roles_sans_domaine(visible):
+        return []
+    return [n for n in _roles_sans_domaine(visible) if n != choisi]
+
+
+def _roles_sans_domaine(visible: dict) -> list[str]:
+    """Les skills de rôle qui ne visent aucune technologie en particulier."""
+    out = []
+    for nom in visible:
+        base = nom.lower()
+        for suffixe in _SUFFIXES_DE_ROLE:
+            if base.endswith(suffixe):
+                base = base[: -len(suffixe)]
+                break
+        else:
+            continue                      # pas un skill de rôle
+        if base in _RADICAUX_GENERIQUES:
+            out.append(nom)
+    return out
+
+
 class SkillRetriever:
     """Charge les .md depuis skills/, indexe leurs descriptions, offre une recherche sémantique.
 
@@ -81,10 +200,7 @@ class SkillRetriever:
             from langchain_core.documents import Document
             embedder = OllamaEmbeddings(model="nomic-embed-text")
             docs = [
-                Document(
-                    page_content=skill["description"],
-                    metadata={"name": name}
-                )
+                Document(page_content=_document(name, skill), metadata={"name": name})
                 for name, skill in self._skills.items()
             ]
             self._index = Chroma.from_documents(docs, embedder)
@@ -100,6 +216,25 @@ class SkillRetriever:
             return self._skills
         return {n: s for n, s in self._skills.items() if scope in s["scope"]}
 
+    def _avec_renvoi(self, nom: str, visible: dict, requete: str) -> str:
+        """Le contenu du skill, suivi de ses voisins de domaine s'il y en a.
+
+        Quelques dizaines de tokens qui remplacent une erreur sans issue par un
+        aiguillage. Rien n'est ajouté quand la requête ne désigne qu'un skill,
+        c'est-à-dire dans l'immense majorité des cas.
+        """
+        voisins = voisins_de_domaine(requete, visible, nom)
+        contenu = visible[nom]["content"]
+        if not voisins:
+            return contenu
+        lignes = "\n".join(
+            f"  - {v} : {visible[v]['description'].split('.')[0].strip()}."
+            for v in voisins)
+        return (f"{contenu}\n\n---\n"
+                f"Ce domaine est couvert par d'autres skills. Si celui-ci ne "
+                f"correspond pas à ce qui est demandé, rappelle `load_skill` "
+                f"avec l'un d'eux :\n{lignes}")
+
     def get(self, query: str, k: int=1, scope: str|None=None) -> str:
         """Retourne le contenu du meilleur skill pour query.
            Priorité : exact name → aliases → semantic (Chroma) → fuzzy (contains)
@@ -107,7 +242,7 @@ class SkillRetriever:
         visible = self._visible(scope)
         q = query.lower().strip()
 
-        # Exact name
+        # Exact name — le skill est NOMMÉ, aucun doute à lever, pas de renvoi.
         if q in visible:
             return visible[q]["content"]
 
@@ -126,9 +261,20 @@ class SkillRetriever:
         self._build_index()
         if self._index is not None:
             try:
-                results = self._index.similarity_search(query, k=k*4)
+                # On demande de quoi survivre au filtrage de portée. L'index
+                # contient TOUS les skills, y compris ceux qu'aucun agent ne lit
+                # (`scope: template`, réservé aux commandes /fiche et /exo). Avec
+                # `k*4`, ces intrus occupaient les premières places puis étaient
+                # écartés, et le rebut restant gagnait : « un serveur en Go »
+                # rendait le skill Blender. Filtrer après une recherche trop
+                # courte, c'est choisir parmi ce qui a survécu, pas parmi ce qui
+                # convient.
+                combien = max(k * 4, len(self._skills))
+                results = self._index.similarity_search(query, k=combien)
                 names = [r.metadata["name"] for r in results if r.metadata.get("name") in visible]
                 if names:
+                    if k == 1:
+                        return self._avec_renvoi(names[0], visible, query)
                     return "\n\n---\n\n".join(visible[n]["content"] for n in names[:k])
             except Exception:
                 pass
@@ -136,7 +282,7 @@ class SkillRetriever:
         # Fuzzy on name
         for name, skill in visible.items():
             if q in name or name in q:
-                return skill["content"]
+                return self._avec_renvoi(name, visible, query)
 
         return f"Skill '{query}' non trouvé. Disponibles : {', '.join(visible)}"
 

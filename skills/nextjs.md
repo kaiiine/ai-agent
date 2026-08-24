@@ -1,6 +1,6 @@
 ---
 name: nextjs
-description: Next.js App Router RSC server components pnpm create next-app TypeScript Tailwind
+description: Builds and scaffolds Next.js applications from scratch: App Router, RSC, server components, pnpm create next-app. Use when writing new Next.js code.
 aliases: [next, next.js, app router]
 ---
 

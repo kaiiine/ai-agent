@@ -1,6 +1,6 @@
 ---
 name: node_backend
-description: Node.js Express NestJS Fastify REST API backend TypeScript JWT Prisma
+description: Builds and scaffolds Node.js back-ends from scratch: Express, NestJS, Fastify, REST APIs, TypeScript, JWT. Use when writing new Node code.
 aliases: [express, nestjs, node]
 ---
 

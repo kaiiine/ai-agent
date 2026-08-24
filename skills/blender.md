@@ -1,6 +1,6 @@
 ---
 name: blender
-description: Blender scène 3D mesh matériaux lumières caméra animation rendu export GLB bpy
+description: Builds 3D scenes inside Blender: meshes, materials, lighting, cameras, animation, rendering, geometry nodes, bpy scripting.
 aliases: [bpy, scene3d]
 scope: [coding, orchestrator]
 anchors: [crée une scène 3D dans blender, modélise un objet en 3D, fais-moi une scène qui bouge pour mon site, ajoute une lumière et une caméra à la scène, exporte la scène en GLB, anime un objet dans blender, fais un rendu 3D, mets ce logo en 3D]

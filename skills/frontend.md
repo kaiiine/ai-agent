@@ -1,6 +1,6 @@
 ---
 name: frontend
-description: React Vite TypeScript design system CSS tokens glassmorphism animations
+description: Builds and scaffolds React front-ends from scratch: Vite, TypeScript, design systems, CSS tokens, glassmorphism. Use when writing new React components.
 aliases: [react, vite, frontend]
 ---
 
@@ -27,6 +27,52 @@ aliases: [react, vite, frontend]
    CONTENU : utilise EXACTEMENT le texte, les modules, les features de la spec.
    ❌ Ne jamais inventer ou substituer du contenu générique ("Gestion d'équipes" au lieu des vrais modules)
    ✅ Copie-colle les titres, descriptions, labels du brief — mot pour mot.
+
+━━ 0.5. PLAN ET CRITIQUE — AVANT LA PREMIÈRE LIGNE DE CODE ━━━━━━━━━━━━━━━━━━━
+
+   La self-critique de fin de ce skill arrive TROP TARD : à ce stade le code est
+   écrit, et corriger une direction artistique revient à tout reprendre. Une
+   critique ne vaut que si elle porte sur le PLAN.
+
+   Émettre un dev_explain AVANT d'écrire quoi que ce soit :
+
+   dev_explain("PLAN VISUEL
+   PALETTE   : 4 à 6 hex NOMMÉS par leur rôle — pas 'bleu' mais
+               --surface #0c0a08, --accent #ffaf00, --muted #a29684…
+   TYPO      : 2 familles avec leur RÔLE (display / corps), et l'échelle
+               (H1 ≥ 7xl, corps 1.05–1.2rem, labels 0.68rem tracking 0.14em)
+   LAYOUT    : wireframe ASCII de la page, section par section
+   SIGNATURE : LE geste unique de cette page — un seul. Pas trois.
+
+   CRITIQUE DU PLAN
+   Est-ce que je livrerais EXACTEMENT ce plan pour n'importe quel autre brief ?
+   Si oui → il est générique, le réviser avant de coder.
+   Qu'est-ce qui, dans ce plan, ne vient QUE de ce brief-ci ?")
+
+   Un seul endroit prend un risque esthétique ; tout le reste est discipliné.
+   Une page qui tente trois gestes forts n'en réussit aucun.
+
+   ANTI-DÉFAUTS DE GÉNÉRATION — les trois combinaisons qui signent une IA :
+   ❌ fond crème + serif + accent terracotta
+   ❌ fond noir + vert acide + police mono partout
+   ❌ « broadsheet » à filets fins, petites capitales et colonnes de journal
+   Si le plan ressemble à l'une des trois, ce n'est pas un style, c'est un défaut
+   d'usine.
+
+   GRILLES — le compte d'éléments décide du nombre de colonnes, jamais un seuil.
+   Quatre cartes sur trois colonnes laissent un orphelin et un trou. Mesuré sur
+   les slides d'Axon, où `min(3, n)` produisait exactement ça :
+       1→1  ·  2→2  ·  3→3  ·  4→2  ·  5→3  ·  6→3
+   La DERNIÈRE rangée doit être pleine.
+
+   UNE COULEUR PAR ÉLÉMENT N'EST PAS UN SYSTÈME. Attribuer un accent différent à
+   chaque carte d'une même série fait croire à une distinction sémantique qui
+   n'existe pas — c'est le rendu « arc-en-ciel ». Un accent, décliné en
+   intensité, et la couleur reprend un sens.
+
+   UN SEUL BORD D'APPUI PAR COMPOSITION. Un titre centré au-dessus de contenu
+   calé à gauche donne deux axes de lecture concurrents. Vérifier que eyebrow,
+   titre, sous-titre et méta partagent la même verticale.
 
 ━━ 1. QUALITÉ VISUELLE — STANDARD CLAUDE CODE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

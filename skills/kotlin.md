@@ -1,6 +1,6 @@
 ---
 name: kotlin
-description: Kotlin Ktor Spring Boot Gradle app from scratch existing repo continuation coroutines PostgreSQL Exposed JUnit MockK ktlint
+description: Builds and scaffolds Kotlin projects from scratch: Ktor, Spring Boot, Gradle, app from scratch or existing repo.
 aliases: [kt, ktor, kotlin-jvm, spring-kotlin]
 ---
 

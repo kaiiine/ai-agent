@@ -1,6 +1,6 @@
 ---
 name: threedee
-description: Three.js React Three Fiber GSAP ScrollTrigger 3D WebGL postprocessing
+description: Builds and scaffolds Three.js scenes from scratch: React Three Fiber, GSAP, ScrollTrigger, 3D, WebGL, postprocessing. Use when writing new 3D web code.
 aliases: [three, r3f, 3d]
 ---
 

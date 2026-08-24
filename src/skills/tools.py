@@ -11,6 +11,15 @@ skills below. This is not an optimisation you may skip when the task looks simpl
 these guidelines exist because the default approach already failed on this domain.
 Checking the list is unconditional; only the loading depends on a match.
 
+Skills COMPOSE — call this tool once per skill that applies, not once total.
+A stack skill says WHAT to install and scaffold; a cross-cutting skill says HOW
+the result must behave or look. They answer different questions, so loading one
+never replaces the other. When a request names a stack AND a quality bar ("a
+site in <framework>, with a great design"), load both.
+
+Never name a skill here that the catalogue below does not list: this preamble is
+shared by every agent, and each one sees a different catalogue.
+
 Available skills:
 {catalogue}
 

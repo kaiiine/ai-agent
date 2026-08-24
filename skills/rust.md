@@ -1,6 +1,6 @@
 ---
 name: rust
-description: Rust Cargo ownership traits async tokio anyhow thiserror
+description: Builds and scaffolds Rust projects from scratch: Cargo, ownership, traits, async tokio, anyhow, thiserror. Use when writing new Rust code.
 aliases: [cargo]
 ---
 
