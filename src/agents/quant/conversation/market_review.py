@@ -98,6 +98,7 @@ def candidat_depuis_evaluation(evaluation: Any, *, freshness_at: datetime) -> Re
                                   if evaluation.no_vig_probability is not None else None),
         fair_probability=float(evaluation.fair_probability),
         probability_low=float(evaluation.probability_low) if estimee else None,
+        probability_low_status="ESTIMATED" if estimee else "NOT_ESTIMATED",
         expected_value=(float(evaluation.expected_value)
                         if evaluation.expected_value is not None else None),
         maturity=evaluation.model_maturity,
@@ -189,7 +190,7 @@ class MarketReview:
 
 def construire_review(batch: Any, *, freshness_at: datetime,
                       policy_evaluations: Sequence[Any] = (),
-                      profil=None) -> MarketReview:
+                      profil=None, posture=None) -> MarketReview:
     """`AdaptedBatch` + verdicts de politique -> classement produit.
 
     LA POLITIQUE D'ÉLIGIBILITÉ EST LA MÊME QUE CELLE DU CHEMIN ARGENT, et ce
@@ -233,14 +234,15 @@ def construire_review(batch: Any, *, freshness_at: datetime,
             continue
         candidats.append(candidat_depuis_evaluation(evaluation, freshness_at=freshness_at))
 
-    return construire_review_depuis(candidats, profil=profil,
+    return construire_review_depuis(candidats, profil=profil, posture=posture,
                                     ecartes_par_politique=tuple(ecartes))
 
 
 def construire_review_depuis(candidats: Sequence[ReviewCandidate], *, profil=None,
+                             posture=None,
                              ecartes_par_politique: tuple = ()) -> MarketReview:
-    classement = classement_global(candidats, profil=profil)
-    par_evenement = best_market_per_event(candidats, profil=profil)
+    classement = classement_global(candidats, profil=profil, posture=posture)
+    par_evenement = best_market_per_event(candidats, profil=profil, posture=posture)
     from ..betting_engine.markets.review_ranking import evaluer as evaluer_candidats
     evalues = evaluer_candidats(candidats, profil=profil)
     non_comparables = tuple(

@@ -371,14 +371,21 @@ def _render_candidat(evaluation: Any, obs: Any = None, fenetre: Any = None) -> l
         *_avertissement_selection_perdante(c),
         f"- Cote bookmaker : {c.bookmaker_odds} ({c.bookmaker})",
         f"- Probabilité implicite (1/cote, marge incluse) : {_pct(c.implied_probability)}",
-        f"- Probabilité modèle : {_pct(c.fair_probability)} "
-        f"(borne basse {_pct(c.probability_low)})"
-        # §14 : ne pas laisser croire à une prudence qui n'existe pas. Tant
-        # qu'aucun intervalle n'est estimé, la borne basse VAUT la probabilité —
-        # la présenter sans le dire donnerait à un chiffre unique l'apparence de
-        # deux mesures indépendantes.
-        + ("  ⚠ borne basse = probabilité : aucun intervalle n'est encore estimé"
-           if c.probability_low == c.fair_probability else ""),
+        # §14 : ne jamais laisser croire à une prudence qui n'existe pas. Tant
+        # qu'aucun intervalle n'est estimé, la « borne basse » VAUT la
+        # probabilité centrale — l'afficher comme une seconde mesure donnerait à
+        # un chiffre unique l'apparence de deux.
+        #
+        # La détection se fait ici par ÉGALITÉ, faute de mieux : `CandidateBet`
+        # ne porte pas `uncertainty_status` (cf. `ranking/components.py`). Le
+        # chemin de REVUE, lui, porte `probability_low_status` et n'a pas besoin
+        # de deviner. Combler l'écart ici demanderait de traverser l'adaptateur
+        # et le schéma — noté, pas fait.
+        (f"- Probabilité modèle : {_pct(c.fair_probability)} — intervalle "
+         f"prudent non encore estimé"
+         if c.probability_low == c.fair_probability else
+         f"- Probabilité modèle : {_pct(c.fair_probability)} "
+         f"(borne basse mesurée {_pct(c.probability_low)})"),
         f"- Probabilité sans marge : {_valeur(no_vig, _pct)}",
         f"- Edge : {_signed(c.edge_mean)} (borne basse {_signed(c.edge_low)})",
         f"- EV moyenne : {_signed(c.expected_value_mean)} · "

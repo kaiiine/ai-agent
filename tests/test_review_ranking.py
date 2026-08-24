@@ -197,11 +197,49 @@ def test_le_profil_sature_au_dela_de_son_plafond():
     from src.agents.quant.advisor.ranking.profiles import load_ranking_profiles
 
     plafond = float(load_ranking_profiles()["balanced_v1"].ev_cap)
-    haut = _c(probability_low=0.60)                          # EV_low = 0,26
-    tres_haut = _c(probability_low=0.70)                     # EV_low = 0,47
+    # La COTE fait varier l'espérance, pas la probabilité : depuis que le score
+    # porte un terme de probabilité, faire varier `probability_low` déplacerait
+    # DEUX facteurs à la fois et ce test ne dirait plus rien de la saturation.
+    haut = _c(probability_low=0.60, bookmaker_odds=2.10)       # EV_low = 0,26
+    tres_haut = _c(probability_low=0.60, bookmaker_odds=2.60)  # EV_low > 0,26
     assert esperance_prudente(haut) > plafond
     assert esperance_prudente(tres_haut) > esperance_prudente(haut)
     assert score_prudent(tres_haut) == score_prudent(haut)
+
+
+def test_a_esperance_saturee_la_probabilite_departage():
+    """Le pendant du test précédent, et la raison d'être de la correction.
+
+    La saturation de la VALEUR est délibérée. Ce qui ne l'était pas : une fois
+    saturée, plus rien ne départageait deux sélections — l'ordre retombait sur
+    la qualité des données. Sur un run réel, les cinq sélections affichées
+    avaient toutes `value = 1`, et l'utilisateur a vu du hasard.
+    """
+    from src.agents.quant.advisor.ranking.profiles import load_ranking_profiles
+
+    from src.agents.quant.betting_engine.markets.review_ranking import (
+        Comparability, Posture, ProductStatus, RankedCandidate, _trier,
+    )
+    from decimal import Decimal as D
+
+    sur = _c(source_event_id="sur", probability_low=0.78,
+             probability_low_status="ESTIMATED", bookmaker_odds=2.10)
+    risque = _c(source_event_id="risque", probability_low=0.60,
+                probability_low_status="ESTIMATED", bookmaker_odds=3.40)
+    plafond = float(load_ranking_profiles()["balanced_v1"].ev_cap)
+    assert esperance_prudente(sur) > plafond
+    assert esperance_prudente(risque) > plafond
+    # Le SCORE ne les distingue plus : la valeur sature et la probabilité n'y
+    # entre pas. C'est l'ORDRE qui porte la sûreté.
+    assert score_prudent(sur) == score_prudent(risque)
+
+    rangs = [RankedCandidate(risque, Comparability.COMPARABLE, ProductStatus.REVIEW,
+                             D("0.5"), D(str(esperance_prudente(risque)))),
+             RankedCandidate(sur, Comparability.COMPARABLE, ProductStatus.REVIEW,
+                             D("0.5"), D(str(esperance_prudente(sur))))]
+    classe = _trier(rangs, Posture.SAFETY_FIRST)
+    assert classe[0].candidate.probability_low == 0.78, (
+        "à valeur saturée, la sélection la plus probable doit passer devant")
 
 
 # ── Aucune promotion ─────────────────────────────────────────────────────────

@@ -302,7 +302,13 @@ def test_le_detail_technique_reste_disponible():
 def test_la_borne_basse_egale_a_la_probabilite_est_signalee():
     """§14 : tant qu'aucun intervalle n'est estimé, la borne basse VAUT la
     probabilité. La présenter sans le dire donnerait à un chiffre unique
-    l'apparence de deux mesures indépendantes."""
+    l'apparence de deux mesures indépendantes.
+
+    Le libellé a changé : au lieu d'exposer une « borne basse » puis de la
+    démentir, on n'annonce plus qu'un seul chiffre et on dit ce qui manque.
+    L'exigence est la même — ne jamais faire croire qu'une borne prudente
+    existe — mais elle est portée par la phrase principale, pas par une note.
+    """
     import dataclasses
 
     run = _run_revue()
@@ -313,13 +319,15 @@ def test_la_borne_basse_egale_a_la_probabilite_est_signalee():
     run = dataclasses.replace(run, response=dataclasses.replace(
         run.response, review_candidates=egales))
 
-    assert "borne basse = probabilité" in render(run)
+    assert "intervalle prudent non encore estimé" in render(run)
 
 
 def test_une_vraie_borne_basse_n_est_pas_signalee_a_tort():
     """Le jour où un intervalle sera estimé, la mise en garde doit disparaître
     d'elle-même — sinon elle deviendrait un mensonge inverse."""
-    assert "borne basse = probabilité" not in render(_run_revue())
+    texte = render(_run_revue())
+    assert "intervalle prudent non encore estimé" not in texte
+    assert "borne basse mesurée" in texte
 
 
 # ══ §15-C — Aucun événement exploitable : dire POURQUOI ═════════════════════

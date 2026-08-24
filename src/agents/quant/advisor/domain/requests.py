@@ -49,9 +49,23 @@ class RecommendationRequest:
     maturity_policy: MaturityPolicy
     ranking_profile: str
 
+
     excluded_event_ids: frozenset[str]
     excluded_participant_ids: frozenset[str]
     excluded_market_types: frozenset[str]
+
+    #: Ce que l'utilisateur a demandé : sûreté d'abord, ou rendement d'abord.
+    #:
+    #: PORTÉE JUSQU'ICI EXPRÈS. Le chemin de revue applique déjà cet ordre ; ce
+    #: chemin-ci, celui de la MISE, est inatteignable tant qu'aucun modèle n'est
+    #: SUPPORTED. Le jour où il le devient, il doit LIRE ce champ : sans lui, une
+    #: demande « je veux du sûr » retomberait silencieusement sur « la meilleure
+    #: espérance d'abord », et une sélection nettement moins probable pourrait
+    #: remplacer une sélection nettement plus sûre au seul motif de son EV.
+    #:
+    #: Rien ici ne touche encore à Kelly, aux mises ni aux seuils : le champ est
+    #: transporté, pas appliqué.
+    posture: str = "SAFETY_FIRST"
 
     def __post_init__(self) -> None:
         require_decimal(self.bankroll, "bankroll")

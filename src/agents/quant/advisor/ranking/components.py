@@ -39,6 +39,43 @@ def value_component(expected_value_low: Decimal, profile: RankingProfile) -> Dec
     return _unit(min(ONE, max(ZERO, ratio)), "value_component")
 
 
+def probability_component(
+    probability_low: Decimal | None, profile: RankingProfile,
+) -> Decimal:
+    """Préférence pour ce qui a le plus de chances de PASSER.
+
+    Le score ne contenait aucun terme de probabilité : la valeur y entrait
+    uniquement par l'espérance, qui récompense autant un coup à 45 % bien coté
+    qu'un favori à 79 %. Un classement bâti là-dessus remonte les paris qui
+    rapportent, pas ceux qui passent.
+
+    Pire, `value_component` SATURE à `ev_cap`. Mesuré sur un run réel : les cinq
+    sélections affichées avaient des EV de +21 % à +50 %, toutes au-dessus du
+    plafond de 0,15 — donc `value = 1` pour toutes. L'ordre ne venait plus alors
+    que de la qualité des données et de la fraîcheur, ce qui est indiscernable
+    du hasard pour l'utilisateur.
+
+    On lit la BORNE BASSE, jamais l'estimation ponctuelle : « sûr » ne peut pas
+    se fonder sur le meilleur cas. Une borne absente vaut `None` et le candidat
+    n'est pas classé plutôt que crédité d'une sécurité qu'on n'a pas mesurée.
+
+    Le poids est porté par le profil : conservateur privilégie fortement la
+    probabilité, agressif la laisse presque neutre.
+    """
+    if probability_low is None:
+        if profile.requires("probability"):
+            raise NonRankable(reason_codes.RANKING_MISSING_PROBABILITY)
+        return ONE
+    p = _unit(probability_low, "probability_component")
+    poids = profile.probability_weight
+    if poids <= ZERO:
+        return ONE
+    # Interpolation entre « neutre » (1) et « la probabilité elle-même » selon le
+    # poids. Un poids de 1 rend exactement la probabilité ; 0 neutralise le
+    # terme. Pas d'exponentiation : elle rendrait le réglage illisible.
+    return _unit(ONE - poids * (ONE - p), "probability_component")
+
+
 def quality_component(data_quality: Decimal) -> Decimal:
     """= data_quality (déjà [0,1]). 0 = qualité mesurée nulle."""
     return _unit(data_quality, "quality_component")

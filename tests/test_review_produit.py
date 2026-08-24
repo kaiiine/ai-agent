@@ -153,9 +153,16 @@ def test_seule_la_maturite_SUPPORTED_ouvre_ACTIONABLE():
 def test_le_meilleur_marche_peut_ne_pas_etre_le_vainqueur():
     """La mesure produit du chantier : si elle vaut toujours zéro, évaluer cinq
     familles n'aura rien changé à ce qu'on montre."""
+    # Le total est ici plus SÛR que le vainqueur, en plus d'être mieux payé.
+    #
+    # L'ancienne version donnait au total une borne basse plus faible (0,53
+    # contre 0,55) et comptait sur sa meilleure espérance pour le faire gagner.
+    # Depuis que la sûreté prime, un marché moins probable ne remonte plus grâce
+    # à son rendement — c'est exactement l'effet recherché. L'objet du test
+    # reste entier : un marché AUTRE que le vainqueur peut mener un événement.
     vainqueur = _evaluation(market="MATCH_WINNER", famille="MATCH_WINNER", parametres=(),
                             selection="home", odds="1.50", fair="0.60", low="0.55")
-    total = _evaluation(odds="2.60", fair="0.58", low="0.53")
+    total = _evaluation(odds="2.60", fair="0.68", low="0.64")
     review = construire_review(_batch(vainqueur, total), freshness_at=_T)
 
     meilleur = review.meilleur_de("72530852")

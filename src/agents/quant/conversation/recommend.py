@@ -267,7 +267,7 @@ def agreger_entonnoirs(resultats):
     return total
 
 
-def _construire_review(batch, freshness_at, policy_evaluations=()):
+def _construire_review(batch, freshness_at, policy_evaluations=(), posture=None):
     """Le classement multi-marché du run, ou rien s'il ne peut pas être construit.
 
     Une panne du classement ne doit pas coûter la recommandation : celle-ci est
@@ -278,7 +278,8 @@ def _construire_review(batch, freshness_at, policy_evaluations=()):
     try:
         from .market_review import construire_review
         return construire_review(batch, freshness_at=freshness_at,
-                                 policy_evaluations=policy_evaluations)
+                                 policy_evaluations=policy_evaluations,
+                                 posture=posture)
     except Exception:   # noqa: BLE001 — une vue ne casse jamais un run
         return None
 

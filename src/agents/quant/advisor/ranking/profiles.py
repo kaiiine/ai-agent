@@ -31,6 +31,11 @@ class RankingProfile:
     liquidity_unknown_default: Decimal
     uncertainty_weight: Decimal
     concentration_weight: Decimal
+    #: 0 = la probabilité n'entre pas dans le score (comportement d'avant),
+    #: 1 = le score est directement proportionnel à la borne basse.
+    probability_weight: Decimal = Decimal("0")
+    #: Sous ce seuil de borne basse, un candidat n'est pas proposé du tout.
+    min_probability: Decimal = Decimal("0")
 
     def requires(self, component: str) -> bool:
         return self.requirements.get(component) == REQUIRED
@@ -61,5 +66,7 @@ def load_ranking_profiles(path: pathlib.Path = _CONFIG_PATH) -> Mapping[str, Ran
             liquidity_unknown_default=Decimal(p["liquidity_unknown_default"]),
             uncertainty_weight=Decimal(p["uncertainty_weight"]),
             concentration_weight=Decimal(p["concentration_weight"]),
+            probability_weight=Decimal(p.get("probability_weight", "0")),
+            min_probability=Decimal(p.get("min_probability", "0")),
         )
     return profiles

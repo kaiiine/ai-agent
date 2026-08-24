@@ -1,44 +1,62 @@
 {
   "version": "1",
-  "notes": "Profils de ranking V1 (ADR-ADV-005). Chaque profil DÉCLARE, par composant, REQUIRED ou OPTIONAL, et fournit ses paramètres de mapping/pénalité (aucune logique en config). Valeurs INITIALES / placeholders à calibrer. Decimal en chaîne. Conservateur exige plus d'EV (ev_cap plus haut) et pénalise davantage incertitude/concentration ; agressif l'inverse. En V1 (aucun modèle SUPPORTED en prod) ces profils sont exercés par des fixtures ELIGIBLE.",
+  "notes": "Profils de ranking V1 (ADR-ADV-005). Chaque profil DÉCLARE, par composant, REQUIRED ou OPTIONAL, et fournit ses paramètres de mapping/pénalité (aucune logique en config). Valeurs INITIALES / placeholders à calibrer. Decimal en chaîne. Conservateur exige plus d'EV (ev_cap plus haut) et pénalise davantage incertitude/concentration ; agressif l'inverse. En V1 (aucun modèle SUPPORTED en prod) ces profils sont exercés par des fixtures ELIGIBLE. · Sûreté : traitée par l'ORDRE (tri lexicographique sur la borne basse, l'espérance départageant à probabilité équivalente), jamais par un poids. Le sectionnement « valeur risquée » est RELATIF à la meilleure sélection du scan ; `min_probability` ajoute un plancher absolu, et seul le profil conservateur en pose un.",
   "profiles": {
     "conservative_v1": {
       "requirements": {
-        "value": "REQUIRED", "quality": "REQUIRED", "freshness": "REQUIRED",
-        "reliability": "REQUIRED", "liquidity": "OPTIONAL"
+        "value": "REQUIRED",
+        "quality": "REQUIRED",
+        "freshness": "REQUIRED",
+        "reliability": "REQUIRED",
+        "liquidity": "OPTIONAL",
+        "probability": "OPTIONAL"
       },
       "params": {
-        "ev_floor": "0.00", "ev_cap": "0.20",
+        "ev_floor": "0.00",
+        "ev_cap": "0.20",
         "supported_baseline": "0.55",
         "liquidity_unknown_default": "0.70",
         "uncertainty_weight": "1.20",
-        "concentration_weight": "0.60"
+        "concentration_weight": "0.60",
+        "min_probability": "0.70"
       }
     },
     "balanced_v1": {
       "requirements": {
-        "value": "REQUIRED", "quality": "REQUIRED", "freshness": "REQUIRED",
-        "reliability": "REQUIRED", "liquidity": "OPTIONAL"
+        "value": "REQUIRED",
+        "quality": "REQUIRED",
+        "freshness": "REQUIRED",
+        "reliability": "REQUIRED",
+        "liquidity": "OPTIONAL",
+        "probability": "OPTIONAL"
       },
       "params": {
-        "ev_floor": "0.00", "ev_cap": "0.15",
+        "ev_floor": "0.00",
+        "ev_cap": "0.15",
         "supported_baseline": "0.60",
         "liquidity_unknown_default": "0.80",
         "uncertainty_weight": "0.80",
-        "concentration_weight": "0.40"
+        "concentration_weight": "0.40",
+        "min_probability": "0.00"
       }
     },
     "aggressive_v1": {
       "requirements": {
-        "value": "REQUIRED", "quality": "REQUIRED", "freshness": "REQUIRED",
-        "reliability": "REQUIRED", "liquidity": "OPTIONAL"
+        "value": "REQUIRED",
+        "quality": "REQUIRED",
+        "freshness": "REQUIRED",
+        "reliability": "REQUIRED",
+        "liquidity": "OPTIONAL",
+        "probability": "OPTIONAL"
       },
       "params": {
-        "ev_floor": "0.00", "ev_cap": "0.10",
+        "ev_floor": "0.00",
+        "ev_cap": "0.10",
         "supported_baseline": "0.65",
         "liquidity_unknown_default": "0.90",
         "uncertainty_weight": "0.40",
-        "concentration_weight": "0.20"
+        "concentration_weight": "0.20",
+        "min_probability": "0.00"
       }
     }
   }

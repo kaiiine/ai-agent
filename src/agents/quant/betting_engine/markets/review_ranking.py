@@ -41,6 +41,10 @@ class ProductStatus(str, Enum):
     REVIEW = "REVIEW"            # évaluable et comparable, mais pas misable
     ACTIONABLE = "ACTIONABLE"    # maturité SUPPORTED — décidé ailleurs, jamais ici
     NOT_COMPARABLE = "NOT_COMPARABLE"
+    #: Rendement intéressant, mais probabilité trop basse pour une demande de
+    #: sûreté. Le candidat n'est ni supprimé ni relégué au 5e rang du MÊME
+    #: classement : il part dans une section distincte, qui dit ce qu'elle est.
+    VALEUR_RISQUEE = "VALEUR_RISQUEE"
 
 
 #: Maturité qui autorise la mise. Reprise du vocabulaire du ledger ; ce module ne
@@ -69,6 +73,11 @@ class ReviewCandidate:
     freshness: float | None
     data_quality: float | None
     probability_origin: str | None
+    #: ESTIMATED si un intervalle a réellement été mesuré, NOT_ESTIMATED sinon.
+    #: Sans lui, l'absence de `probability_low` était indistinguable d'une donnée
+    #: manquante, et rien ne pouvait DIRE à l'utilisateur qu'aucune borne
+    #: prudente n'existe encore.
+    probability_low_status: str = "NOT_ESTIMATED"
     settlement_shares: tuple = ()
     event_label: str | None = None
     market_source_id: str | None = None
@@ -275,6 +284,11 @@ def score_prudent(candidat: ReviewCandidate, *, profil=None) -> Decimal | None:
     qualite = quality_component(Decimal(str(candidat.data_quality)))
     fraicheur = freshness_component(Decimal(str(candidat.freshness)), profil)
     fiabilite = _fiabilite(candidat.maturity, profil)
+    # La probabilité N'ENTRE PAS ici, volontairement. Une première version la
+    # multipliait au score avec un poids par profil (0,85 / 0,60 / 0,25) — trois
+    # nombres qu'aucun banc de mesure ne justifiait, et qui laissaient un gros
+    # EV racheter une probabilité nettement plus faible. La sécurité est traitée
+    # par l'ORDRE (`_trier`, posture SURETE), pas par un mélange pondéré.
     return (valeur * fiabilite * (qualite + fraicheur) / 2).quantize(Decimal("0.000001"))
 
 
@@ -301,17 +315,138 @@ def meilleure_par_marche(classes: Sequence[RankedCandidate]) -> list[RankedCandi
 
 # ── Classements ──────────────────────────────────────────────────────────────
 
-def _trier(candidats: Sequence[RankedCandidate]) -> list[RankedCandidate]:
-    """Tri par score décroissant. Départage STABLE et neutre : l'identifiant du
-    marché, jamais le sport ni la famille."""
+class RecommendationPosture(str, Enum):
+    """Ce que l'utilisateur cherche — et donc ce qui décide de l'ordre.
+
+    SAFETY_FIRST est le DÉFAUT : ne rien demander ne doit pas exposer au risque.
+
+    Mélanger sécurité et rendement dans un score unique laisse toujours un gros
+    EV racheter une probabilité nettement plus faible — un arbitrage caché
+    derrière un poids. Ici l'arbitrage est explicite et porté par la demande.
+
+    Cette posture doit voyager JUSQU'À l'allocation d'argent. Le jour où un
+    modèle devient SUPPORTED, un chemin de mise qui repartirait sur « EV
+    d'abord » contredirait la demande de l'utilisateur sans le lui dire.
+    """
+    SAFETY_FIRST = "SAFETY_FIRST"   # la probabilité décide, l'espérance départage
+    VALUE_FIRST = "VALUE_FIRST"     # l'espérance décide — seulement si demandé
+
+    # Anciens noms, conservés le temps que les appelants migrent.
+    SURETE = "SAFETY_FIRST"
+    VALEUR = "VALUE_FIRST"
+
+
+#: Alias historique.
+Posture = RecommendationPosture
+
+
+#: Largeur de la bande dans laquelle deux probabilités sont tenues pour
+#: ÉQUIVALENTES, et où l'espérance reprend la main.
+#:
+#: C'est une CONVENTION, pas une mesure — et elle est assumée comme telle. La
+#: valeur juste serait l'incertitude propre du modèle, mais aucun intervalle
+#: réel n'existe tant qu'un modèle est EXPERIMENTAL : `probability_low` y répète
+#: l'estimation ponctuelle et se signale `NOT_ESTIMATED`. Cinq points est
+#: l'ordre de grandeur d'un écart qu'un modèle non calibré ne peut pas
+#: prétendre distinguer.
+ESTIMEE = "ESTIMATED"
+NON_ESTIMEE = "NOT_ESTIMATED"
+
+
+def probabilite_de_surete(c: "ReviewCandidate") -> tuple[float | None, str]:
+    """La probabilité sur laquelle la SÛRETÉ se juge, et d'où elle vient.
+
+    `probability_low` quand un intervalle a été mesuré ; à défaut la probabilité
+    centrale, EXPLICITEMENT signalée comme telle. Aucune valeur n'est fabriquée :
+    on ne minore pas artificiellement un point estimé pour se donner l'air
+    prudent.
+
+    Tant qu'un modèle est EXPERIMENTAL, aucun intervalle n'existe (`one_x_two.py`
+    répète le point et déclare `NOT_ESTIMATED`), et `candidat_depuis_evaluation`
+    met donc `probability_low` à None. Trier là-dessus mettrait TOUS les
+    candidats à égalité et laisserait l'espérance décider — c'est-à-dire le
+    comportement que ce chantier corrige, revenu en silence.
+    """
+    if c.probability_low is not None and c.probability_low_status == ESTIMEE:
+        return c.probability_low, ESTIMEE
+    return c.fair_probability, NON_ESTIMEE
+
+
+#: Écart de probabilité au-delà duquel une sélection n'est plus « du même ordre
+#: de sûreté » que la meilleure du scan et part en section VALEUR / RISQUE ÉLEVÉ.
+#:
+#: CONVENTION D'AFFICHAGE (UX grouping convention), pas une mesure statistique.
+#: Elle n'altère aucune probabilité, aucune espérance, aucune maturité et aucune
+#: décision de mise : elle ne fait que séparer deux listes à l'écran.
+#:
+#: Exprimée en points de probabilité, en continu. Une version antérieure
+#: découpait en bandes de 5 points ; c'était une falaise — 0,55 et 0,53, distants
+#: de deux points, tombaient de part et d'autre d'une frontière. Le tri est
+#: désormais continu et la bande a disparu du classement.
+ECART_SECTION = Decimal("0.25")
+
+#: Écart, en bandes, au-delà duquel une sélection n'est plus « du même ordre de
+#: sûreté » que la meilleure du run et part en section « valeur risquée ».
+#:
+#: RELATIF, et non un plancher absolu. Un plancher fixe est arbitraire deux fois :
+#: il ne sait pas ce qui est offert ce jour-là, et le premier essai (45 %, puis
+#: 60 %) l'a montré — 60 % effaçait jusqu'aux candidats à 55 %, pourtant les
+#: meilleurs de leur run. L'écart, lui, se lit sur l'offre réelle : cinq bandes
+#: = 25 points de probabilité sous la tête, ce qu'aucun modèle ne rattrape par
+#: du rendement.
+#:
+#: Un profil PEUT en plus imposer un plancher absolu (`min_probability`), et le
+#: profil conservateur le fait. Les deux règles se cumulent.
+ECART_MAX_BANDES = 5
+
+
+def _cle_surete(r: "RankedCandidate") -> tuple:
+    """probabilité de sûreté ▸ qualité ▸ fraîcheur ▸ espérance ▸ identité."""
+    proba, _ = probabilite_de_surete(r.candidate)
+    return (-(proba or 0.0),
+            -(r.candidate.data_quality or 0.0),
+            -(r.candidate.freshness or 0.0),
+            -(r.expected_value_low or Decimal(0)),
+            r.candidate.source_event_id, r.candidate.family.value,
+            r.candidate.selection)
+
+
+def _cle_valeur(r: "RankedCandidate") -> tuple:
+    """espérance ▸ qualité ▸ fraîcheur ▸ probabilité (garde) ▸ identité."""
+    proba, _ = probabilite_de_surete(r.candidate)
+    return (-(r.expected_value_low or Decimal(0)),
+            -(r.candidate.data_quality or 0.0),
+            -(r.candidate.freshness or 0.0),
+            -(proba or 0.0),
+            r.candidate.source_event_id, r.candidate.family.value,
+            r.candidate.selection)
+
+
+def _trier(candidats: Sequence["RankedCandidate"],
+           posture: "RecommendationPosture" = None) -> list["RankedCandidate"]:
+    """Ordre LEXICOGRAPHIQUE, jamais un score pondéré.
+
+    En sûreté, la probabilité décide et l'espérance ne départage qu'à qualité et
+    fraîcheur égales : une sélection nettement moins probable ne peut donc PAS
+    passer devant une plus sûre en vertu d'un meilleur rendement. C'est ce qu'un
+    score pondéré autorisait, l'arbitrage caché derrière un poids.
+
+    En valeur — et seulement si elle est explicitement demandée — l'espérance
+    prend la tête, la probabilité restant en garde.
+    """
+    posture = posture or RecommendationPosture.SAFETY_FIRST
     return sorted(candidats,
-                  key=lambda r: (-(r.score or Decimal(0)),
-                                 r.candidate.source_event_id,
-                                 r.candidate.family.value, r.candidate.selection))
+                  key=_cle_valeur if posture is RecommendationPosture.VALUE_FIRST else _cle_surete)
 
 
-def evaluer(candidats: Sequence[ReviewCandidate], *, profil=None) -> list[RankedCandidate]:
+def evaluer(candidats: Sequence[ReviewCandidate], *, profil=None,
+            posture: RecommendationPosture | None = None) -> list[RankedCandidate]:
     """Chaque candidat -> comparabilité, score prudent, statut produit."""
+    # La référence de sûreté du run : la meilleure borne basse offerte. C'est
+    # elle qui rend l'écart LISIBLE — « nettement moins sûr que ce qui existe
+    # aujourd'hui » plutôt que « sous un nombre décidé d'avance ».
+    tete = max((probabilite_de_surete(c)[0] for c in candidats
+                if probabilite_de_surete(c)[0] is not None), default=None)
     sortie: list[RankedCandidate] = []
     for c in candidats:
         comparable, motifs = comparabilite(c)
@@ -321,20 +456,70 @@ def evaluer(candidats: Sequence[ReviewCandidate], *, profil=None) -> list[Ranked
             continue
         ev_low = esperance_prudente(c)
         score = score_prudent(c, profil=profil)
+
+        # Plancher de probabilité : sous ce seuil, une sélection n'est pas
+        # proposée du tout, quel que soit son rendement. C'est la traduction de
+        # « je veux des paris sûrs » : une espérance flatteuse sur un coup à
+        # 45 % reste un coup à 45 %.
+        # Le sectionnement ne s'applique QU'EN posture de sûreté : si la valeur
+        # est explicitement demandée, un pari risqué n'est plus hors sujet.
+        motif = (_motif_de_risque(c, tete, profil)
+                 if (posture or RecommendationPosture.SAFETY_FIRST) is RecommendationPosture.SAFETY_FIRST else None)
+        if motif:
+            sortie.append(RankedCandidate(
+                c, comparable, ProductStatus.VALEUR_RISQUEE, score, ev_low,
+                reasons=(motif,) + tuple(c.abstention_reasons)))
+            continue
+
         statut = (ProductStatus.ACTIONABLE if c.maturity == MATURITE_ACTIONABLE
                   else ProductStatus.REVIEW)
         sortie.append(RankedCandidate(c, comparable, statut, score, ev_low))
     return sortie
 
 
-def best_market_per_event(candidats: Sequence[ReviewCandidate], *, profil=None) -> dict:
+def _plancher_probabilite(profil) -> Decimal:
+    """Le plancher ABSOLU du profil, ou zéro s'il n'en déclare pas."""
+    if profil is None:
+        from ...advisor.ranking.profiles import load_ranking_profiles
+        profil = load_ranking_profiles()["balanced_v1"]
+    return getattr(profil, "min_probability", Decimal(0)) or Decimal(0)
+
+
+def _motif_de_risque(c: ReviewCandidate, tete: float | None, profil) -> str | None:
+    """Pourquoi cette sélection n'est pas « du même ordre de sûreté », ou None.
+
+    Deux règles cumulatives : l'écart à la meilleure du run, et le plancher
+    absolu que le profil déclare éventuellement. Un candidat sans borne basse
+    n'est pas sectionné — on ne lui reproche pas une mesure qui manque.
+    """
+    valeur, statut = probabilite_de_surete(c)
+    if valeur is None:
+        return None
+    proba = Decimal(str(valeur))
+    if tete is not None:
+        ecart = Decimal(str(tete)) - proba
+        if ecart > ECART_SECTION:
+            precision = ("" if statut == ESTIMEE
+                         else " (probabilité centrale, intervalle non estimé)")
+            return (f"probabilité {proba:.1%}{precision}, soit {ecart:.0%} sous "
+                    f"la meilleure du scan ({Decimal(str(tete)):.1%})")
+    plancher = _plancher_probabilite(profil)
+    if plancher > 0 and proba < plancher:
+        return f"probabilité {proba:.1%} sous le plancher {plancher:.0%} du profil"
+    return None
+
+
+def best_market_per_event(candidats: Sequence[ReviewCandidate], *, profil=None,
+                          posture: RecommendationPosture | None = None) -> dict:
     """Pour chaque événement, tous ses marchés évaluables, classés — et le meilleur.
 
     C'est la vue produit centrale : elle permet de dire « ce match est
     intéressant, mais pas par son vainqueur ».
     """
     par_evenement: dict[str, list[RankedCandidate]] = {}
-    for r in meilleure_par_marche(evaluer(candidats, profil=profil)):
+    evalues = [r for r in evaluer(candidats, profil=profil, posture=posture)
+               if r.status is not ProductStatus.VALEUR_RISQUEE]
+    for r in meilleure_par_marche(evalues):
         par_evenement.setdefault(r.candidate.source_event_id, []).append(r)
 
     resultat = {}
@@ -347,11 +532,13 @@ def best_market_per_event(candidats: Sequence[ReviewCandidate], *, profil=None) 
     return resultat
 
 
-def classement_global(candidats: Sequence[ReviewCandidate], *, profil=None) -> list[RankedCandidate]:
+def classement_global(candidats: Sequence[ReviewCandidate], *, profil=None,
+                      posture: RecommendationPosture | None = None) -> list[RankedCandidate]:
     """Fusionne les meilleurs marchés de tous les événements et de tous les sports."""
     fusion: list[RankedCandidate] = []
-    for lignes in best_market_per_event(candidats, profil=profil).values():
+    for lignes in best_market_per_event(candidats, profil=profil,
+                                       posture=posture).values():
         fusion.extend(lignes)
     return [RankedCandidate(r.candidate, r.comparability, r.status, r.score,
                             r.expected_value_low, r.reasons, r.event_rank, i + 1)
-            for i, r in enumerate(_trier(fusion))]
+            for i, r in enumerate(_trier(fusion, posture))]
