@@ -3,6 +3,7 @@
 import json
 from langchain_core.tools import tool
 from src.agents.cron.store import add_task, get_tasks, deactivate_task
+from src.agents.cron.surveillance import CONDITIONS, consigne
 
 
 @tool("schedule_task")
@@ -63,3 +64,76 @@ def stop_cron_task(taskId: str) -> str:
     """Désactive une tâche planifiée par son ID."""
     ok = deactivate_task(taskId)
     return f"Tâche {taskId} désactivée" if ok else f"ID introuvable: {taskId}"
+
+
+@tool("surveiller")
+def surveiller(
+    description: str,
+    quoi_relever: str,
+    comment_relever: str,
+    condition: str,
+    interval_sec: int,
+    notify_channels: list[str],
+    seuil: float = 0.0,
+) -> str:
+    """Surveille une valeur dans le temps et prévient QUAND ELLE CHANGE.
+
+    Utilise ce tool quand l'utilisateur veut :
+    - être prévenu si un prix baisse, monte, ou passe sous un montant
+    - savoir quand une page web change, quand une place se libère
+    - garder un œil sur quelque chose, être tenu au courant d'une évolution
+    - suivre une valeur et n'être alerté qu'en cas de mouvement
+
+    Mots-clés : surveille, surveiller, veille, préviens-moi si, alerte-moi quand,
+    tiens-moi au courant, garde un œil, suis l'évolution, baisse, monte, change
+
+    Différence avec schedule_task : une tâche planifiée rapporte À CHAQUE
+    passage ; une veille ne rapporte QUE si la valeur a bougé. Pour surveiller un
+    prix toutes les heures, c'est ce tool — sinon l'utilisateur reçoit vingt-quatre
+    notifications identiques par jour.
+
+    Args:
+        description: libellé court ("Prix du Legion 7i")
+        quoi_relever: la valeur suivie, en clair ("le prix en euros")
+        comment_relever: comment l'obtenir ("consulte <url> et lis le prix affiché")
+        condition: "change" | "baisse" | "hausse" | "sous" | "sur"
+        interval_sec: fréquence en secondes (3600 = toutes les heures)
+        notify_channels: ["desktop"] et/ou ["slack"]
+        seuil: le montant, pour "sous" et "sur" uniquement
+    Returns:
+        {"status": "surveille", "id": ..., ...}
+    """
+    if condition not in CONDITIONS:
+        return json.dumps({
+            "status": "error",
+            "error": f"condition inconnue : {condition}. Attendu : {', '.join(CONDITIONS)}",
+        })
+    if condition in ("sous", "sur") and not seuil:
+        return json.dumps({
+            "status": "error",
+            "error": f"la condition « {condition} » exige un seuil non nul.",
+        })
+
+    taskId = add_task(
+        description=description,
+        prompt=comment_relever + consigne(quoi_relever),
+        interval_sec=interval_sec,
+        notif_channels=notify_channels,
+        surveillance={
+            "quoi": quoi_relever,
+            "condition": condition,
+            "seuil": seuil if condition in ("sous", "sur") else None,
+            "derniere": None,
+        },
+    )
+    return json.dumps({
+        "status": "surveille",
+        "id": taskId,
+        "description": description,
+        "condition": condition,
+        "seuil": seuil if condition in ("sous", "sur") else None,
+        "frequency": f"toutes les {max(1, interval_sec // 60)} min",
+        "channels": notify_channels,
+        "note": ("Le premier passage établit la référence sans alerter — c'est "
+                 "normal, il n'y a rien à comparer."),
+    })

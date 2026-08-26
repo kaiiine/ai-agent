@@ -109,8 +109,14 @@ def test_cron_group_covers_daily_recurrence():
     covers = TOOL_GROUPS["cron"].covers.lower()
     for phrasing in ("tous les jours", "chaque", "quotidien", "récurrent", "heure fixe"):
         assert phrasing in covers, f"vocabulaire cron manquant : {phrasing}"
-    # le groupe complet suit dès que le groupe est élu
-    assert {"schedule_task", "list_cron_tasks", "stop_cron_task"} == set(TOOL_GROUPS["cron"].tools)
+    # Le groupe complet suit dès qu'il est élu : planifier, surveiller, lister,
+    # arrêter. `surveiller` y vit provisoirement — il mériterait son propre
+    # groupe (5/5 en held-out contre 1/5 ici), mais l'étage 1 ne discrimine pas
+    # assez pour qu'une intention de plus n'en éjecte pas une autre.
+    outils = set(TOOL_GROUPS["cron"].tools)
+    assert {"schedule_task", "list_cron_tasks", "stop_cron_task"} <= outils
+    assert "surveiller" in outils, (
+        "sans lui, « préviens-moi si le prix baisse » n'a aucun outil pour aboutir")
 
 
 def test_slack_group_covers_channel_phrasings():

@@ -474,8 +474,16 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "surveiller en continu et alerter, rappeler plus tard, produire un "
                "récapitulatif quotidien automatique, lister ou arrêter les tâches "
                "programmées.",
-        tools=("schedule_task", "list_cron_tasks", "stop_cron_task"),
-        keywords=frozenset({"cron", "planifie", "planifier", "recurrent", "récurrent"}),
+        tools=("schedule_task", "surveiller", "list_cron_tasks", "stop_cron_task"),
+        # `surveiller` vit ici faute de mieux. Un groupe dédié donnait 5/5 en
+        # réglage ET en held-out, contre 4/5 et 1/5 ici — mais l'étage 1 ne
+        # discrimine pas les requêtes courtes : sur « mes rendez-vous de demain »,
+        # sept groupes tiennent dans un écart de 0.04 et `calendar` sort 5e.
+        # Toute intention ajoutée éjecte donc un groupe qui ne tenait que par la
+        # largeur de la coupure. À rebasculer quand l'étage 1 saura trancher.
+        keywords=frozenset({"cron", "planifie", "planifier", "recurrent", "récurrent",
+                            "surveille", "surveiller", "veille", "alerte-moi",
+                            "previens-moi", "préviens-moi", "avertis-moi"}),
     ),
     "quant": ToolGroup(
         covers="Paris sportifs et analyse quantitative : scanner les matchs disponibles "

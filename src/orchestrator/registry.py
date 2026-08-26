@@ -57,7 +57,12 @@ from src.agents.jira.tools import (
     jira_delete_issue, jira_link_to_epic,
 )
 
-from src.agents.cron.tools import schedule_task, list_cron_task, stop_cron_task
+from src.agents.cron.tools import (
+    schedule_task,
+    list_cron_task,
+    stop_cron_task,
+    surveiller,
+)
 from src.skills.tools import make_load_skill
 from src.agents.quant.tools import (
     winamax_odds_fetch, sports_stats_fetch, probability_compute,
@@ -255,6 +260,7 @@ def build_all_tools() -> List[BaseTool]:
         save_study_file,
         # === CRON JOBS ===
         schedule_task,
+        surveiller,
         list_cron_task,
         stop_cron_task,
         # === VALUE BETTING (QUANT) ===

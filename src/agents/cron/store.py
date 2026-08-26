@@ -36,6 +36,7 @@ def add_task(
         notif_channels: list[str],
         run_at: str="",
         stop_condition: str="",
+        surveillance: dict | None = None,
 ) -> str:
 
     taskId = "cron_" + uuid.uuid4().hex[:8]
@@ -53,6 +54,8 @@ def add_task(
             last_result = None,
             active = True
         )
+        if surveillance is not None:
+            task["surveillance"] = surveillance
 
         with _LOCK:
             tasks = _load()
@@ -81,6 +84,8 @@ def update_task(taskId: str, **fields) -> None:
         "last_run",
         "last_result",
         "active",
+        # La veille met à jour sa dernière valeur relevée à chaque passage.
+        "surveillance",
     }
 
     unknown_fields = fields.keys() - allowed_fields

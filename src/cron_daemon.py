@@ -52,6 +52,25 @@ def _send_notification(channels: list[str], description: str, message: str) -> N
         _notify_slack(f"*{description}*\n{message}")
 
 # TODO: Move this function in the models.py file
+def _verdict_de_veille(task, veille, reponse, log_entry) -> tuple[bool, str]:
+    """(faut-il prévenir, quoi dire) pour une tâche de veille."""
+    from src.agents.cron.surveillance import doit_alerter, extraire
+
+    valeur = extraire(reponse)
+    alerte, raison = doit_alerter(veille, valeur)
+    log_entry["surveillance"] = {"valeur": valeur, "raison": raison, "alerte": alerte}
+
+    # Référence mise à jour même sans alerte : sinon la comparaison suivante se
+    # ferait sur une valeur périmée.
+    if valeur is not None and valeur != veille.get("derniere") and not log_entry.get("essai"):
+        update_task(task["id"], surveillance={**veille, "derniere": valeur})
+
+    if not alerte:
+        return False, ""
+    quoi = veille.get("quoi", "la valeur suivie")
+    return True, f"{task['description']} — {quoi} : {raison}"
+
+
 #: Les statuts par lesquels un outil refuse.
 _STATUTS_DE_REFUS = ("requires_confirmation", "blocked")
 
@@ -87,7 +106,11 @@ def _make_llm():
 
 
 
-def _run_task(task_id: str) -> None:
+def _run_task(task_id: str, *, essai: bool = False) -> dict | None:
+    """Exécute une tâche planifiée. Rend son entrée de journal.
+
+    `essai=True` : même chemin, effets suspendus — rien n'est notifié ni persisté.
+    """
     from langchain_core.messages import HumanMessage, SystemMessage
     from langgraph.prebuilt import create_react_agent
     from src.agents.search.tools import web_search_news, web_research_report
@@ -101,11 +124,14 @@ def _run_task(task_id: str) -> None:
 
     tasks = get_tasks()
     task = next((t for t in tasks if t["id"] == task_id), None)
-    if not task or not task.get("active"):
-        return
+    if not task:
+        return None
+    if not task.get("active") and not essai:
+        return None
 
     start = time.perf_counter()
     log_entry: dict = {
+        "essai": essai,
         "ts": datetime.now().isoformat(),
         "status": "ok",
         "notified": False,
@@ -168,9 +194,18 @@ def _run_task(task_id: str) -> None:
                 message = (f"[{_verdict.reason}] Réponse bloquée : aucune sortie "
                            "structurée ne l'appuie. Aucun pari n'est proposé.")
 
+        # Une veille ne prévient que si la valeur a bougé.
+        veille = task.get("surveillance")
+        if veille:
+            notify, message = _verdict_de_veille(task, veille, raw, log_entry)
+
         if notify and message:
-            _send_notification(task["notify_channels"], task["description"], message)
-            log_entry["notified"] = True
+            if essai:
+                log_entry["aurait_notifie"] = {
+                    "canaux": task["notify_channels"], "message": message}
+            else:
+                _send_notification(task["notify_channels"], task["description"], message)
+                log_entry["notified"] = True
             log_entry["message"] = message
 
         log_entry["result_summary"] = summary
@@ -186,9 +221,11 @@ def _run_task(task_id: str) -> None:
                 f"confirmer : {refus[0]}. Déclare-les dans `commandes_autorisees` "
                 f"de la tâche si elles doivent tourner sans surveillance.")
 
-        update_task(task["id"], last_run=datetime.now().isoformat(), last_result=summary)
+        if not essai:
+            update_task(task["id"], last_run=datetime.now().isoformat(),
+                        last_result=summary)
 
-        if stop:
+        if stop and not essai:
             deactivate_task(task["id"])
             _notify_desktop(f"Axon · {task['description']}", "Tâche terminée (condition remplie).")
 
@@ -201,7 +238,9 @@ def _run_task(task_id: str) -> None:
         retirer(source_autorisation)
 
     log_entry["duration_ms"] = int((time.perf_counter() - start) * 1000)
-    append_log(task["id"], log_entry)
+    if not essai:
+        append_log(task["id"], log_entry)
+    return log_entry
 
 
 # ── Scheduler ────────────────────────────────────────────────────────────────
