@@ -39,7 +39,7 @@ python -m src.agents.quant.betting_engine.clv.status_cli
 ## Variante crontab
 
 ```cron
-*/5 * * * * cd ~/Documents/projets-perso/ai-agent && venv/bin/python -m src.agents.quant.betting_engine.clv.collect_cli >> var/betting_engine/collect.log 2>&1
+*/5 * * * * cd ~/Documents/projets-perso/ai-agent && .venv/bin/python -m src.agents.quant.betting_engine.clv.collect_cli >> var/betting_engine/collect.log 2>&1
 ```
 
 ## Ce que ça ne fait pas

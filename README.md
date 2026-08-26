@@ -19,14 +19,24 @@
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kaiiine/ai-agent/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kaiiine/axon/main/install.sh | sh
 ```
 
 > Clones the repo, installs dependencies, configures APIs, downloads Ollama models, installs Playwright, and creates a global `axon` alias.
 
+Two directories, deliberately separate:
+
+| | |
+|---|---|
+| `~/axon` | the repo — code, `.env`, `.venv`. Override with `AXON_INSTALL_DIR`. |
+| `~/.axon` | Axon's **state** — semantic index, key-pool health, project memory. |
+
+Keeping them apart is what makes a reinstall safe: wiping the repo to start over
+must not take with it what Axon has learned.
+
 ```bash
 # Or manually:
-git clone https://github.com/kaiiine/axon.git && cd ai-agent && bash setup.sh
+git clone https://github.com/kaiiine/axon.git ~/axon && cd ~/axon && bash setup.sh
 
 # Reconfigure integrations without reinstalling:
 bash setup.sh --config-only
@@ -390,7 +400,7 @@ python src/mcp_server.py
 "context_servers": {
   "axon": {
     "command": {
-      "path": "/path/to/venv/bin/python",
+      "path": "/path/to/.venv/bin/python",
       "args": ["/path/to/ai-agent/src/mcp_server.py"]
     }
   }
@@ -401,7 +411,7 @@ python src/mcp_server.py
 ```json
 "mcpServers": {
   "axon": {
-    "command": "/path/to/venv/bin/python",
+    "command": "/path/to/.venv/bin/python",
     "args": ["/path/to/ai-agent/src/mcp_server.py"]
   }
 }
@@ -621,7 +631,7 @@ ollama pull qwen2.5:7b          # Local backend (optional)
 ## Tests
 
 ```bash
-PYTHONPATH=. venv/bin/python -m pytest tests/ -q
+PYTHONPATH=. .venv/bin/python -m pytest tests/ -q
 ```
 
 **3901 tests**. The suite covers tool routing (two reference corpora, one of

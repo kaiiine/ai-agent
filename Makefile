@@ -2,7 +2,7 @@
 
 PYTHON := python3
 PIP    := pip
-VENV   := venv
+VENV   := .venv
 
 ORANGE     := \033[38;5;214m
 ORANGE_DIM := \033[38;5;172m
@@ -73,8 +73,8 @@ format:
 
 clean:
 	@echo -e "$(ORANGE)  →  $(NC)Nettoyage..."
-	@find . -type d -name "__pycache__" -not -path "./venv/*" -exec rm -rf {} + 2>/dev/null || true
-	@find . -type f -name "*.pyc" -not -path "./venv/*" -delete 2>/dev/null || true
+	@find . -type d -name "__pycache__" -not -path "./.venv/*" -exec rm -rf {} + 2>/dev/null || true
+	@find . -type f -name "*.pyc" -not -path "./.venv/*" -delete 2>/dev/null || true
 	@find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 	@find . -type d -name ".mypy_cache"   -exec rm -rf {} + 2>/dev/null || true
 	@echo -e "$(GREEN)  ✓  $(NC)Nettoyage terminé"

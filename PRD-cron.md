@@ -140,7 +140,7 @@ Systemd user service (`~/.config/systemd/user/axon-cron.service`) :
 Description=Axon Cron Daemon
 
 [Service]
-ExecStart=/home/user/Documents/projets-perso/ai-agent/venv/bin/python src/cron_daemon.py
+ExecStart=/home/user/Documents/projets-perso/ai-agent/.venv/bin/python src/cron_daemon.py
 Restart=always
 
 [Install]
