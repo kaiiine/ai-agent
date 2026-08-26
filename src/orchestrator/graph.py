@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langgraph.graph import START, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import tools_condition
 from rich.console import Console as RichConsole
 
@@ -32,6 +32,8 @@ from src.orchestrator.resilience import tool_error_to_message
 from src.orchestrator.clarification import apres_les_outils, clarifier
 from src.orchestrator.confirmation import apres_confirmation, confirmer
 from src.orchestrator.envoi import envoyer
+from src.agents.deep.noeud import approfondir
+from src.orchestrator.plan import plan_a_valider, valider
 from src.orchestrator.revision import reviser
 from src.orchestrator.tool_node import CachedToolNode
 
@@ -564,15 +566,27 @@ def build_orchestrator():
     g.add_node("confirmer", confirmer)
     g.add_node("reviser", reviser)
     g.add_node("envoyer", envoyer)
+    g.add_node("valider_plan", valider)
+    g.add_node("approfondir", approfondir)
 
     g.add_edge(START, "chatbot")
-    g.add_conditional_edges("chatbot", tools_condition)
+    # `tools_condition` mène à `tools` ou à la fin. On s'intercale avant la fin :
+    # un plan se valide sur le TEXTE du modèle, pas sur un appel d'outil.
+    def _apres_chatbot(state):
+        route = tools_condition(state)
+        if route == END and plan_a_valider(state):
+            return "valider_plan"
+        return route
+
+    g.add_conditional_edges("chatbot", _apres_chatbot,
+                            {"tools": "tools", "valider_plan": "valider_plan", END: END})
     # `tools` ne revient au modèle que si aucun nœud de demande n'a la main.
     g.add_conditional_edges("tools", apres_les_outils, {
         "clarifier": "clarifier",
         "confirmer": "confirmer",
         "reviser": "reviser",
         "envoyer": "envoyer",
+        "approfondir": "approfondir",
         "chatbot": "chatbot",
     })
     # Le questionnaire est un appel d'outil comme un autre : il repasse par
@@ -585,5 +599,8 @@ def build_orchestrator():
     # La revue rend son compte rendu au modèle : appliqué, refusé, ou à ajuster.
     g.add_edge("reviser", "chatbot")
     g.add_edge("envoyer", "chatbot")
+    # La décision revient au modèle : exécuter, réviser, ou renoncer.
+    g.add_edge("valider_plan", "chatbot")
+    g.add_edge("approfondir", "chatbot")
 
     return g.compile(checkpointer=build_checkpointer())

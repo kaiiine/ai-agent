@@ -2016,31 +2016,6 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
         from .review import auto_write_all
         auto_write_all(console)
 
-    # ── Post-stream: plan HITL ────────────────────────────────────────────────
-    from src.ui.plan_mode import is_active as _is_plan_active
-    if plan_rendered and _is_plan_active():
-        from .review import review_plan
-        from src.ui.plan_mode import set_active as _set_plan_active
-
-        while True:
-            _plan_action, _plan_refinement = review_plan()
-            if _plan_action == "accept":
-                _set_plan_active(False)
-                pending_refinements.append(
-                    "Plan approuvé. Procède maintenant aux changements en suivant exactement ce plan."
-                )
-                break
-            elif _plan_action == "refine" and _plan_refinement:
-                _stream_message(
-                    graph,
-                    f"Voici des précisions pour le plan : {_plan_refinement}. "
-                    "Révise le plan en tenant compte de ces spécifications et propose un plan mis à jour.",
-                    cfg,
-                )
-                # Loop back → review_plan() on the updated plan
-            else:  # reject or empty refine
-                _set_plan_active(False)
-                break
 
     for refinement in pending_refinements:
         _stream_message(graph, refinement, cfg)

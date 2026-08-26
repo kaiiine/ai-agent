@@ -742,6 +742,23 @@ def ask_user_questions(questions: list) -> dict:
     return answers
 
 
+def _servir_plan(demande) -> list[str]:
+    """Affiche le plan et collecte la décision."""
+    console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+    console.print(Panel(
+        Text(demande.apercu), box=_BOX, border_style=f"dim {ACCENT}",
+        title="[dim]plan proposé[/dim]", title_align="left", padding=(1, 2)))
+    console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+
+    choix = _run_plan_selector()
+    console.print()
+    if choix == "accept":
+        return ["Exécuter le plan", ""]
+    if choix == "refine":
+        return ["Préciser", _ask_refinement() or ""]
+    return ["Abandonner", ""]
+
+
 def _servir_envoi(demande) -> list[str]:
     """Affiche le brouillon et collecte la décision, sans envoyer.
 
@@ -848,6 +865,9 @@ def servir_demande(demande) -> list[str]:
 
     if demande.genre == "envoi":
         return _servir_envoi(demande)
+
+    if demande.genre == "plan":
+        return _servir_plan(demande)
 
     if demande.apercu.strip():
         console.print()
