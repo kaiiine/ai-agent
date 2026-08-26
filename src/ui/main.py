@@ -93,6 +93,12 @@ finally:
     sys.stderr.close()
     sys.stderr = _stderr
 
+# La suppression ci-dessus ne vaut que pour la phase d'IMPORT. Les journaux émis
+# à chaque appel LLM — un par clé de schéma refusée, par outil — passeraient
+# sinon en plein milieu de l'interface.
+from src.infra.journal import taire_les_bavards
+taire_les_bavards()
+
 # ── 3. Construction du graphe ─────────────────────────────────────────────────
 report_step("construction du graphe…")
 _graph = build_orchestrator()
