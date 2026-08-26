@@ -199,7 +199,7 @@ def test_toute_commande_destructive_demande_confirmation(commande):
     trompe (conteneur, WSL, shell POSIX sous Windows) désarmerait le garde. Une
     union ne se trompe que dans le sens sûr.
     """
-    from src.agents.shell.tools import _is_destructive
+    from src.agents.shell.classification import est_destructive as _is_destructive
     assert _is_destructive(commande), f"« {commande} » passe sans confirmation"
 
 
@@ -208,7 +208,10 @@ def test_toute_commande_destructive_demande_confirmation(commande):
     "npm run build", "docker ps", "Get-Process", "dir",
 ])
 def test_une_commande_inoffensive_ne_declenche_rien(commande):
-    from src.agents.shell.tools import _is_destructive, _is_catastrophic_rm
+    from src.agents.shell.classification import (
+        est_catastrophique as _is_catastrophic_rm,
+        est_destructive as _is_destructive,
+    )
     assert not _is_destructive(commande)
     assert not _is_catastrophic_rm(commande)
 
@@ -218,7 +221,7 @@ def test_une_commande_inoffensive_ne_declenche_rien(commande):
     "Remove-Item C:\\", "ri $env:USERPROFILE", "del /f /s /q C:\\", "rd /s /q .",
 ])
 def test_une_cible_catastrophique_est_refusee_sur_tout_os(commande):
-    from src.agents.shell.tools import _is_catastrophic_rm
+    from src.agents.shell.classification import est_catastrophique as _is_catastrophic_rm
     assert _is_catastrophic_rm(commande), f"« {commande} » n'est pas reconnue"
 
 

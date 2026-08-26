@@ -20,7 +20,7 @@ from apscheduler.triggers.date import DateTrigger
 from src.agents.cron.store import get_tasks, update_task, deactivate_task, append_log
 from src.agents.slack.tools import _client, _resolve_channel
 from src.infra.settings import settings
-from src.llm.models import make_llm_gemini, make_llm_mistral, make_llm_ollama_cloud
+from src.llm.models import make_llm_gemini, make_llm_mistral, make_llm_ollama_cloud, make_llm_nvidia
 
 from src.llm.prompts.cron import SYSTEME as _SYSTEM
 
@@ -52,11 +52,32 @@ def _send_notification(channels: list[str], description: str, message: str) -> N
         _notify_slack(f"*{description}*\n{message}")
 
 # TODO: Move this function in the models.py file
+#: Les statuts par lesquels un outil REFUSE. Aucun ne lève d'exception.
+_STATUTS_DE_REFUS = ("requires_confirmation", "blocked")
+
+
+def _refus_d_outil(messages: list) -> list[str]:
+    """Les commandes qu'un outil a refusé d'exécuter pendant ce tour."""
+    refuses: list[str] = []
+    for message in messages:
+        contenu = getattr(message, "content", None)
+        if not isinstance(contenu, str) or not contenu.strip().startswith("{"):
+            continue
+        try:
+            charge = json.loads(contenu)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(charge, dict) and charge.get("status") in _STATUTS_DE_REFUS:
+            refuses.append(str(charge.get("command") or charge.get("target") or "?"))
+    return refuses
+
+
 def _make_llm():
     factories = {
         "gemini": make_llm_gemini,
         "mistral": make_llm_mistral,
         "ollama_cloud": make_llm_ollama_cloud,
+        "nvidia": make_llm_nvidia,
     }
     return factories.get(settings.llm_backend, make_llm_ollama_cloud)()
 
@@ -66,6 +87,7 @@ def _run_task(task_id: str) -> None:
     from langchain_core.messages import HumanMessage, SystemMessage
     from langgraph.prebuilt import create_react_agent
     from src.agents.search.tools import web_search_news, web_research_report
+    from src.agents.shell.autorisation import declarer, retirer
     from src.agents.shell.tools import shell_run
     from src.agents.quant.conversation.tools import betting_recommend
     from src.agents.quant.tools import (
@@ -88,6 +110,13 @@ def _run_task(task_id: str) -> None:
         "duration_ms": 0,
         "error": None,
     }
+
+    # Les permissions shell de CETTE tâche, déclarées par l'utilisateur dans sa
+    # config. Sans elles, une tâche planifiée ne peut lancer que ce que la
+    # classification reconnaît comme sûr — il n'y a personne pour répondre à une
+    # demande de confirmation.
+    source_autorisation = f"cron:{task['id']}"
+    declarer(source_autorisation, list(task.get("commandes_autorisees") or []))
 
     try:
         prompt = task["prompt"].replace("{last_result}", str(task.get("last_result") or ""))
@@ -145,6 +174,18 @@ def _run_task(task_id: str) -> None:
         log_entry["result_summary"] = summary
         log_entry["status"] = "skipped" if stop else "ok"
 
+        # Un outil refusé ne lève PAS d'exception : il rend un statut. Sans cette
+        # lecture, une tâche dont toutes les commandes ont été bloquées loguait
+        # « ok » en n'ayant rien fait — un succès mensonger, pire qu'un échec
+        # bruyant, parce qu'il ne se voit nulle part.
+        refus = _refus_d_outil(result_state.get("messages") or [])
+        if refus:
+            log_entry["status"] = "error"
+            log_entry["error"] = (
+                f"{len(refus)} commande(s) non autorisée(s), aucune personne pour "
+                f"confirmer : {refus[0]}. Déclare-les dans `commandes_autorisees` "
+                f"de la tâche si elles doivent tourner sans surveillance.")
+
         update_task(task["id"], last_run=datetime.now().isoformat(), last_result=summary)
 
         if stop:
@@ -154,6 +195,10 @@ def _run_task(task_id: str) -> None:
     except Exception as e:
         log_entry["status"] = "error"
         log_entry["error"] = str(e)
+    finally:
+        # Retiré dans TOUS les cas : une permission qui survivrait à la tâche
+        # profiterait au tour suivant, qui ne l'a pas demandée.
+        retirer(source_autorisation)
 
     log_entry["duration_ms"] = int((time.perf_counter() - start) * 1000)
     append_log(task["id"], log_entry)

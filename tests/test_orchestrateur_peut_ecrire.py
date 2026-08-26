@@ -20,7 +20,17 @@ from __future__ import annotations
 
 import pytest
 
-from src.agents.shell.tools import _is_file_write
+from src.agents.shell.ecriture import analyser_ecriture
+
+
+def _is_file_write(commande: str) -> bool:
+    """Le chemin de PRODUCTION, et non plus une liste de motifs parallèle.
+
+    `_is_file_write` comparait des chaînes littérales (« sed -i », « cat > »)
+    pendant que `shell_run` décidait, lui, sur `analyser_ecriture`. Deux
+    détections pour une seule question : le test pouvait passer alors que le
+    garde réel laissait filer."""
+    return analyser_ecriture(commande) is not None
 
 
 @pytest.fixture(scope="module")
@@ -43,21 +53,37 @@ def test_la_porte_que_le_refus_designe_existe_vraiment(outils_orchestrateur):
     assert "propose_file_change" in outils_orchestrateur
 
 
-def test_le_message_de_refus_ne_nomme_que_des_outils_disponibles(outils_orchestrateur):
-    """Si le libellé change un jour, il ne doit pas renvoyer vers un fantôme."""
-    import re
-    from pathlib import Path
+@pytest.mark.parametrize("commande", [
+    # Refus : commande composée.
+    "echo x > /tmp/zzz_axon_msg.txt && echo suite",
+    # Proposition : contenu lisible en local.
+    "echo x > /tmp/zzz_axon_msg.txt",
+    # Confirmation : contenu illisible en local.
+    "mycommand > /tmp/zzz_axon_msg.log",
+    # Confirmation : cible distante.
+    'ssh vps "cat > /etc/motd"',
+])
+def test_aucune_reponse_du_garde_ne_nomme_un_outil_fantome(commande, outils_orchestrateur):
+    """Chaque issue proposée doit exister. Le garde a maintenant quatre sorties,
+    chacune avec sa consigne ; renvoyer vers un outil absent laisserait l'agent
+    tourner en rond, ce qui est précisément ce qu'on lui reprochait.
 
-    # Le module, pas la fonction : `shell_run` est un `StructuredTool` une fois
-    # décoré, et `inspect.getsource` ne sait pas le lire.
-    source = (Path(__file__).resolve().parents[1]
-              / "src" / "agents" / "shell" / "tools.py").read_text(encoding="utf-8")
-    debut = source.index("Écriture de fichier via shell bloquée")
-    message = source[debut:debut + 400]
+    Vérifié sur ce que le tool RÉPOND, plus sur le texte du module : la version
+    précédente lisait le source à partir d'une chaîne littérale, et n'a donc
+    couvert qu'une seule des sorties — jusqu'à ce que cette chaîne disparaisse."""
+    import re
+
+    from src.agents.coding.pending import pending_changes
+    from src.agents.shell.tools import shell_run
+
+    pending_changes.clear()
+    message = shell_run.invoke({"command": commande}).get("message", "")
+    pending_changes.clear()
+
     cites = set(re.findall(r"\b(edit_file|propose_file_change|shell_run)\b", message))
-    assert cites, "le message ne nomme plus aucune issue"
     assert cites <= outils_orchestrateur, (
-        f"le refus renvoie vers des outils absents : {cites - outils_orchestrateur}")
+        f"« {commande} » renvoie vers des outils absents : "
+        f"{cites - outils_orchestrateur}")
 
 
 def test_modifier_un_fichier_de_config_route_les_outils_d_ecriture():

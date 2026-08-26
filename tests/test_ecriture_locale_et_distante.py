@@ -18,7 +18,11 @@ un tableau d'instructions à l'utilisateur.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+
+from src.agents.shell import autorisation
 
 from src.agents.shell.ecriture import analyser_ecriture
 
@@ -120,24 +124,55 @@ def test_un_contenu_venu_de_stdin_est_dit_inconnu_pas_absent(commande, outil):
     assert "Vérifie toi-même" in e.apercu()
 
 
-# ── Local ▸ inchangé ─────────────────────────────────────────────────────────
-def test_une_ecriture_locale_reste_refusee():
-    """`edit_file` fait mieux : il n'envoie que le fragment et l'utilisateur
-    relit un diff. Rien ne change ici."""
+# ── Local ▸ le contenu lisible devient un diff relu ──────────────────────────
+def test_une_ecriture_locale_lisible_devient_une_proposition():
+    """Le refus renvoyait vers `edit_file` ; il fabrique maintenant lui-même le
+    changement. L'utilisateur relit toujours un diff — mais l'agent n'a plus à
+    retraduire sa commande en un autre appel pour l'obtenir."""
+    from src.agents.coding.pending import pending_changes
     from src.agents.shell.tools import shell_run
 
+    pending_changes.clear()
     r = shell_run.invoke({"command": "echo 'x' > /tmp/zzz_axon_test.conf"})
-    assert r["status"] == "blocked"
-    assert "edit_file" in r["message"]
+
+    assert r["status"] == "proposed"
+    assert r["awaiting_confirmation"] is True
+    [change] = pending_changes.items
+    assert change.path == "/tmp/zzz_axon_test.conf"
+    assert change.proposed == "x\n", "le saut de ligne d'echo fait partie du fichier"
+    pending_changes.clear()
 
 
-def test_une_ecriture_locale_n_est_pas_confirmable():
-    """Même avec `confirmed=True` : le refus local n'est pas une question."""
+def test_une_ecriture_locale_lisible_n_execute_jamais_le_shell():
+    """Aucune autorisation n'achète une exécution ici : c'est la revue qui écrit.
+
+    La distinction n'est pas cosmétique. Exécuter la commande rendrait la main
+    au shell APRÈS l'accord, avec tout ce qu'elle porte ; passer par la revue
+    garantit que l'accord ne produit exactement que le diff montré."""
+    from src.agents.coding.pending import pending_changes
     from src.agents.shell.tools import shell_run
 
-    r = shell_run.invoke({"command": "echo 'x' > /tmp/zzz_axon_test.conf",
-                          "confirmed": True})
-    assert r["status"] == "blocked"
+    temoin = Path("/tmp/zzz_axon_jamais_ecrit.conf")
+    temoin.unlink(missing_ok=True)
+    pending_changes.clear()
+
+    autorisation.accorder(f"echo 'x' > {temoin}")
+    r = shell_run.invoke({"command": f"echo 'x' > {temoin}"})
+
+    assert r["status"] == "proposed"
+    assert not temoin.exists(), "la commande shell a été exécutée malgré la revue"
+    pending_changes.clear()
+
+
+def test_une_ecriture_locale_illisible_demande_confirmation():
+    """`mycommand > f` : aucune autre porte ne le sert. `propose_file_change`
+    exigerait de lancer la commande d'abord, or `_compact_shell_output` tronque
+    à 80 lignes — le fichier serait amputé en silence."""
+    from src.agents.shell.tools import shell_run
+
+    r = shell_run.invoke({"command": "mycommand --long > /tmp/zzz_axon_sortie.log"})
+    assert r["status"] == "requires_confirmation"
+    assert "INDÉTERMINABLE" in r["preview"]
 
 
 # ── Distant ▸ confirmé, avec APERÇU ──────────────────────────────────────────
@@ -217,3 +252,20 @@ def test_la_porosite_de_l_ancienne_liste_est_fermee():
                      'ssh kaine "tee ~/.ssh/config"'):
         e = analyser_ecriture(commande)
         assert e is not None and e.distante, f"contournement encore ouvert : {commande}"
+
+
+@pytest.mark.parametrize("commande, outil", [
+    ("sed -i 's/a/b/' /tmp/zzz_axon.conf", "sed -i"),
+    ("truncate -s 0 /tmp/zzz_axon.conf", "truncate"),
+    ("dd if=/dev/zero of=/tmp/zzz_axon.bin", "dd"),
+])
+def test_une_modification_sur_place_garde_l_ancien_refus(commande, outil):
+    """Le contenu y est illisible, comme pour `cmd > f` — mais la ressemblance
+    s'arrête là. Ces outils modifient un fichier DÉJÀ présent, ce qu'`edit_file`
+    fait mieux en montrant un diff. N'ouvrir le cas « confirme et exécute » qu'à
+    la capture de sortie évite de relâcher le garde là où l'issue existe."""
+    from src.agents.shell.tools import shell_run
+
+    r = shell_run.invoke({"command": commande, "confirmed": True})
+    assert r["status"] == "blocked"
+    assert "edit_file" in r["message"]

@@ -8,6 +8,13 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from langchain_core.tools import tool
 
+from src.agents.coding.pending import FileChange, pending_changes
+from .autorisation import est_autorisee
+from .classification import (
+    est_catastrophique,
+    est_connue_sure,
+    est_destructive,
+)
 from .ecriture import analyser_ecriture
 
 _HOME = Path.home()
@@ -84,47 +91,6 @@ def _wrap_rtk(cmd: str) -> str:
 # `del /f /s /q C:\`, `Format-Volume` et `diskpart` passaient SANS confirmation :
 # le filet de sécurité disparaissait en silence en changeant de machine.
 #
-# Choisir la liste d'après l'OS détecté aurait rouvert la même faille par un
-# autre chemin — une détection qui se trompe (conteneur, WSL, shell POSIX sous
-# Windows) désarmerait le garde. Une union ne peut se tromper que dans le sens
-# sûr : un `del /f /s` tapé sous Linux ne coûte qu'une confirmation de trop.
-_DESTRUCTIVE_POSIX = (
-    "rm ", "rmdir", "dd ", "mkfs", "sudo rm", "sudo dd", "shred ",
-    "pip uninstall", "pacman -R", "yay -R", "apt remove", "apt purge",
-    "apt-get remove", "apt-get purge", "dnf remove", "zypper remove",
-    "apk del", "brew uninstall",
-)
-_DESTRUCTIVE_WINDOWS = (
-    "remove-item", "ri ", "del ", "erase ", "rd ", "rmdir ", "format ",
-    "format-volume", "clear-disk", "diskpart", "winget uninstall",
-    "cipher /w", "takeown", "icacls",
-)
-_DESTRUCTIVE_VCS = (
-    "git reset --hard", "git clean -f", "git push --force", "git push -f",
-)
-_DESTRUCTIVE_PREFIXES = _DESTRUCTIVE_POSIX + _DESTRUCTIVE_WINDOWS + _DESTRUCTIVE_VCS
-
-# Écriture de fichiers — doit passer par propose_file_change dans le coding specialist
-_WRITE_PATTERNS = (
-    "sed -i", "cat >", "cat >>", "tee /", "echo > /", "echo >> /",
-    "set-content", "out-file", "add-content",
-)
-
-# Cibles dont la suppression détruirait le système ou le dossier courant.
-# POSIX et Windows ensemble, pour la même raison que ci-dessus.
-_RM_CATASTROPHIC_TARGETS = (
-    ".", "./", "..", "../", "/", "~", "~/", "*",
-    "$home", "${home}", "$pwd", "${pwd}",
-    "c:", "c:\\", "d:", "d:\\", "%userprofile%", "%homepath%", "%systemroot%",
-    "$env:userprofile", "$env:homepath", "$env:systemroot", "$home\\",
-    ".\\", "..\\", "*.*",
-)
-
-#: Verbes de suppression, tous OS confondus. `rm` seul laissait passer
-#: `Remove-Item`, `del` et `rd`, qui font exactement la même chose ailleurs.
-_VERBES_SUPPRESSION = r"(?:sudo\s+)?(?:rm|rmdir|remove-item|ri|del|erase|rd)"
-
-
 #: Ce que « commande introuvable » vaut selon le shell : 127 pour les POSIX,
 #: 9009 pour cmd.exe, et un simple 1 pour PowerShell — qui ne le dit que dans
 #: son texte. Reconnaître les trois est la condition pour que la re-détection
@@ -150,50 +116,11 @@ def _commande_introuvable(exit_code: int, sortie: str) -> bool:
     return exit_code != 0 and any(t in bas for t in _TEXTES_INTROUVABLE)
 
 
-def _is_catastrophic_rm(cmd: str) -> bool:
-    """Suppression visant une cible qui détruirait le système ou le dossier courant.
-
-    Reconnaît les verbes des trois familles : `rm`/`rmdir` (POSIX),
-    `Remove-Item`/`ri` (PowerShell), `del`/`erase`/`rd` (cmd).
-    """
-    import re
-    c = cmd.strip()
-    # Normalise : <verbe> [-options | /options] <cible>
-    m = re.match(rf"^{_VERBES_SUPPRESSION}\s+((?:[-/][a-zA-Z:]+\s+)*)(.+)$", c, re.I)
-    if not m:
-        return False
-    cible = m.group(2).strip().strip('"\'').lower()
-    # Un chemin PowerShell peut porter un préfixe de fournisseur.
-    cible = cible.removeprefix("filesystem::")
-    cible = cible.rstrip("/").rstrip("\\")
-    # Rend "" pour « rm -rf / » une fois la barre retirée.
-    nu = cible if cible else "/"
-    return nu in {t.rstrip("/").rstrip("\\") or "/" for t in _RM_CATASTROPHIC_TARGETS}
-
-
-def _is_file_write(cmd: str) -> bool:
-    c = cmd.strip()
-    return any(p in c for p in _WRITE_PATTERNS)
-
-
-def _is_destructive(cmd: str) -> bool:
-    """La commande exige-t-elle une confirmation explicite ?
-
-    Les préfixes sont normalisés en minuscules à la comparaison. Sans cela
-    `pacman -R` et `yay -R`, écrits avec un R majuscule dans la liste, ne
-    déclenchaient JAMAIS de confirmation : la commande était abaissée, le
-    préfixe non. Deux désinstallations de paquets passaient donc librement.
-    """
-    c = cmd.strip().lower()
-    return any(c.startswith(p.lower()) for p in _DESTRUCTIVE_PREFIXES)
-
-
 @tool("shell_run")
 def shell_run(
     command: str,
     cwd: Optional[str] = None,
     timeout: int = 30,
-    confirmed: bool = False,
 ) -> Dict[str, Any]:
     """
     Exécute une commande shell et retourne stdout/stderr/exit_code.
@@ -206,44 +133,139 @@ def shell_run(
 
     Mots-clés : terminal, commande, shell, bash, script, exécuter, lancer, installer, build, npm, pip, run
 
-    RÈGLE DE SÉCURITÉ : Si la commande est destructive (rm, git reset --hard, etc.),
-    demander TOUJOURS confirmation explicite à l'utilisateur avant d'appeler ce tool.
-    Pour les commandes destructives, passer confirmed=True seulement après confirmation.
+    SÉCURITÉ : la confirmation ne dépend PAS de toi. Une commande destructive ou
+    inhabituelle rend `requires_confirmation` ; l'accord est demandé à l'utilisateur
+    par AXON lui-même, et tu n'as aucun moyen de t'en passer. N'annonce donc pas
+    qu'une commande est faite tant que tu n'as pas vu son résultat.
 
     Args:
         command: commande shell à exécuter
         cwd: répertoire de travail (défaut: home)
-        timeout: timeout en secondes (défaut: 30, max: 300)
-        confirmed: True si l'utilisateur a explicitement confirmé une commande destructive
+        timeout: timeout en secondes (défaut: 300 max)
     Returns:
         {"status": "ok"|"error"|"timeout", "stdout": "...", "stderr": "...", "exit_code": N, "cwd": "..."}
     """
-    if _is_catastrophic_rm(command):
+    # L'autorisation est à USAGE UNIQUE. La consulter à deux endroits du même
+    # appel consommait le « oui » au premier garde et le faisait manquer au
+    # second. Mesuré sur `ssh vps "monbinaire > /etc/motd"` : la branche
+    # d'écriture consommait l'accord, la porte générale ne trouvait plus rien et
+    # refusait — l'utilisateur répondait « oui », rien ne partait, le modèle
+    # redemandait. Une boucle de questions, née d'un correctif de sécurité.
+    _accord: list[bool] = []
+
+    def autorisee() -> bool:
+        if not _accord:
+            _accord.append(est_autorisee(command))
+        return _accord[0]
+
+    if est_catastrophique(command):
         return {
             "status": "blocked",
             "command": command,
             "message": "Commande bloquée : rm sur le dossier courant (.), racine (/), home (~) ou wildcard (*) est interdit, même avec confirmation.",
         }
 
-    if _is_destructive(command) and not confirmed:
+    ecriture = analyser_ecriture(command)
+    if ecriture is not None and ecriture.composee:
+        # Une validation ne doit couvrir qu'UN seul acte. Mesuré :
+        # `echo x > /etc/motd && systemctl restart nginx` se lit « écrit
+        # /etc/motd » — approuver ce diff redémarrerait nginx, effet que la
+        # revue ne montrait pas. Et `rm -rf /tmp/cache | tee log.txt` n'a
+        # aucun opérateur de chaînage : le tube seul cache déjà le `rm`.
+        #
+        # Découper vraiment la commande demanderait un parseur shell. Un
+        # parseur approximatif sur des commandes qui effacent des données
+        # est la faute qu'on refuse de commettre : ici l'enjeu n'est plus la
+        # détection mais l'EXÉCUTION. On rend donc la main.
         return {
-            "status": "requires_confirmation",
+            "status": "blocked",
             "command": command,
-            "message": "Commande destructive détectée. Demander confirmation explicite à l'utilisateur avant d'exécuter.",
+            "target": ecriture.cible,
+            "operator": ecriture.composee,
+            "message": (
+                f"Commande composée (opérateur « {ecriture.composee} ») contenant une "
+                f"écriture vers {ecriture.cible}. Une confirmation ne peut porter que sur "
+                "un seul acte : approuver l'écriture ferait aussi passer ce qui est "
+                "enchaîné. Découpe en appels shell_run séparés, un par acte."),
         }
 
-    ecriture = analyser_ecriture(command)
+
     if ecriture is not None:
-        if not ecriture.distante:
-            # LOCAL — inchangé. `edit_file` fait mieux : il n'envoie que le
-            # fragment modifié, et l'utilisateur relit un diff avant écriture.
+        if not ecriture.distante and ecriture.contenu is not None:
+            # LOCAL, contenu lisible — la revue DEVIENT l'action. On construit
+            # le vrai diff et on le pousse dans la même file que `edit_file` ;
+            # la commande shell n'est jamais exécutée, donc aucun effet de bord
+            # ne peut se glisser derrière l'accord.
+            cible = Path(ecriture.cible)
+            if not cible.is_absolute():
+                cible = (Path(cwd) if cwd else _cwd) / cible
+            original = ""
+            if cible.exists() and cible.is_file():
+                try:
+                    original = cible.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    pass
+            propose = (original + ecriture.contenu) if ecriture.ajoute else ecriture.contenu
+            pending_changes.add(FileChange(
+                path=str(cible),
+                original=original,
+                proposed=propose,
+                description=f"shell : {ecriture.mode} de {cible.name}",
+            ))
+            return {
+                "status": "proposed",
+                "path": str(cible),
+                "awaiting_confirmation": True,
+                "message": (
+                    f"Écriture convertie en proposition relue ({ecriture.mode}). "
+                    "L'utilisateur verra le diff et tranchera ; la commande shell "
+                    "elle-même ne sera PAS exécutée. N'appelle pas shell_run à nouveau "
+                    "pour ce fichier."),
+            }
+
+        #: Les outils qui CAPTURENT une sortie. Eux seuls justifient une
+        #: confirmation quand le contenu est illisible : il n'existe pas encore.
+        #: `sed -i`, `dd`, `truncate` modifient au contraire un fichier DÉJÀ là,
+        #: ce que `edit_file` fait mieux — avec un diff. Ouvrir le cas 2 à tout
+        #: contenu illisible aurait relâché le garde là où l'issue existait.
+        capture = ecriture.outil in ("redirection", "tee")
+
+        if not ecriture.distante and not capture:
             return {
                 "status": "blocked",
                 "command": command,
                 "target": ecriture.cible,
-                "message": "Écriture de fichier via shell bloquée. Utilise edit_file(path, old_string, new_string) pour modifier une partie d'un fichier existant, propose_file_change(path, content, description) pour en créer un.",
+                "message": (
+                    f"Modification sur place ({ecriture.outil}) d'un fichier local. Utilise "
+                    "edit_file(path, old_string, new_string) pour changer une partie d'un "
+                    "fichier existant, propose_file_change(path, content, description) pour "
+                    "le réécrire entièrement : l'utilisateur y relit un diff."),
             }
-        if not confirmed:
+
+        if not autorisee():
+            if not ecriture.distante:
+                # LOCAL, contenu NON lisible — le cas qu'aucune autre porte ne
+                # sert. `mycommand > sortie.log` ne peut pas passer par
+                # `propose_file_change` : il faudrait lancer la commande d'abord,
+                # et `_compact_shell_output` tronque à 80 lignes / 10 000
+                # caractères. Le fichier serait amputé en silence.
+                #
+                # On ne peut pas montrer de diff : le contenu n'existe pas encore.
+                # On montre donc ce qu'on a — la commande, la cible, le mode — et
+                # on le dit franchement.
+                return {
+                    "status": "requires_confirmation",
+                    "command": command,
+                    "target": ecriture.cible,
+                    "append": ecriture.ajoute,
+                    "preview": ecriture.apercu(),
+                    "message": (
+                        "Écriture dont le contenu ne se lit pas dans la commande. Montre "
+                        "l'aperçu ci-dessous à l'utilisateur TEL QUEL. AXON lui demandera "
+                        "son accord — tu n'as pas à le recueillir toi-même, ni à rappeler "
+                        "shell_run. Si le contenu, lui, est connu de toi, passe plutôt par "
+                        "propose_file_change : il donne un diff."),
+                }
             # DISTANT — aucun équivalent : `edit_file` ne prend qu'un chemin
             # local. Refuser ici enfermait l'agent, qui n'avait plus qu'à rendre
             # un mode d'emploi à l'utilisateur.
@@ -261,10 +283,31 @@ def shell_run(
                 "preview": ecriture.apercu(),
                 "message": (
                     "Écriture sur une machine DISTANTE. Montre l'aperçu ci-dessous "
-                    "à l'utilisateur TEL QUEL et attends son accord explicite, puis "
-                    "rappelle shell_run avec confirmed=True. Ne résume pas le "
-                    "contenu : il doit voir ce qui sera écrit."),
+                    "à l'utilisateur TEL QUEL. AXON lui demandera son accord. Ne "
+                    "résume pas le contenu : il doit voir ce qui sera écrit."),
             }
+
+    # La porte unique. Deux raisons de la franchir, une seule façon : une
+    # autorisation venue d'ailleurs que du modèle.
+    #
+    # Le DÉFAUT est inversé : ce qui n'est pas reconnu sûr demande un accord, au
+    # lieu de s'exécuter. La liste des enveloppes retirées par la détection est
+    # finie par nature (`python -c`, un alias, une fonction shell lui échappent) ;
+    # inverser le défaut fait qu'un oubli devient une question posée, et non une
+    # exécution silencieuse.
+    if not est_connue_sure(command) and not autorisee():
+        destructive = est_destructive(command)
+        return {
+            "status": "requires_confirmation",
+            "command": command,
+            "reason": "destructive" if destructive else "inconnue",
+            "message": (
+                ("Commande DESTRUCTIVE. " if destructive else
+                 "Commande non reconnue comme sûre. ")
+                + "AXON va demander son accord à l'utilisateur : montre la commande "
+                  "telle quelle et n'annonce rien comme fait. Tu ne peux pas accorder "
+                  "cette autorisation toi-même."),
+        }
 
     work_dir = Path(cwd) if cwd else None
     if work_dir and not work_dir.exists():

@@ -29,6 +29,12 @@ from src.orchestrator.provider_quirks import (
 )
 from src.orchestrator.invocation import invoke_with_recovery
 from src.orchestrator.resilience import tool_error_to_message
+from src.orchestrator.clarification import apres_les_outils, clarifier
+from src.orchestrator.confirmation import (
+    apres_enregistrement,
+    confirmer,
+    enregistrer_reponse,
+)
 from src.orchestrator.tool_node import CachedToolNode
 
 console = RichConsole()
@@ -146,6 +152,7 @@ from src.llm.models import (
     make_llm_groq,
     make_llm_mistral,
     make_llm_ollama_cloud,
+    make_llm_nvidia,
     make_orchestrator_llm_with_key,
 )
 from src.llm.prompts import build_system_prompt
@@ -184,6 +191,7 @@ def _chat_node_factory():
         "ollama": make_llm,
         "gemini": make_llm_gemini,
         "mistral": make_llm_mistral,
+        "nvidia": make_llm_nvidia,
     }
     tools = build_all_tools()
     retriever = ToolRetriever(tools)
@@ -554,9 +562,29 @@ def build_orchestrator():
     g = StateGraph(GlobalState)
     g.add_node("chatbot", chatbot)
     g.add_node("tools", CachedToolNode(tools))
+    g.add_node("clarifier", clarifier)
+    g.add_node("confirmer", confirmer)
+    g.add_node("enregistrer_autorisation", enregistrer_reponse)
 
     g.add_edge(START, "chatbot")
     g.add_conditional_edges("chatbot", tools_condition)
-    g.add_edge("tools", "chatbot")
+    # `tools` ne revient plus INCONDITIONNELLEMENT au modèle. Quand un outil
+    # déclare des champs manquants, le graphe pose la question lui-même au lieu
+    # de demander au modèle de la poser — mesuré : la consigne texte arrivait
+    # intacte et le modèle répondait en prose quand même.
+    g.add_conditional_edges("tools", apres_les_outils, {
+        "clarifier": "clarifier",
+        "confirmer": "confirmer",
+        "enregistrer_autorisation": "enregistrer_autorisation",
+        "chatbot": "chatbot",
+    })
+    # Le questionnaire est un appel d'outil comme un autre : il repasse par
+    # `tools`, qui produit le `awaiting_input` que l'interface sait afficher.
+    g.add_edge("clarifier", "tools")
+    g.add_edge("confirmer", "tools")
+    # Un accord réémet l'appel — il repasse par `tools`. Un refus ne produit
+    # qu'un message, qui n'a rien à y faire.
+    g.add_conditional_edges("enregistrer_autorisation", apres_enregistrement,
+                            {"tools": "tools", "chatbot": "chatbot"})
 
     return g.compile(checkpointer=build_checkpointer())
