@@ -30,11 +30,9 @@ from src.orchestrator.provider_quirks import (
 from src.orchestrator.invocation import invoke_with_recovery
 from src.orchestrator.resilience import tool_error_to_message
 from src.orchestrator.clarification import apres_les_outils, clarifier
-from src.orchestrator.confirmation import (
-    apres_enregistrement,
-    confirmer,
-    enregistrer_reponse,
-)
+from src.orchestrator.confirmation import apres_confirmation, confirmer
+from src.orchestrator.envoi import envoyer
+from src.orchestrator.revision import reviser
 from src.orchestrator.tool_node import CachedToolNode
 
 console = RichConsole()
@@ -564,27 +562,28 @@ def build_orchestrator():
     g.add_node("tools", CachedToolNode(tools))
     g.add_node("clarifier", clarifier)
     g.add_node("confirmer", confirmer)
-    g.add_node("enregistrer_autorisation", enregistrer_reponse)
+    g.add_node("reviser", reviser)
+    g.add_node("envoyer", envoyer)
 
     g.add_edge(START, "chatbot")
     g.add_conditional_edges("chatbot", tools_condition)
-    # `tools` ne revient plus INCONDITIONNELLEMENT au modèle. Quand un outil
-    # déclare des champs manquants, le graphe pose la question lui-même au lieu
-    # de demander au modèle de la poser — mesuré : la consigne texte arrivait
-    # intacte et le modèle répondait en prose quand même.
+    # `tools` ne revient au modèle que si aucun nœud de demande n'a la main.
     g.add_conditional_edges("tools", apres_les_outils, {
         "clarifier": "clarifier",
         "confirmer": "confirmer",
-        "enregistrer_autorisation": "enregistrer_autorisation",
+        "reviser": "reviser",
+        "envoyer": "envoyer",
         "chatbot": "chatbot",
     })
     # Le questionnaire est un appel d'outil comme un autre : il repasse par
     # `tools`, qui produit le `awaiting_input` que l'interface sait afficher.
-    g.add_edge("clarifier", "tools")
-    g.add_edge("confirmer", "tools")
-    # Un accord réémet l'appel — il repasse par `tools`. Un refus ne produit
-    # qu'un message, qui n'a rien à y faire.
-    g.add_conditional_edges("enregistrer_autorisation", apres_enregistrement,
+    # `clarifier` a déjà les réponses, réinscrites dans l'historique.
+    g.add_edge("clarifier", "chatbot")
+    # `confirmer` réémet l'appel sur un accord, un simple message sur un refus.
+    g.add_conditional_edges("confirmer", apres_confirmation,
                             {"tools": "tools", "chatbot": "chatbot"})
+    # La revue rend son compte rendu au modèle : appliqué, refusé, ou à ajuster.
+    g.add_edge("reviser", "chatbot")
+    g.add_edge("envoyer", "chatbot")
 
     return g.compile(checkpointer=build_checkpointer())

@@ -1,14 +1,11 @@
 """Pont lexical français → anglais pour le routage d'outils.
 
-Vivait dans le retriever de l'agent de code, seul consommateur à l'époque. Le
-chemin MCP de l'ORCHESTRATEUR en avait le même besoin — et ne l'avait pas :
-`route()` interrogeait l'index avec la requête française brute, alors que les
-outils Playwright se décrivent en anglais. Mesuré sur cinq requêtes d'action,
-`browser_click` ne sortait JAMAIS, pas même sur « clique sur le bouton » ; avec
-le pont, 3/5 et `browser_click` présent deux fois.
+Les descriptions d'outils MCP viennent de leurs serveurs, en anglais ; les
+requêtes d'AXON sont en français. `pont_linguistique` ajoute la traduction des
+intentions présentes, sans remplacer la requête.
 
-Le module est neutre par nécessité : `src/mcp_client/` ne peut pas dépendre de
-`src/agents/coding/` sans inverser le sens des dépendances.
+Consommé par le retriever de l'agent de code et par l'étage 2 du routage MCP.
+Neutre par nécessité : `src/mcp_client/` ne peut pas dépendre de `src/agents/`.
 """
 from __future__ import annotations
 

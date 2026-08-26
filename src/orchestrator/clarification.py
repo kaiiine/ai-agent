@@ -1,26 +1,9 @@
-"""Poser la question nous-mêmes, plutôt que demander au modèle de la poser.
+"""Le nœud qui pose les questions dont un outil déclare avoir besoin.
 
-Un outil peut rendre « il me manque X ». Deux façons d'y donner suite :
+Un outil rend `status: CLARIFICATION_REQUIRED` et une liste `missing` ; ce nœud
+pose les questions correspondantes et réinscrit l'échange dans l'historique.
 
-  - écrire dans son résultat « appelle `ask_clarification` » et espérer ;
-  - émettre l'appel d'outil soi-même.
-
-La première a été essayée, et mesurée en échec : la consigne arrivait intacte
-dans le résultat, et le modèle répondait en prose — « il me manque ta bankroll,
-merci de me la communiquer » — puis rendait la main. Le questionnaire, lui, ne
-peut pas se déclencher sans un VRAI appel d'outil : la reprise a besoin d'un
-`tool_call_id` pour remplacer le `ToolMessage` par les réponses et replanifier
-le nœud. Tant qu'aucun appel n'est émis, il n'y a rien à reprendre.
-
-Faire dépendre un mécanisme déterministe d'une obéissance probabiliste, c'est
-accepter que ça marche sur les bons modèles et échoue sur les autres — sans que
-rien ne casse visiblement. Ici la condition est CALCULABLE : `missing()` rend
-les champs absents. Ce que le code sait, le code le fait.
-
-La nuance vaut d'être posée : il ne s'agit pas d'interdire au modèle de poser
-des questions. Pour « je ne comprends pas ta demande », c'est à lui de décider —
-la condition n'est pas calculable. La règle porte sur la CONDITION, pas sur la
-clarification.
+Porte aussi `apres_les_outils`, l'arête qui arbitre entre les nœuds de demande.
 """
 from __future__ import annotations
 
@@ -30,14 +13,13 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-#: Le statut qui déclenche une demande. Un outil qui veut être servi par ce nœud
-#: rend ce statut ET une liste `missing` — pas l'un sans l'autre.
+from src.orchestrator.hitl import CLARIFICATION, Demande, Question, demander
+
+#: Statut déclencheur. L'outil doit rendre ce statut ET une liste `missing`.
 STATUT = "CLARIFICATION_REQUIRED"
 
-#: Champ manquant → la question posée. Explicite, et pas dérivée du nom du champ :
-#: « bankroll » donnerait une phrase acceptable, le champ suivant probablement pas.
-#: L'interface ajoute elle-même « Autre (préciser) », donc un montant libre reste
-#: toujours possible — ne pas l'inscrire ici.
+#: Champ manquant → question posée. Les clients ajoutent « Autre » eux-mêmes :
+#: ne pas l'inscrire dans les choix.
 QUESTIONS: dict[str, dict[str, Any]] = {
     "bankroll": {
         "question": "Quelle est ta bankroll ? (capital en euros que tu alloues "
@@ -62,11 +44,10 @@ def _charge(message: Any) -> dict | None:
 
 
 def champs_manquants(message: Any) -> tuple[str, ...]:
-    """Les champs que ce résultat d'outil déclare manquants, s'il en déclare.
+    """Les champs manquants déclarés par ce résultat d'outil.
 
-    Un champ sans question connue est ÉCARTÉ plutôt que posé maladroitement :
-    mieux vaut laisser le modèle expliquer le manque que d'ouvrir un
-    questionnaire dont l'intitulé serait un nom de variable.
+    Un champ absent de `QUESTIONS` est écarté : mieux vaut laisser le modèle
+    expliquer le manque qu'ouvrir un questionnaire intitulé d'un nom de variable.
     """
     charge = _charge(message)
     if not charge or charge.get("status") != STATUT:
@@ -78,11 +59,10 @@ def champs_manquants(message: Any) -> tuple[str, ...]:
 
 
 def deja_demande(messages: list, champs: tuple[str, ...]) -> bool:
-    """A-t-on DÉJÀ posé ces questions sur ce fil ?
+    """Ces questions ont déjà été posées sur ce fil.
 
-    Sans cette garde, un modèle qui rappellerait l'outil sans reporter la réponse
-    relancerait le questionnaire indéfiniment. Un correctif qui boucle est pire
-    que le défaut qu'il corrige : le défaut, lui, rendait la main.
+    Garde anti-boucle : un modèle qui rappelle l'outil sans reporter la réponse
+    relancerait sinon le questionnaire indéfiniment.
     """
     attendues = {QUESTIONS[c]["question"] for c in champs}
     for message in reversed(messages):
@@ -101,38 +81,17 @@ def deja_demande(messages: list, champs: tuple[str, ...]) -> bool:
 
 
 def apres_les_outils(state: dict) -> str:
-    """Arête conditionnelle après le nœud d'outils.
+    """Quel nœud de demande suit le nœud d'outils, ou « chatbot ».
 
-    Quatre issues : enregistrer une réponse d'autorisation, poser une question de
-    clarification, demander une autorisation, ou rendre la main au modèle.
-
-    UN SEUL questionnaire en vol, tous genres confondus. Une demande qui arrive
-    alors que le slot est pris repart vers le modèle — le tour se termine en
-    disant que l'autorisation manque, et il réessaiera. Elle n'est ni mise en
-    file, ni substituée à celle en cours : écraser une confirmation en attente
-    la ferait disparaître sans que personne ait répondu.
+    Une seule demande peut être en vol par fil : `interrupt()` arrête le graphe,
+    donc aucun second nœud ne s'exécute avant la réponse.
     """
-    from src.orchestrator import confirmation
-
     messages = state.get("messages") or []
     if not messages:
         return "chatbot"
     dernier = messages[-1]
 
-    # 1. Une réponse d'autorisation prime : elle LIBÈRE le slot, donc la traiter
-    #    en dernier bloquerait tout le reste.
-    if confirmation.reponse_de_confirmation(dernier) is not None:
-        return "enregistrer_autorisation"
-
-    # 2. Une réponse de clarification rend le slot sans autre effet.
-    en_cours = confirmation.en_vol()
-    if (en_cours and en_cours["genre"] == "clarification"
-            and getattr(dernier, "tool_call_id", None) == en_cours["tool_call_id"]):
-        confirmation.liberer(en_cours["tool_call_id"])
-        return "chatbot"
-
-    if en_cours is not None:
-        return "chatbot"          # slot occupé : refus, jamais écrasement
+    from src.orchestrator import confirmation
 
     champs = champs_manquants(dernier)
     if champs and not deja_demande(messages[:-1], champs):
@@ -141,31 +100,45 @@ def apres_les_outils(state: dict) -> str:
     if confirmation.commande_a_confirmer(dernier):
         return "confirmer"
 
+    from src.orchestrator.revision import revision_attendue
+
+    if revision_attendue(state):
+        return "reviser"
+
+    from src.orchestrator.envoi import envoi_attendu
+
+    if envoi_attendu(state):
+        return "envoyer"
+
     return "chatbot"
 
 
 def clarifier(state: dict) -> dict:
-    """Émet l'appel d'outil que le modèle aurait dû faire.
+    """Pose les questions, puis réinscrit l'échange dans l'historique.
 
-    Un `AIMessage` sans texte et porteur d'un `tool_call` : indiscernable, pour
-    la suite du graphe, d'un appel que le modèle aurait décidé. Toute la
-    machinerie de reprise — placeholder, `as_node`, `RemoveMessage` — fonctionne
-    sans être touchée, ce qui est le point : ces chemins-là ont coûté cher à
-    stabiliser et n'ont aucune raison d'être rouverts.
+    `interrupt()` rend la réponse au nœud, pas à la conversation : l'échange est
+    réinscrit en appel d'outil + résultat, forme que le modèle et `deja_demande`
+    savent relire.
     """
-    from src.orchestrator import confirmation
-
     champs = champs_manquants(state["messages"][-1])
-    questions = [dict(QUESTIONS[c]) for c in champs]
+    questions = tuple(
+        Question(texte=QUESTIONS[c]["question"],
+                 choix=tuple(QUESTIONS[c].get("choices") or ()))
+        for c in champs)
+
+    reponses = demander(Demande(genre=CLARIFICATION, cle=",".join(champs),
+                                questions=questions))
+
+    # ── À partir d'ici : une seule fois ─────────────────────────────────────
     identifiant = f"clarif_{uuid4().hex[:16]}"
-    # Le slot est partagé avec les confirmations : une question posée pendant
-    # qu'une autorisation attend rendrait les deux illisibles.
-    confirmation.reserver("clarification", ",".join(champs), identifiant)
-    return {"messages": [AIMessage(
-        content="",
-        tool_calls=[{
+    echange = {q.texte: r for q, r in zip(questions, reponses)}
+    return {"messages": [
+        AIMessage(content="", tool_calls=[{
             "name": "ask_clarification",
-            "args": {"questions": questions},
+            "args": {"questions": [{"question": q.texte, "choices": list(q.choix)}
+                                   for q in questions]},
             "id": identifiant,
-        }],
-    )]}
+        }]),
+        ToolMessage(content=json.dumps({"answers": echange}, ensure_ascii=False),
+                    tool_call_id=identifiant, name="ask_clarification"),
+    ]}

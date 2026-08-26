@@ -115,11 +115,29 @@ def test_le_specialist_garde_la_main_sur_un_projet_de_code():
 
 
 def test_les_changements_proposes_sont_bien_consommes():
-    """Sans ce drain, `edit_file` empilerait des propositions que personne
-    n'applique — un cul-de-sac différent, mais un cul-de-sac."""
+    """Sans drain, `edit_file` empilerait des propositions que personne
+    n'applique — un cul-de-sac différent, mais un cul-de-sac.
+
+    Le drain était entièrement dans le terminal ; il est maintenant partagé, et
+    ce partage EST le correctif : la revue vit dans le graphe, donc l'API en
+    bénéficie aussi, alors qu'elle laissait auparavant les propositions en
+    suspens sans que rien ne le dise.
+
+    Ce test vérifie donc les deux moitiés, et surtout qu'aucune ne manque : le
+    mode `auto` écrit côté terminal, la revue passe par le nœud.
+    """
+    import inspect
     from pathlib import Path
 
     source = (Path(__file__).resolve().parents[1]
               / "src" / "ui" / "streaming.py").read_text(encoding="utf-8")
-    assert "pending_changes" in source
-    assert "auto_write_all" in source and "review_pending" in source
+    assert "pending_changes" in source and "auto_write_all" in source, (
+        "le mode auto n'écrit plus rien : les propositions s'empileraient")
+
+    from src.orchestrator import revision
+    from src.orchestrator.clarification import apres_les_outils
+
+    assert "reviser" in inspect.getsource(apres_les_outils), (
+        "le routeur ne mène jamais à la revue : en mode `ask`, plus rien ne "
+        "consomme les propositions")
+    assert callable(revision.reviser) and callable(revision.appliquer)

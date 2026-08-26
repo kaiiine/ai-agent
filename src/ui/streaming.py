@@ -358,6 +358,26 @@ def _attachment_hint() -> str:
     return f"  {names}  "
 
 
+def _demande_du_graphe(graph, config):
+    """La demande en attente sur ce fil, ou None.
+
+    Lue dans l'état, pas dans le flux : `interrupt()` arrête l'exécution, il ne
+    produit pas de message.
+    """
+    from src.orchestrator.hitl import Demande
+
+    try:
+        instantane = graph.get_state(config)
+    except Exception:
+        return None
+    for tache in getattr(instantane, "tasks", ()) or ():
+        for interruption in getattr(tache, "interrupts", ()) or ():
+            valeur = getattr(interruption, "value", None)
+            if isinstance(valeur, dict) and valeur.get("questions") is not None:
+                return Demande.depuis(valeur)
+    return None
+
+
 def _debug_prompt(state: dict, graph, cfg: SessionConfig):
     try:
         from src.llm.prompts import build_system_prompt
@@ -896,18 +916,7 @@ def _stream_message(graph, text: str, cfg: SessionConfig) -> None:
                 node = meta.get("langgraph_node") or "unknown"
                 if isinstance(msg, ToolMessage):
                     tool_name = getattr(msg, "name", None) or getattr(msg, "tool_name", None) or meta.get("tool", "tool")
-                    if tool_name == "gmail_send_email":
-                        _safe_stop(live, stop_thinking, t)
-                        from .review import review_email
-                        action, refinement = review_email()
-                        if action == "send":
-                            pending_refinements_inner.append("Email envoyé avec succès.")
-                        elif action == "cancel":
-                            pending_refinements_inner.append("Envoi annulé par l'utilisateur.")
-                        elif action == "modify" and refinement:
-                            pending_refinements_inner.append(f"L'utilisateur veut modifier le mail : {refinement}")
-                        live.start(refresh=False)
-                    elif tool_name == "dev_plan_step_done":
+                    if tool_name == "dev_plan_step_done":
                         stop_thinking.set()
                         live.update(Text(""))
                         live.stop()
@@ -1680,61 +1689,15 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                         "message": "Fichier déjà appliqué.",
                     }
             else:
-                # HITL review — temporarily stop Live to free the terminal
-                try:
-                    live.update(Text(""))
-                    live.stop()
-                except Exception:
-                    pass
-                from .review import review_single_latest
-                action, refinement = review_single_latest()
-                # Resume Live after review
-                stop_thinking.clear()
-                try:
-                    live.start(refresh=False)
-                except Exception:
-                    pass
-                new_t = threading.Thread(
-                    target=_make_thinking_loop(stop_thinking, live, compile_mode, activity=activity), daemon=True
-                )
-                new_t.start()
-                if _thinking_thread:
-                    _thinking_thread[0] = new_t
-                elif _thinking_thread is not None:
-                    _thinking_thread.append(new_t)
-                if action == "apply":
-                    override = {
-                        "status": "accepted",
-                        "path": args.get("path", ""),
-                        "awaiting_confirmation": False,
-                        "message": "Fichier écrit avec succès.",
-                    }
-                elif action == "reject":
-                    override = {
-                        "status": "rejected",
-                        "path": args.get("path", ""),
-                        "message": "L'utilisateur a refusé ce changement. N'écris pas ce fichier en l'état.",
-                    }
-                elif action == "nothing":
-                    # Rien à relire : l'agent doit corriger son appel, pas deviner.
-                    override = {
-                        "status": "error",
-                        "path": args.get("path", ""),
-                        "error": ("Aucune proposition n'est arrivée jusqu'à la revue — "
-                                  "l'appel propose_file_change n'a rien déposé. "
-                                  "Vérifie son résultat : un plan est-il actif "
-                                  "(dev_plan_create) ? L'utilisateur n'a RIEN refusé."),
-                    }
-                elif action == "refine" and refinement:
-                    override = {
-                        "status": "needs_refinement",
-                        "path": args.get("path", ""),
-                        "feedback": refinement,
-                        "message": (
-                            f"L'utilisateur demande des modifications : {refinement}. "
-                            f"Prends en compte ce feedback et rappelle {tool_name} corrigé."
-                        ),
-                    }
+                # Mode `ask` : le nœud `reviser` fait la revue, après le nœud
+                # d'outils — donc plusieurs fichiers se relisent d'un bloc.
+                override = {
+                    "status": "proposed",
+                    "path": args.get("path", ""),
+                    "awaiting_confirmation": True,
+                    "message": ("Proposition enregistrée. L'utilisateur la relira "
+                                "avant écriture ; n'annonce rien comme écrit."),
+                }
 
         # ── Notebook cell HITL ────────────────────────────────────────────────
         elif tool_name in ("notebook_edit_cell", "notebook_insert_cell"):
@@ -1756,50 +1719,14 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 else:
                     override = {"status": "accepted", "awaiting_confirmation": False}
             else:
-                try:
-                    live.update(Text(""))
-                    live.stop()
-                except Exception:
-                    pass
-                from .review import review_latest_cell_change
-                action, refinement = review_latest_cell_change()
-                stop_thinking.clear()
-                try:
-                    live.start(refresh=False)
-                except Exception:
-                    pass
-                new_t = threading.Thread(
-                    target=_make_thinking_loop(stop_thinking, live, compile_mode, activity=activity), daemon=True
-                )
-                new_t.start()
-                if _thinking_thread:
-                    _thinking_thread[0] = new_t
-                elif _thinking_thread is not None:
-                    _thinking_thread.append(new_t)
-                if action == "apply":
-                    override = {"status": "accepted", "awaiting_confirmation": False}
-                elif action == "reject":
-                    override = {
-                        "status": "rejected",
-                        "message": "L'utilisateur a refusé ce changement. Ne modifie pas cette cellule en l'état.",
-                    }
-                elif action == "nothing":
-                    # Rien à relire : l'agent doit corriger son appel, pas deviner.
-                    override = {
-                        "status": "error",
-                        "error": ("Aucune proposition n'est arrivée jusqu'à la revue — "
-                                  "notebook_edit_cell n'a rien déposé. "
-                                  "L'utilisateur n'a RIEN refusé."),
-                    }
-                elif action == "refine" and refinement:
-                    override = {
-                        "status": "needs_refinement",
-                        "feedback": refinement,
-                        "message": (
-                            f"L'utilisateur demande des modifications : {refinement}. "
-                            "Rappelle notebook_edit_cell avec le contenu corrigé."
-                        ),
-                    }
+                # Mode `ask` : le nœud `reviser` traite cellules et fichiers
+                # ensemble.
+                override = {
+                    "status": "proposed",
+                    "awaiting_confirmation": True,
+                    "message": ("Proposition enregistrée. L'utilisateur la relira "
+                                "avant écriture ; n'annonce rien comme écrit."),
+                }
 
         # Restart thinking so LLM-think time shows animation (HITL branches cleared it already)
         if stop_thinking.is_set():
@@ -1836,139 +1763,7 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
 
                 if isinstance(msg, ToolMessage):
                     tool_name = getattr(msg, "name", None) or getattr(msg, "tool_name", None) or meta.get("tool", "tool")
-                    if tool_name == "gmail_send_email":
-                        _safe_stop(live, stop_thinking, _thinking_thread[0] if _thinking_thread else None)
-                        from .review import review_email
-                        action, refinement = review_email()
-                        if action == "send":
-                            pending_refinements.append("Email envoyé avec succès.")
-                        elif action == "cancel":
-                            pending_refinements.append("Envoi annulé par l'utilisateur.")
-                        elif action == "modify" and refinement:
-                            pending_refinements.append(f"L'utilisateur veut modifier le mail : {refinement}")
-                        live.start(refresh=False)
-                        new_t = _redemarrer_animation(
-                            stop_thinking, live, _thinking_thread, compile_mode, activity)
-                    elif tool_name == "ask_clarification":
-                        import json as _json
-                        try:
-                            content = msg.content
-                            if not isinstance(content, str):
-                                content = _json.dumps(content)
-                            payload = _json.loads(content)
-                            questions = payload.get("questions", []) if isinstance(payload, dict) else []
-                        except Exception:
-                            questions = []
-                        _safe_stop(live, stop_thinking, _thinking_thread[0] if _thinking_thread else None)
-                        from .review import ask_user_questions
-                        try:
-                            answers = ask_user_questions(questions)
-                        except Exception as _qe:
-                            console.print(Text(f"  erreur questionnaire : {_qe}", style="red"))
-                            answers = {}
-                        # Remplace le ToolMessage placeholder par les vraies réponses dans l'état du graph.
-                        # IMPORTANT : msg.id (l'objet streamé en direct) vaut encore None ici — l'id réel
-                        # n'est attribué par LangGraph qu'au moment du commit dans l'état persistant.
-                        # Il faut donc relire l'état via get_state() pour cibler le bon message par
-                        # tool_call_id (fiable), sinon le remplacement ne matche rien et se perd
-                        # silencieusement — la réponse de l'utilisateur n'atteint jamais le LLM.
-                        try:
-                            from langchain_core.messages import ToolMessage as _TM
-                            _real_id = msg.tool_call_id  # fallback si la relecture échoue
-                            try:
-                                _snap = graph.get_state(config)
-                                _placeholder = next(
-                                    (
-                                        m for m in reversed(_snap.values.get("messages", []))
-                                        if isinstance(m, _TM) and m.tool_call_id == msg.tool_call_id
-                                    ),
-                                    None,
-                                )
-                                if _placeholder is not None:
-                                    _real_id = _placeholder.id
-                            except Exception:
-                                pass
-                            updated = _TM(
-                                content=_json.dumps({"answers": answers}),
-                                tool_call_id=msg.tool_call_id,
-                                name="ask_clarification",
-                                id=_real_id,
-                            )
-                            # `as_node` n'est PAS cosmétique : sans lui la reprise ne
-                            # replanifie aucun nœud et le tour meurt sans un mot.
-                            graph.update_state(config, {"messages": [updated]},
-                                               as_node=_NOEUD_OUTILS)
-                            # `add_messages` ne REMPLACE que si l'id correspond à un
-                            # message DÉJÀ dans l'état ; sinon il AJOUTE. Le placeholder
-                            # `{"awaiting_input": true}` restait alors présent À CÔTÉ des
-                            # réponses : le modèle voyait « en attente de réponse » et
-                            # reposait les mêmes questions. On répare explicitement en
-                            # supprimant tout placeholder résiduel (RemoveMessage).
-                            try:
-                                from langchain_core.messages import RemoveMessage as _RM
-
-                                _after = graph.get_state(config)
-                                _same = [
-                                    m for m in _after.values.get("messages", [])
-                                    if isinstance(m, _TM) and m.tool_call_id == msg.tool_call_id
-                                ]
-                                _stale = [
-                                    m for m in _same
-                                    if "answers" not in (
-                                        m.content if isinstance(m.content, str)
-                                        else _json.dumps(m.content)
-                                    )
-                                ]
-                                if _stale:
-                                    graph.update_state(
-                                        config,
-                                        {"messages": [_RM(id=m.id) for m in _stale if m.id]},
-                                        as_node=_NOEUD_OUTILS,
-                                    )
-                                    _after = graph.get_state(config)
-                                    _same = [
-                                        m for m in _after.values.get("messages", [])
-                                        if isinstance(m, _TM)
-                                        and m.tool_call_id == msg.tool_call_id
-                                    ]
-                                _ok = any(
-                                    "answers" in (
-                                        m.content if isinstance(m.content, str)
-                                        else _json.dumps(m.content)
-                                    )
-                                    for m in _same
-                                )
-                                if not _ok or len(_same) != 1:
-                                    console.print(Text(
-                                        f"  ⚠ réponses mal injectées ({len(_same)} message(s), "
-                                        f"answers={_ok}) — le modèle risque de reposer "
-                                        f"les questions", style="yellow"))
-                                # Les réponses peuvent être PARFAITEMENT injectées et
-                                # n'être jamais lues : sans nœud replanifié, la reprise
-                                # ne réveille personne. C'est la panne muette qu'on
-                                # refuse de laisser passer sans le dire.
-                                if not _after.next:
-                                    console.print(Text(
-                                        "  ⚠ reprise non planifiée après le questionnaire — "
-                                        "les réponses n'atteindront pas le modèle",
-                                        style="yellow"))
-                            except Exception as _ve:
-                                console.print(Text(
-                                    f"  ⚠ vérification d'injection impossible : {_ve}",
-                                    style="yellow"))
-                        except Exception as _ue:
-                            # Ne JAMAIS perdre les réponses en silence.
-                            console.print(Text(
-                                f"  ⚠ échec d'injection des réponses : {_ue}", style="yellow"))
-                        try:
-                            live.start(refresh=False)
-                        except Exception:
-                            pass
-                        new_t = _redemarrer_animation(
-                            stop_thinking, live, _thinking_thread, compile_mode, activity)
-                        _needs_stream_restart = True
-                        break
-                    elif tool_name == "run_coding_agent":
+                    if tool_name == "run_coding_agent":
                         # Stop coding-specialist thinking thread, restart for orchestrator response
                         compile_mode.clear()
                         new_t = _redemarrer_animation(
@@ -2074,6 +1869,22 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                             update_live_markdown(live, response_content, deb, cursor=True)
                     else:
                         update_live_markdown(live, response_content, deb, cursor=True)
+
+            # ── Le graphe attend une réponse ? ──────────────────────────
+            # `stream_mode="messages"` ne remonte pas les interruptions : on les
+            # lit dans l'état, une fois le flux épuisé.
+            _demande = _demande_du_graphe(graph, config)
+            if _demande is not None:
+                _safe_stop(live, stop_thinking,
+                           _thinking_thread[0] if _thinking_thread else None)
+                from src.orchestrator.hitl import reponse as _reponse_hitl
+
+                from .review import servir_demande
+                _stream_input = _reponse_hitl(servir_demande(_demande))
+                live.start(refresh=False)
+                _redemarrer_animation(stop_thinking, live, _thinking_thread,
+                                      compile_mode, activity)
+                continue
 
             if _needs_stream_restart:
                 _stream_input = None
@@ -2198,21 +2009,12 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     # ── Post-stream: prune stale messages if compression happened ────────────
     _prune_after_compression(graph, config)
 
-    # ── Post-stream: write files or ask ───────────────────────────────────────
+    # ── Post-flux : écrire ce que le mode `auto` autorise ────────────────────
+    # La revue est faite par le nœud `reviser` ; `auto` n'a rien à demander.
     from src.agents.coding.pending import pending_changes
-    if pending_changes:
-        if get_mode() == "auto":
-            from .review import auto_write_all
-            auto_write_all(console)
-        else:
-            # Fallback: batch review for any remaining (edge cases)
-            while pending_changes:
-                from .review import review_pending
-                action, refinement = review_pending()
-                if action == "refine" and refinement:
-                    pending_refinements.append(refinement)
-                else:
-                    break
+    if pending_changes and get_mode() == "auto":
+        from .review import auto_write_all
+        auto_write_all(console)
 
     # ── Post-stream: plan HITL ────────────────────────────────────────────────
     from src.ui.plan_mode import is_active as _is_plan_active

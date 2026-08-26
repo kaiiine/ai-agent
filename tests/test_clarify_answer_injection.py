@@ -216,26 +216,31 @@ def test_avec_as_node_le_modele_relit_les_reponses():
 
 
 def test_l_ui_replanifie_bien_la_reprise():
-    """Les deux tests ci-dessus prouvent le MÉCANISME ; celui-ci prouve que l'UI
-    s'en sert. Sans lui, retirer `as_node` du site d'appel laisserait la suite
-    verte et la panne intacte.
+    """L'UI reprend-elle vraiment le graphe après une réponse ?
 
-    Les DEUX `update_state` du bloc sont concernés : le second (nettoyage du
-    placeholder résiduel) remettrait `next` à `()` et annulerait le premier.
+    Ce test gardait un mécanisme fait main : un `ToolMessage` placeholder
+    remplacé par `update_state(..., as_node=...)`, où l'oubli d'`as_node`
+    laissait la suite verte et le tour mort — l'utilisateur répondait, et rien ne
+    repartait.
+
+    Ce mécanisme a disparu au profit d'`interrupt()`. L'intention, elle, reste :
+    une réponse doit RELANCER le graphe. C'est maintenant `Command(resume=...)`
+    qui le fait, et ce test vérifie que l'UI s'en sert — retirer la reprise du
+    site d'appel laisserait encore la suite verte sans lui.
     """
     source = pathlib.Path("src/ui/streaming.py").read_text(encoding="utf-8")
-    debut = source.rindex('elif tool_name == "ask_clarification"')
-    bloc = source[debut:source.index('elif tool_name == "run_coding_agent"', debut)]
 
-    appels = bloc.count("graph.update_state(")
-    assert appels >= 2, "le bloc questionnaire doit écrire l'état"
-    assert bloc.count("as_node=") == appels, \
-        "chaque update_state du questionnaire doit replanifier le nœud suivant"
+    assert "_demande_du_graphe(" in source, (
+        "l'UI ne cherche plus si le graphe attend une réponse")
+    assert "servir_demande(" in source, "l'UI ne sert plus la demande"
+    assert "_reponse_hitl(" in source, (
+        "la réponse n'est pas renvoyée au graphe : le tour mourrait en silence")
 
-    # Le repli ne doit plus relancer le tour depuis le message d'origine.
-    assert "graph.invoke(_stream_input, config=config)" in source
-    assert "graph.invoke(current_state, config=config)" not in source
-
+    # La reprise doit RELANCER la boucle, pas tomber dans le `break` qui termine
+    # le tour — c'est l'équivalent exact de l'`as_node` oublié d'autrefois.
+    bloc = source[source.index("_demande_du_graphe(graph, config)"):]
+    assert bloc.index("continue") < bloc.index("break"), (
+        "après avoir répondu, le tour se termine au lieu de reprendre")
 
 def test_le_noeud_outils_de_l_ui_existe_dans_l_orchestrateur():
     """`as_node` est un nom en dur. Le renommer côté graph casserait la reprise en

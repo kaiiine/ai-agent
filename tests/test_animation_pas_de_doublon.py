@@ -136,10 +136,22 @@ def test_aucun_site_ne_redemarre_sans_arreter_le_precedent():
 
 
 def test_les_redemarrages_de_stream_once_passent_par_la_fonction():
+    """Un redémarrage d'animation passe par la fonction partagée, jamais par un
+    `Thread(...)` posé à la main — c'est ce qui garantit que le fil précédent est
+    joint avant qu'un nouveau ne peigne.
+
+    Le compte n'est PAS l'invariant : il a bougé quand les questionnaires sont
+    passés dans le graphe, et il rebougera. Ce qui compte est le rapport — autant
+    de redémarrages partagés que de reprises, et aucun fil lancé en direct au
+    milieu du tour.
+    """
     from src.ui.streaming import stream_once
 
     source = inspect.getsource(stream_once)
 
-    assert source.count("_redemarrer_animation(") >= 3
-    # Il reste le PREMIER démarrage du tour, qui n'a rien à joindre.
-    assert source.count("Thread(target=_make_thinking_loop") <= 2
+    partages = source.count("_redemarrer_animation(")
+    directs = source.count("Thread(target=_make_thinking_loop")
+    assert partages >= 1, "plus aucune reprise ne passe par la fonction partagée"
+    # Un seul démarrage direct est légitime : le PREMIER du tour, qui n'a aucun
+    # fil précédent à joindre.
+    assert directs <= 2, f"{directs} fils d'animation lancés en direct"

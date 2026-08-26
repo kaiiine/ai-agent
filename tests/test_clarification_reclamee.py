@@ -74,20 +74,46 @@ def test_le_graphe_route_vers_le_noeud_de_clarification():
     assert apres_les_outils({"messages": [_resultat()]}) == "clarifier"
 
 
-def test_le_noeud_emet_un_VRAI_appel_d_outil():
-    """Le cœur du correctif. Un texte, si impératif soit-il, ne porte pas de
-    `tool_call_id` — donc rien à reprendre, donc pas de questionnaire."""
-    [message] = clarifier({"messages": [_resultat()]})["messages"]
+def test_le_graphe_s_arrete_et_pose_la_question():
+    """Le cœur du correctif. Une consigne en texte, si impérative soit-elle, ne
+    fait rien : c'est le graphe qui s'arrête, et il attend."""
+    from typing import TypedDict
 
-    assert isinstance(message, AIMessage)
-    assert len(message.tool_calls) == 1
-    appel = message.tool_calls[0]
-    assert appel["name"] == "ask_clarification"
-    assert appel["id"], "sans identifiant, la reprise ne peut pas recoller la réponse"
+    from langgraph.checkpoint.memory import MemorySaver
+    from langgraph.graph import END, START, StateGraph
 
-    [question] = appel["args"]["questions"]
-    assert "bankroll" in question["question"].lower()
-    assert question["choices"], "un questionnaire sans choix demande de taper un montant"
+    from src.orchestrator.hitl import CLARIFICATION, demande_en_attente, reponse
+
+    class Etat(TypedDict):
+        messages: list
+
+    g = StateGraph(Etat)
+    g.add_node("clarifier", clarifier)
+    g.add_edge(START, "clarifier")
+    g.add_edge("clarifier", END)
+    app = g.compile(checkpointer=MemorySaver())
+    cfg = {"configurable": {"thread_id": "clarif"}}
+
+    sortie = app.invoke({"messages": [_resultat()]}, cfg)
+    demande = demande_en_attente(sortie)
+
+    assert demande is not None, "le graphe n'a pas marqué de pause"
+    assert demande.genre == CLARIFICATION
+    assert demande.cle == "bankroll"
+    assert "bankroll" in demande.questions[0].texte.lower()
+    assert demande.questions[0].choix, (
+        "sans choix, l'utilisateur doit taper un montant à la main")
+
+    finale = app.invoke(reponse(["100 €"]), cfg)
+
+    # L'échange est RÉINSCRIT dans l'historique : `interrupt()` rend la réponse
+    # au nœud, pas à la conversation. Sans cette réinscription, le modèle
+    # reposerait la même question au tour suivant, faute de savoir qu'elle a
+    # déjà été posée — et la garde anti-boucle n'aurait rien à relire.
+    contenus = [m.content for m in finale["messages"] if isinstance(m.content, str)]
+    assert any("100" in c for c in contenus), "la réponse n'atteint pas le modèle"
+    assert deja_demande(finale["messages"], ("bankroll",)), (
+        "la garde anti-boucle ne reconnaît pas l'échange réinscrit")
 
 
 def test_les_choix_proposes_n_incluent_pas_Autre():
@@ -157,5 +183,6 @@ def test_le_graphe_declare_le_noeud_et_ses_aretes():
     source = inspect.getsource(g)
     assert 'g.add_node("clarifier"' in source
     assert 'g.add_conditional_edges("tools", apres_les_outils' in source
-    assert 'g.add_edge("clarifier", "tools")' in source, (
-        "le questionnaire doit repasser par `tools` pour produire l'attente")
+    assert 'g.add_edge("clarifier", "chatbot")' in source, (
+        "le nœud rend la main au modèle : il a déjà les réponses, réinscrites "
+        "dans l'historique, et n'a plus rien à faire exécuter")

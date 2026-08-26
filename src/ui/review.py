@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 from rich.console import Console
+from rich.panel import Panel
 from rich.rule import Rule
 from rich.text import Text
 
@@ -739,3 +740,134 @@ def ask_user_questions(questions: list) -> dict:
     console.print(Rule(characters="·", style=f"dim {ACCENT}"))
     console.print()
     return answers
+
+
+def _servir_envoi(demande) -> list[str]:
+    """Affiche le brouillon et collecte la décision, sans envoyer.
+
+    L'envoi est fait par le nœud `envoi`, pas par le client.
+    """
+    from rich import box as rbox
+    from rich.console import Group as _Group
+    from rich.table import Table
+
+    champs = demande.extra or {}
+    console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+    entete = Text()
+    entete.append("  ✉  ", style=f"bold {ACCENT}")
+    entete.append("email en attente d'envoi", style=f"bold {ACCENT}")
+    console.print(entete)
+    console.print()
+
+    tbl = Table(box=rbox.SIMPLE_HEAD, show_header=False, padding=(0, 1))
+    tbl.add_column("", style=f"bold {ACCENT}", no_wrap=True, width=7)
+    tbl.add_column("", style="white")
+    tbl.add_row("À", champs.get("to") or "")
+    tbl.add_row("Objet", champs.get("subject") or "")
+
+    console.print(Panel(
+        _Group(tbl, Text(""), Text(champs.get("body") or "", style="white")),
+        box=_BOX, border_style=f"dim {ACCENT}",
+        title="[dim]brouillon[/dim]", title_align="left", padding=(1, 2),
+    ))
+    console.print()
+    console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+
+    if not _supports_raw_tty():
+        choix = _fallback_selector(_EMAIL_CHOICES)
+    else:
+        choix = _run_raw_selector(_EMAIL_CHOICES, on_cancel="cancel")
+    console.print()
+
+    # Une valeur inattendue vaut annulation : un mail parti par accident ne se
+    # rattrape pas, une annulation de trop se refait.
+    if choix == "send":
+        return ["Envoyer", ""]
+    if choix == "modify":
+        return ["Modifier", _ask_refinement() or ""]
+    return ["Annuler", ""]
+
+
+def _servir_diff(demande) -> list[str]:
+    """Affiche les diffs et collecte la décision.
+
+    Utilise `Demande.extra`, qui porte les changements complets — l'aperçu texte
+    du protocole est destiné aux clients sans rendu de diff.
+    """
+    from src.agents.coding.pending import FileChange
+
+    changements = [
+        FileChange(path=c.get("path", ""), original=c.get("original", ""),
+                   proposed=c.get("proposed", ""), description=c.get("description", ""))
+        for c in (demande.extra.get("changements") or [])
+    ]
+    cellules = [
+        CellChange(path=c.get("path", ""), cell_index=c.get("cell_index", -1),
+                   insert_after=c.get("insert_after", -1),
+                   cell_type=c.get("cell_type", "code"),
+                   original_source=c.get("original_source", ""),
+                   proposed_source=c.get("proposed_source", ""),
+                   description=c.get("description", ""))
+        for c in (demande.extra.get("cellules") or [])
+    ]
+    if not changements and not cellules:
+        return ["", ""]
+
+    console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+    nombre = len(changements) + len(cellules)
+    entete = Text()
+    entete.append("  ")
+    entete.append(f"{nombre} modification{'s' if nombre > 1 else ''} proposée"
+                  f"{'s' if nombre > 1 else ''}", style=f"bold {ACCENT}")
+    console.print(entete)
+    console.print()
+    for changement in changements:
+        _render_diff(changement)
+    # Rendu dédié : afficher une cellule comme un fichier perdrait son index et
+    # son type.
+    for cellule in cellules:
+        _render_cell_diff(cellule)
+    console.print(Rule(characters="·", style=f"dim {ACCENT}"))
+
+    choix = _run_selector()          # "apply" | "reject" | "refine"
+    if choix == "apply":
+        return ["Appliquer", ""]
+    if choix == "refine":
+        return ["Préciser", _ask_refinement() or ""]
+    return ["Refuser", ""]
+
+
+def servir_demande(demande) -> list[str]:
+    """Affiche une `Demande` et rend une réponse par question, dans l'ordre.
+
+    Le seul point où le TUI répond à une interruption du graphe. Le rendu dépend
+    du genre ; le client ne fait que montrer et rendre des chaînes.
+    """
+    if demande.genre == "diff":
+        return _servir_diff(demande)
+
+    if demande.genre == "envoi":
+        return _servir_envoi(demande)
+
+    if demande.apercu.strip():
+        console.print()
+        console.print(Panel(
+            Text(demande.apercu),
+            border_style=f"dim {ACCENT}",
+            title="[dim]à vérifier avant de répondre[/dim]",
+            title_align="left",
+            padding=(0, 2),
+        ))
+
+    posees = [{"question": q.texte, "choices": list(q.choix)} for q in demande.questions]
+    try:
+        reponses = ask_user_questions(posees)
+    except Exception as erreur:
+        console.print(Text(f"  erreur questionnaire : {erreur}", style="red"))
+        # Une panne d'affichage ne vaut pas accord : `hitl.accorde` lit le vide
+        # comme un refus.
+        return ["" for _ in demande.questions]
+
+    # `ask_user_questions` rend un dict indexé par le texte ; le graphe attend
+    # l'ordre. Une réponse absente rend "", jamais une valeur par défaut.
+    return [reponses.get(q.texte, "") for q in demande.questions]

@@ -1,39 +1,17 @@
 """Reconnaître une écriture de fichier dans une commande, et dire QUOI y sera écrit.
 
-L'ancienne détection était une liste de chaînes littérales — `"sed -i"`,
-`"cat >"`, `"tee /"`, `"echo > /"`. Elle avait deux défauts opposés.
+`analyser_ecriture` rend une `Ecriture` ou None. La détection est structurelle —
+une redirection est reconnue par sa forme, pas par ressemblance avec un exemple.
 
-Elle bloquait TROP PEU : `printf 'x' > f`, `echo x > f` sans slash, `tee f`
-sans slash, ou n'importe quel programme redirigé passaient tranquillement.
-Mesuré — sur cinq façons d'écrire `~/.ssh/config` à travers `ssh`, une seule
-était vue.
+Trois informations en sortent, et chacune décide d'un traitement différent
+dans `shell/tools.py` :
 
-Et elle bloquait TROP, au mauvais endroit : `ssh hôte "cat > …"` était refusé
-avec un message renvoyant vers `edit_file`, qui ne prend qu'un chemin LOCAL.
-Pour un fichier distant, ce n'était pas une porte manquante mais une porte
-impossible, et l'agent n'avait plus qu'à rendre un mode d'emploi.
+    cible / distante  → local, distant, ou modification sur place
+    contenu           → None si illisible ; JAMAIS deviné
+    composee          → l'opérateur qui enchaîne un AUTRE acte, s'il y en a un
 
-Ce module sépare donc trois questions que la liste confondait :
-
-    « est-ce une écriture ? »          → détection structurelle, pas lexicale
-    « QUOI y sera écrit ? »            → décide de ce qu'on peut montrer
-    « enchaîne-t-elle un autre acte ? » → décide si on peut demander l'accord
-
-La troisième est arrivée en dernier et commande les deux autres. Une commande
-composée porte un effet que la revue ne montre pas : `echo x > /etc/motd &&
-systemctl restart nginx` se lit « écrit /etc/motd », et l'approuver redémarre
-nginx. Elle est donc refusée, avec demande de découpage — découper nous-mêmes
-demanderait un parseur shell, et un parseur approximatif sur des commandes qui
-effacent des données est exactement la faute qu'on refuse.
-
-Pour ce qui reste, le traitement suit ce qu'on est capable de MONTRER :
-
-    contenu lisible, local  → un vrai diff, relu comme ceux d'`edit_file` ;
-                              la commande n'est jamais exécutée
-    contenu illisible       → la commande, la cible, le mode — et on DIT qu'on
-                              ne sait pas le reste
-    distant                 → confirmation, `edit_file` ne prenant qu'un chemin
-                              local
+Une commande composée est refusée : une confirmation ne peut porter que sur un
+acte, et `echo x > /etc/motd && systemctl restart nginx` en porte deux.
 """
 from __future__ import annotations
 
@@ -78,18 +56,10 @@ _COMPOSEE = re.compile(r"\|\||&&|;|\|")
 
 
 def _masquer_chaines(commande: str) -> str:
-    """La commande avec le CONTENU des chaînes citées neutralisé, longueurs
-    préservées.
+    """La commande avec le contenu des chaînes citées neutralisé.
 
-    Un `>` entre guillemets est du texte, pas un opérateur. Sans ce masquage,
-    `echo "a > b"` passait pour une écriture vers `b"` — un faux positif qui
-    BLOQUE une commande inoffensive en local et réclame une confirmation
-    imaginaire à distance. Mesuré sur neuf tournures adversariales : trois
-    étaient mal lues.
-
-    Les longueurs sont conservées pour que les positions trouvées sur la version
-    masquée désignent les mêmes caractères dans l'originale — on cherche donc
-    dans le masque et on découpe dans le texte réel.
+    Un `>` entre guillemets est du texte, pas un opérateur. Les longueurs sont
+    préservées : on cherche dans le masque, on découpe dans le texte réel.
     """
     sortie: list[str] = []
     quote: str | None = None
@@ -117,12 +87,10 @@ def _masquer_chaines(commande: str) -> str:
 
 
 def _masquer_heredoc(commande: str) -> str:
-    """La commande avec le CORPS du heredoc neutralisé, longueurs préservées.
+    """La commande avec le corps du heredoc neutralisé, longueurs préservées.
 
-    Le corps n'est pas cité : un `;` ou un `|` DANS le texte à écrire y reste
-    visible. Sans ce masquage, `cat > f <<EOF` suivi d'une ligne contenant un
-    tube passerait pour une commande composée — et le meilleur cas de tous,
-    celui où le contenu est intégralement lisible, serait refusé à tort.
+    Le corps n'est pas cité : un `;` ou un `|` dans le texte à écrire y reste
+    visible et passerait pour un opérateur.
     """
     m = _HEREDOC.search(commande)
     if not m:
@@ -131,10 +99,9 @@ def _masquer_heredoc(commande: str) -> str:
 
 
 def operateur_de_composition(commande: str) -> str | None:
-    """L'opérateur qui enchaîne un second acte, ou None si la commande est simple.
+    """L'opérateur qui enchaîne un second acte, ou None.
 
-    On cherche dans une version masquée deux fois : chaînes citées et corps de
-    heredoc neutralisés. Un `|` littéral dans du texte à écrire n'enchaîne rien.
+    Cherché hors des chaînes citées et du corps de heredoc.
     """
     masque = _masquer_chaines(_masquer_heredoc(commande))
     trouve = _COMPOSEE.search(masque)
@@ -157,12 +124,10 @@ class Ecriture:
         return "ajout à la fin" if self.ajoute else "écrasement complet"
 
     def apercu(self, max_lignes: int = 40, max_chars: int = 4000) -> str:
-        """Ce que l'utilisateur doit voir AVANT de confirmer.
+        """Ce que l'utilisateur doit voir avant de confirmer.
 
-        Une confirmation qui n'affiche que la commande demande d'approuver un
-        effet qu'on ne voit pas. Quand le contenu est déterminable, il est
-        montré ; quand il ne l'est pas, on le DIT plutôt que de laisser croire
-        que la commande a été comprise.
+        Montre le contenu quand il est déterminable ; le dit explicitement quand
+        il ne l'est pas.
         """
         ou = f"{self.hote}:{self.cible}" if self.distante else self.cible
         entete = [f"Fichier   : {ou}", f"Mode      : {self.mode}",
@@ -201,11 +166,8 @@ def _hote_distant(commande: str) -> tuple[str, str] | None:
 def _deshabiller(fragment: str) -> str:
     """La commande distante, sans les guillemets qui l'enveloppent.
 
-    On s'arrête au guillemet FERMANT, pas à la fin du fragment. Exiger que le
-    fragment se termine par le guillemet rendait `ssh h "echo x > /f" && rm -rf
-    /tmp` illisible : le fragment finissait par `p`, rien n'était déshabillé, le
-    masquage neutralisait ensuite l'écriture citée, et la commande passait le
-    garde SANS qu'aucune écriture ne soit vue — `rm` compris.
+    S'arrête au guillemet fermant, pas à la fin du fragment : `ssh h "…" && rm`
+    porte du texte après la commande distante.
     """
     fragment = fragment.strip()
     if not fragment or fragment[0] not in ('"', "'"):
@@ -222,17 +184,11 @@ def _deshabiller(fragment: str) -> str:
 
 
 def _contenu_de(commande: str) -> str | None:
-    """Le contenu EXACT du fichier après écriture, ou None s'il ne se lit pas.
+    """Le contenu exact du fichier après écriture, ou None s'il ne se lit pas.
 
-    Le saut de ligne final compte : `echo x > f` écrit `"x\\n"`, pas `"x"`. Tant
-    que ce texte ne servait qu'à un aperçu, l'écart était invisible ; il devient
-    un diff faux dès lors qu'on le compare au fichier existant.
-
-    `printf` porte des séquences que le shell interprète — `%s`, `\\n`, `\\t`. Les
-    rendre littéralement afficherait un contenu qui n'est pas celui qui sera
-    écrit. On préfère alors déclarer le contenu indéterminable : montrer une
-    approximation en la présentant comme le texte final serait le seul vrai
-    danger ici.
+    Saut de ligne final inclus : `echo x > f` écrit `"x\\n"`. Un `printf` portant
+    `%s` ou `\\n` est déclaré indéterminable plutôt que rendu littéralement —
+    montrer une approximation comme si c'était le texte final serait pire.
     """
     m = _HEREDOC.search(commande)
     if m:
@@ -251,22 +207,15 @@ def _contenu_de(commande: str) -> str | None:
 
 
 def analyser_ecriture(commande: str) -> Ecriture | None:
-    """L'écriture que cette commande effectue, ou None si elle n'en fait aucune.
-
-    La détection est STRUCTURELLE : une redirection est reconnue par sa forme,
-    pas parce qu'elle ressemble à l'un des cinq exemples d'une liste. `printf`,
-    `echo`, `cat`, un binaire quelconque ou un heredoc sont donc tous vus.
-    """
+    """L'écriture que cette commande effectue, ou None."""
     if not commande or not commande.strip():
         return None
 
     distant = _hote_distant(commande)
     hote, interne = (distant[0], distant[1]) if distant else (None, commande)
 
-    # Les DEUX niveaux comptent : `ssh h "écrit && rm"` cache son chaînage dans
-    # les guillemets, que `_masquer_chaines` neutralise sur la commande entière ;
-    # `ssh h "écrit" && rm` le porte au niveau externe. Manquer l'un des deux
-    # laisserait passer un acte non montré.
+    # Les deux niveaux comptent : `ssh h "écrit && rm"` cache son chaînage dans
+    # les guillemets, `ssh h "écrit" && rm` le porte à l'extérieur.
     compose = operateur_de_composition(commande) or operateur_de_composition(interne)
 
     # `scp`/`rsync` écrivent chez l'hôte sans redirection visible.

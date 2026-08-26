@@ -1,43 +1,24 @@
-"""Qui a le droit d'autoriser une commande — et ce n'est pas le modèle.
+"""Les autorisations d'exécuter une commande shell.
 
-`shell_run` portait un paramètre `confirmed: bool`. Le modèle le remplissait
-lui-même. Mesuré :
+Deux sources, aucune que le modèle puisse produire :
 
-    shell_run("rm -rf /tmp/zzz_axon_preuve", confirmed=True)
-      → status: ok      dossier supprimé, aucun humain n'a rien vu
+    accorder()  — un humain a répondu oui. Usage UNIQUE et péremption courte.
+    declarer()  — permission permanente écrite en config, pour les tâches
+                  planifiées où personne ne peut répondre.
 
-Un seul appel suffisait. Toute la politique « demander TOUJOURS confirmation »
-tenait dans une phrase de docstring adressée au modèle — c'est-à-dire dans une
-obéissance, pas dans une garantie.
+La clé est la commande exacte, à l'espacement de bord près : « la même commande
+à peu près » autoriserait une famille à partir d'un accord donné pour une seule.
 
-Ce magasin déplace l'autorisation hors de portée du modèle. Deux sources, une
-seule règle : aucune des deux n'est quelque chose que le modèle peut produire.
-
-    accorder()  — un humain a répondu « oui » à une question précise.
-                  Usage UNIQUE et péremption courte : un accord ne peut être ni
-                  rejoué plus tard, ni reporté sur une commande voisine.
-
-    declarer()  — une permission permanente écrite dans la config par
-                  l'utilisateur. Sert aux tâches planifiées, où personne n'est
-                  là pour répondre. Elle ne se consomme pas : c'est une règle,
-                  pas un jeton.
-
-La clé est la commande EXACTE, à l'espacement de bord près. Pas de normalisation
-plus large : accepter « la même commande à peu près » revient à autoriser une
-famille de commandes à partir d'un accord donné pour une seule.
-
-Le magasin vit CÔTÉ PROCESSUS, jamais dans l'état du graphe. Un état de graphe
-est persisté et rejouable : un rejeu de checkpoint pourrait alors ressusciter une
-autorisation déjà consommée, ce qui est exactement ce que « usage unique » doit
-empêcher.
+Le magasin vit côté processus, jamais dans l'état du graphe — qui est persisté et
+rejouable, donc capable de ressusciter une autorisation consommée.
 """
 from __future__ import annotations
 
 import threading
 import time
 
-#: Durée par défaut d'un accord humain. Court volontairement : un « oui » donné
-#: il y a dix minutes ne dit rien de la commande qu'on s'apprête à lancer.
+#: Durée d'un accord humain. Court : un « oui » d'il y a dix minutes ne dit rien
+#: de la commande qu'on s'apprête à lancer.
 DUREE_DEFAUT = 300
 
 _verrou = threading.Lock()
@@ -52,17 +33,16 @@ def _cle(commande: str) -> str:
 
 
 def accorder(commande: str, *, duree: int = DUREE_DEFAUT) -> None:
-    """Enregistre un accord HUMAIN, valable une fois et pour un temps borné."""
+    """Enregistre un accord humain, valable une fois et pour `duree` secondes."""
     with _verrou:
         _accordees[_cle(commande)] = time.monotonic() + duree
 
 
 def consommer(commande: str) -> bool:
-    """L'accord existe-t-il ? Si oui il est CONSOMMÉ, et ne resservira pas.
+    """L'accord existe et n'est pas périmé — et il est consommé au passage.
 
-    Consommer plutôt que consulter : sans cela, un « oui » donné pour une
-    commande autoriserait toutes ses répétitions pendant la durée de validité,
-    et une boucle du modèle pourrait la rejouer sans qu'on soit redemandé.
+    Consommer plutôt que consulter : sinon un « oui » autoriserait toutes les
+    répétitions de la commande pendant sa durée de validité.
     """
     cle = _cle(commande)
     with _verrou:
@@ -75,10 +55,9 @@ def consommer(commande: str) -> bool:
 
 
 def declarer(source: str, commandes: list[str]) -> None:
-    """Déclare les commandes qu'une source non interactive a le droit de lancer.
+    """Les commandes qu'une source non interactive a le droit de lancer.
 
-    `source` identifie qui déclare (« cron:3f2a »), pour qu'on puisse retirer ses
-    permissions sans toucher aux autres.
+    `source` identifie qui déclare (« cron:3f2a »), pour un retrait ciblé.
     """
     with _verrou:
         _declarees[source] = {_cle(c) for c in commandes if _cle(c)}
@@ -90,24 +69,23 @@ def retirer(source: str) -> None:
 
 
 def est_declaree(commande: str) -> bool:
-    """Une permission permanente couvre-t-elle cette commande, à l'identique ?"""
+    """Une permission déclarée couvre cette commande, à l'identique."""
     cle = _cle(commande)
     with _verrou:
         return any(cle in permises for permises in _declarees.values())
 
 
 def est_autorisee(commande: str) -> bool:
-    """La porte unique. Une permission déclarée, sinon un accord humain consommé.
+    """La porte unique : permission déclarée, sinon accord humain consommé.
 
-    L'ordre compte : une commande déclarée ne doit pas consommer l'accord humain
-    d'une commande identique en attente — ce serait perdre silencieusement une
-    confirmation, et faire croire qu'on l'a honorée.
+    L'ordre compte — une commande déclarée ne doit pas consommer l'accord humain
+    d'une commande identique en attente.
     """
     return est_declaree(commande) or consommer(commande)
 
 
 def reinitialiser() -> None:
-    """Vide tout. Pour les tests, et pour un changement de session."""
+    """Vide tout — tests et changement de session."""
     with _verrou:
         _accordees.clear()
         _declarees.clear()

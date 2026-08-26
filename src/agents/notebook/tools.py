@@ -34,6 +34,19 @@ class PendingCellStore:
     def pop_latest(self) -> CellChange | None:
         return self._changes.pop() if self._changes else None
 
+    @property
+    def items(self) -> list[CellChange]:
+        """Ce qui attend, sans le consommer.
+
+        Le nœud de revue montre puis décide, et le graphe rejoue le nœud entre
+        les deux : une lecture consommante ne trouverait plus rien au rejeu.
+        """
+        return list(self._changes)
+
+    def pop_all(self) -> list[CellChange]:
+        pris, self._changes = list(self._changes), []
+        return pris
+
     def clear(self) -> None:
         self._changes.clear()
 

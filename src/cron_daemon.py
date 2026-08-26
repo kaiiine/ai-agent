@@ -52,12 +52,16 @@ def _send_notification(channels: list[str], description: str, message: str) -> N
         _notify_slack(f"*{description}*\n{message}")
 
 # TODO: Move this function in the models.py file
-#: Les statuts par lesquels un outil REFUSE. Aucun ne lève d'exception.
+#: Les statuts par lesquels un outil refuse.
 _STATUTS_DE_REFUS = ("requires_confirmation", "blocked")
 
 
 def _refus_d_outil(messages: list) -> list[str]:
-    """Les commandes qu'un outil a refusé d'exécuter pendant ce tour."""
+    """Les commandes qu'un outil a refusé d'exécuter pendant ce tour.
+
+    Un refus rend un statut, il ne lève pas : sans cette lecture, une tâche
+    entièrement bloquée loguerait « ok ».
+    """
     refuses: list[str] = []
     for message in messages:
         contenu = getattr(message, "content", None)
@@ -111,10 +115,8 @@ def _run_task(task_id: str) -> None:
         "error": None,
     }
 
-    # Les permissions shell de CETTE tâche, déclarées par l'utilisateur dans sa
-    # config. Sans elles, une tâche planifiée ne peut lancer que ce que la
-    # classification reconnaît comme sûr — il n'y a personne pour répondre à une
-    # demande de confirmation.
+    # Sans permissions déclarées, la tâche ne lance que ce qui est reconnu sûr :
+    # personne n'est là pour répondre à une confirmation.
     source_autorisation = f"cron:{task['id']}"
     declarer(source_autorisation, list(task.get("commandes_autorisees") or []))
 
@@ -174,10 +176,8 @@ def _run_task(task_id: str) -> None:
         log_entry["result_summary"] = summary
         log_entry["status"] = "skipped" if stop else "ok"
 
-        # Un outil refusé ne lève PAS d'exception : il rend un statut. Sans cette
-        # lecture, une tâche dont toutes les commandes ont été bloquées loguait
-        # « ok » en n'ayant rien fait — un succès mensonger, pire qu'un échec
-        # bruyant, parce qu'il ne se voit nulle part.
+        # Un refus d'outil doit écraser le statut optimiste : sinon une tâche
+        # entièrement bloquée passe pour un succès.
         refus = _refus_d_outil(result_state.get("messages") or [])
         if refus:
             log_entry["status"] = "error"
@@ -196,8 +196,8 @@ def _run_task(task_id: str) -> None:
         log_entry["status"] = "error"
         log_entry["error"] = str(e)
     finally:
-        # Retiré dans TOUS les cas : une permission qui survivrait à la tâche
-        # profiterait au tour suivant, qui ne l'a pas demandée.
+        # Retiré dans tous les cas : une permission qui survit profiterait au
+        # tour suivant, qui ne l'a pas demandée.
         retirer(source_autorisation)
 
     log_entry["duration_ms"] = int((time.perf_counter() - start) * 1000)

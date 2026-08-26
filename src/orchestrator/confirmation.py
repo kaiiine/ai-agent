@@ -1,101 +1,35 @@
-"""L'accord de l'utilisateur, demandé par le graphe — jamais par le modèle.
+"""Le nœud qui demande l'accord d'exécuter une commande shell.
 
-`shell_run` rend `requires_confirmation` quand une commande est destructive ou
-non reconnue. Ce statut était produit à trois endroits et consommé NULLE PART :
-la suite dépendait entièrement du bon vouloir du modèle, qui pouvait aussi bien
-passer `confirmed=True` du premier coup. Mesuré :
+`shell_run` rend `requires_confirmation` ; ce nœud pose la question et, sur
+accord, inscrit l'autorisation puis réémet l'appel.
 
-    shell_run("rm -rf /tmp/zzz_axon_preuve", confirmed=True)
-      → status: ok      dossier supprimé, aucun humain n'a rien vu
-
-Le paramètre a disparu (cf. `shell/autorisation.py`). Ce module fournit l'autre
-moitié : c'est le GRAPHE qui pose la question, et lui seul qui inscrit l'accord.
-
-LE SLOT
--------
-Un seul questionnaire en vol, TOUS TYPES CONFONDUS — une clarification et une
-confirmation ne peuvent pas coexister. Une demande qui arrive alors que le slot
-est pris est REFUSÉE, pas mise en file et surtout pas écrasée.
-
-Refusée plutôt qu'en file, délibérément : une file ferait répondre à la question
-n°2 sur une commande qu'on n'a plus sous les yeux, et ajoute des bugs d'ordre et
-de péremption. Le refus est bruyant et rattrapable — le modèle réessaie une fois
-la première tranchée.
-
-L'invariant qui compte, et qu'un test surveille : AUCUN chemin ne libère le slot
-sans avoir accordé ou refusé. S'il en existait un, une confirmation se perdrait
-en silence — et on retomberait de fait sur « pas de confirmation du tout » sans
-que personne l'ait décidé.
-
-Le slot vit CÔTÉ PROCESSUS, jamais dans l'état du graphe : un état de graphe est
-persisté et rejouable, et un rejeu ressusciterait une autorisation consommée.
+L'accord est inscrit APRÈS `demander()` : ce qui précède est rejoué (cf. `hitl`).
 """
 from __future__ import annotations
 
 import json
-import threading
-import time
 from typing import Any
 from uuid import uuid4
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from src.agents.shell.autorisation import accorder
+from src.orchestrator.hitl import (
+    AUTORISATION,
+    Demande,
+    Question,
+    accorde,
+    demander,
+)
 
-#: Au-delà, un questionnaire sans réponse est considéré abandonné et le slot est
-#: rendu. Sans péremption, une session interrompue bloquerait toute confirmation
-#: ultérieure pour la durée du processus.
-PEREMPTION = 900
-
+#: Libellés affichés. Lequel vaut accord est déclaré sur la `Question`.
 OUI, NON = "Oui, exécuter", "Non, annuler"
 
-_verrou = threading.Lock()
-_en_vol: dict[str, Any] | None = None
-
-
-# ── Le slot ──────────────────────────────────────────────────────────────────
-def reserver(genre: str, cle: str, tool_call_id: str) -> bool:
-    """Prend le slot. Rend False s'il est déjà pris par autre chose."""
-    global _en_vol
-    with _verrou:
-        if _en_vol is not None:
-            if time.monotonic() - _en_vol["t"] < PEREMPTION:
-                return _en_vol["cle"] == cle      # ré-entrance sur la MÊME demande
-            # Périmé : on le rend, en le disant. Ce n'est pas un accord.
-            _en_vol = None
-        _en_vol = {"genre": genre, "cle": cle, "tool_call_id": tool_call_id,
-                   "t": time.monotonic()}
-        return True
-
-
-def liberer(tool_call_id: str | None = None) -> dict[str, Any] | None:
-    """Rend le slot et retourne ce qu'il contenait.
-
-    Passer `tool_call_id` protège d'une libération par un tour qui n'est pas
-    celui qui a réservé — c'est ce qui ferait disparaître une confirmation en
-    attente au profit d'une autre.
-    """
-    global _en_vol
-    with _verrou:
-        if _en_vol is None:
-            return None
-        if tool_call_id is not None and _en_vol["tool_call_id"] != tool_call_id:
-            return None
-        ancien, _en_vol = _en_vol, None
-        return ancien
-
-
-def en_vol() -> dict[str, Any] | None:
-    with _verrou:
-        if _en_vol and time.monotonic() - _en_vol["t"] >= PEREMPTION:
-            return None
-        return dict(_en_vol) if _en_vol else None
-
-
-def reinitialiser() -> None:
-    global _en_vol
-    with _verrou:
-        _en_vol = None
+#: Une décision prise dans un questionnaire est une entrée de l'utilisateur :
+#: elle arrive au modèle comme telle, jamais comme un `AIMessage` — que le TUI
+#: afficherait et que le modèle relirait comme son propre tour.
+def note_pour_le_modele(texte: str) -> HumanMessage:
+    return HumanMessage(content=texte)
 
 
 # ── Lecture des messages ─────────────────────────────────────────────────────
@@ -110,7 +44,7 @@ def _charge(message: Any) -> dict | None:
 
 
 def commande_a_confirmer(message: Any) -> str | None:
-    """La commande dont ce résultat d'outil réclame l'autorisation."""
+    """La commande dont ce résultat d'outil réclame l'autorisation, ou None."""
     charge = _charge(message)
     if not charge or charge.get("status") != "requires_confirmation":
         return None
@@ -118,72 +52,43 @@ def commande_a_confirmer(message: Any) -> str | None:
     return commande if isinstance(commande, str) and commande.strip() else None
 
 
-def _question(charge: dict, commande: str) -> dict[str, Any]:
-    """Ce que l'utilisateur doit lire AVANT de répondre.
+def _libelle(charge: dict, commande: str) -> str:
+    """L'intitulé de la question : le motif du blocage, puis la commande.
 
-    L'aperçu d'écriture est repris tel quel quand il existe : approuver une
-    commande sans voir ce qu'elle écrit, c'est approuver un effet inconnu.
+    L'aperçu d'écriture voyage à part, dans `Demande.apercu`.
     """
     motif = charge.get("reason")
     entete = {"destructive": "Commande DESTRUCTIVE",
               "inconnue": "Commande non reconnue comme sûre"}.get(motif, "Commande")
     if charge.get("host"):
         entete = f"Écriture sur {charge['host']} (machine DISTANTE)"
-    corps = [f"{entete} :", "", commande]
-    apercu = charge.get("preview")
-    if isinstance(apercu, str) and apercu.strip():
-        corps += ["", apercu]
-    return {"question": "\n".join(corps), "choices": [NON, OUI]}
+    return f"{entete} :\n\n{commande}"
 
 
 # ── Le nœud ──────────────────────────────────────────────────────────────────
 def confirmer(state: dict) -> dict:
-    """Émet le questionnaire d'autorisation. Réserve le slot au passage."""
+    """Demande l'accord, puis inscrit l'autorisation et réémet l'appel."""
     dernier = state["messages"][-1]
     charge = _charge(dernier) or {}
     commande = commande_a_confirmer(dernier) or ""
-    identifiant = f"confirm_{uuid4().hex[:16]}"
-    reserver("confirmation", commande, identifiant)
-    return {"messages": [AIMessage(
-        content="",
-        tool_calls=[{"name": "ask_clarification",
-                     "args": {"questions": [_question(charge, commande)]},
-                     "id": identifiant}],
-    )]}
 
+    reponses = demander(Demande(
+        genre=AUTORISATION,
+        cle=commande,
+        apercu=charge.get("preview") or "",
+        extra={k: charge[k] for k in ("host", "target", "reason") if k in charge},
+        questions=(Question(_libelle(charge, commande),
+                            choix=(NON, OUI), affirmatif=OUI),),
+    ))
 
-def reponse_de_confirmation(message: Any) -> tuple[str, bool] | None:
-    """(commande, accordée) si ce message répond au questionnaire en vol."""
-    charge = _charge(message)
-    if charge is None or "answers" not in charge:
-        return None
-    attendu = en_vol()
-    if not attendu or attendu["genre"] != "confirmation":
-        return None
-    if getattr(message, "tool_call_id", None) != attendu["tool_call_id"]:
-        return None
-    texte = json.dumps(charge.get("answers"), ensure_ascii=False)
-    return attendu["cle"], OUI in texte
+    # ── Après l'interruption : exécuté une seule fois ───────────────────────
+    if not accorde(reponses[0], Question(_libelle(charge, commande),
+                                         choix=(NON, OUI), affirmatif=OUI)):
+        return {"messages": [note_pour_le_modele(
+            f"L'utilisateur a refusé d'exécuter : {commande}. Ne la relance pas ; "
+            f"propose autre chose ou demande-lui ce qu'il préfère.")]}
 
-
-def enregistrer_reponse(state: dict) -> dict:
-    """Inscrit l'accord s'il y en a un, libère le slot dans TOUS les cas.
-
-    Un refus libère aussi : le slot ne doit pas rester pris parce que la réponse
-    était « non ». Et l'accord est inscrit AVANT la libération, pour qu'aucune
-    fenêtre ne laisse un slot libre sans que la décision soit enregistrée.
-    """
-    dernier = state["messages"][-1]
-    lu = reponse_de_confirmation(dernier)
-    if lu is None:
-        return {"messages": []}
-    commande, accordee = lu
-    if accordee:
-        accorder(commande)
-    liberer(getattr(dernier, "tool_call_id", None))
-    if not accordee:
-        return {"messages": [AIMessage(
-            content=f"L'utilisateur a refusé l'exécution de : {commande}")]}
+    accorder(commande)
     # Réémettre l'appel : sans cela, l'accord serait donné et rien ne partirait.
     return {"messages": [AIMessage(
         content="",
@@ -192,12 +97,7 @@ def enregistrer_reponse(state: dict) -> dict:
     )]}
 
 
-def apres_enregistrement(state: dict) -> str:
-    """Où aller après avoir inscrit la décision.
-
-    Un ACCORD réémet l'appel `shell_run` : il doit repasser par le nœud d'outils.
-    Un REFUS ne produit qu'un message : l'envoyer à `tools` planterait, puisqu'il
-    ne porte aucun appel. Distinguer les deux est la raison d'être de cette arête.
-    """
+def apres_confirmation(state: dict) -> str:
+    """« tools » si l'appel a été réémis, « chatbot » sinon."""
     dernier = (state.get("messages") or [None])[-1]
     return "tools" if getattr(dernier, "tool_calls", None) else "chatbot"
