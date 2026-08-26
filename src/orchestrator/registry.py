@@ -3,6 +3,7 @@ from typing import List
 import json
 
 
+from src.agents.deep.tools import deep_research
 from src.agents.search.tools import web_research_report, web_search_news
 from src.agents.weather.tools import get_weather_by_city
 from src.agents.gmail.tools import (
@@ -125,6 +126,7 @@ def build_all_tools() -> List[BaseTool]:
     return [
         # === WEB SEARCH ===
         web_research_report,
+        deep_research,
         web_search_news,
         # === TIME/DATE ===
         get_current_time,

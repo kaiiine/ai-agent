@@ -110,6 +110,11 @@ def apres_les_outils(state: dict) -> str:
     if envoi_attendu(state):
         return "envoyer"
 
+    from src.agents.deep.noeud import question_a_creuser
+
+    if question_a_creuser(dernier):
+        return "approfondir"
+
     return "chatbot"
 
 

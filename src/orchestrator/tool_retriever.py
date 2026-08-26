@@ -405,8 +405,10 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "sources et citations, se renseigner sur un sujet, trouver la "
                "documentation d'une librairie, récupérer le contenu d'une page ou "
                "d'une URL. Aussi les articles et papers de recherche scientifique "
-               "sur arXiv.",
-        tools=("web_research_report", "url_fetch", "arxiv_search", "arxiv_get_paper"),
+               "sur arXiv, et les recherches APPROFONDIES : dossier complet, état "
+               "de l'art, comparatif argumenté, faire le tour d'un sujet.",
+        tools=("web_research_report", "deep_research", "url_fetch",
+               "arxiv_search", "arxiv_get_paper"),
         keywords=frozenset({"arxiv", "internet", "web",
                             "promo", "promos", "reduction", "réduction",
                             "prix", "tarif", "tarifs", "solde", "soldes",
