@@ -407,12 +407,15 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "d'une URL. Aussi les articles et papers de recherche scientifique "
                "sur arXiv.",
         tools=("web_research_report", "url_fetch", "arxiv_search", "arxiv_get_paper"),
-        keywords=frozenset({"arxiv", "internet", "web"}),
+        keywords=frozenset({"arxiv", "internet", "web",
+                            "promo", "promos", "reduction", "réduction",
+                            "prix", "tarif", "tarifs", "solde", "soldes",
+                            "remise", "remises"}),
     ),
     "news": ToolGroup(
         covers="Actualités et événements récents : ce qui s'est passé aujourd'hui ou "
                "hier, les dernières nouvelles sur un sujet, résultats sportifs, scores "
-               "de matchs et classements, annonces d'entreprises et sorties de produits, "
+               "de matchs et classements, communiqués et annonces d'entreprises, "
                "politique, élections et crises en cours.",
         tools=("web_search_news",),
         keywords=frozenset({"actualite", "actualité", "actualites", "actualités", "news"}),

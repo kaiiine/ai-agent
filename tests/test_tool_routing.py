@@ -581,7 +581,7 @@ def test_aucun_mot_cle_n_est_revendique_par_deux_groupes():
 def test_le_pont_traduit_les_intentions_pas_les_outils():
     """Mettre un nom de serveur ou d'outil dans le pont le rendrait dépendant
     de ce qui est installé, et il faudrait le rouvrir à chaque nouveau MCP."""
-    from src.agents.coding.tool_retriever import _PONT_FR_EN
+    from src.infra.pont_fr_en import PONT_FR_EN as _PONT_FR_EN
 
     interdits = ("blender", "motion", "scene_info", "polyhaven", "sketchfab")
     contenu = " ".join(_PONT_FR_EN.keys()) + " " + " ".join(_PONT_FR_EN.values())
@@ -592,7 +592,7 @@ def test_le_pont_traduit_les_intentions_pas_les_outils():
 def test_le_pont_ajoute_sans_remplacer():
     """La requête française porte les noms propres et le vocabulaire technique
     (« blender », « framer-motion », « GLB ») que traduire perdrait."""
-    from src.agents.coding.tool_retriever import _pont_linguistique
+    from src.infra.pont_fr_en import pont_linguistique as _pont_linguistique
 
     enrichie = _pont_linguistique("dis-moi ce que contient la scène blender")
 
@@ -602,13 +602,13 @@ def test_le_pont_ajoute_sans_remplacer():
 
 
 def test_une_requete_sans_intention_connue_reste_intacte():
-    from src.agents.coding.tool_retriever import _pont_linguistique
+    from src.infra.pont_fr_en import pont_linguistique as _pont_linguistique
 
     assert _pont_linguistique("crée le composant Header") == "crée le composant Header"
 
 
 def test_le_pont_ne_duplique_pas_les_termes():
-    from src.agents.coding.tool_retriever import _pont_linguistique
+    from src.infra.pont_fr_en import pont_linguistique as _pont_linguistique
 
     enrichie = _pont_linguistique("dis-moi quel est le statut et donne-moi l'état")
     apres = enrichie.split("|", 1)[1].split()

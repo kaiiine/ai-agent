@@ -208,7 +208,7 @@ def test_les_requetes_3d_atteignent_les_outils_mcp(selection):
 
 def test_la_lecture_d_etat_de_scene_remonte_l_outil(selection):
     """Défaillant jusqu'au pont linguistique, passant depuis. Voir
-    `_PONT_FR_EN` dans tool_retriever.py : les descriptions MCP sont en anglais,
+    `PONT_FR_EN` dans src/infra/pont_fr_en.py : les descriptions MCP sont en anglais,
     les tâches de phase en français, et les tournures interrogatives n'ont
     aucun cognat."""
     requete, attendu = POSITIF_MCP_CONNU_DEFAILLANT
@@ -485,7 +485,7 @@ _FALLTHROUGH = [
 
 
 def _distance_mcp_min(retriever, query: str) -> float | None:
-    from src.agents.coding.tool_retriever import _pont_linguistique
+    from src.infra.pont_fr_en import pont_linguistique as _pont_linguistique
 
     resultats = retriever._store.similarity_search_with_score(
         _pont_linguistique(query), k=8)

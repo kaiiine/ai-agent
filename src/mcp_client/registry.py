@@ -35,6 +35,7 @@ from typing import Any, Callable, Iterable, Protocol
 from langchain_core.tools import BaseTool, StructuredTool
 
 from src.infra.retrieval import build_catalog_document, unique as _unique
+from src.infra.pont_fr_en import pont_linguistique
 from src.mcp_client.models import MCPServerConfig, MCPToolRef, ToolDiff, ToolResult
 
 logger = logging.getLogger("axon.mcp")
@@ -221,11 +222,24 @@ def route(query: str, tool_index: ToolIndex, *, top_servers: int = 3, k: int = 7
     indexé. Ils ne peuvent pas être élus par l'étage 1 — on les joint donc
     d'office au filtre, ce qui les laisse joignables par le seul étage 2.
     """
+    # Le pont FR→EN s'applique à l'ÉTAGE 2 seulement. L'étage 1 interroge des
+    # documents de serveur dont le `capabilities_hint` est écrit en français par
+    # l'utilisateur ; l'étage 2 interroge les descriptions que les serveurs
+    # fournissent eux-mêmes, en anglais.
+    #
+    # C'est la cause d'un défaut qui se lisait mal : régler le `capabilities_hint`
+    # ne changeait RIEN au choix des outils, puisque ce texte ne pèse qu'à
+    # l'étage 1. Mesuré sur cinq requêtes d'action en français, `browser_click`
+    # ne remontait jamais — pas même sur « clique sur le bouton accepter » —
+    # parce que l'outil se décrit « Perform click on a web page ». Avec le pont :
+    # 3/5, et `browser_click` présent deux fois. Aucune perte sur les requêtes
+    # de diagnostic (2/3 avant comme après).
     servers = list(tool_index.query_servers(query, n=top_servers))
     servers += [s for s in unrouted_servers if s not in servers]
     if not servers:
         return []
-    return tool_index.query_tools(query, k=k, where={"server": {"$in": servers}})
+    return tool_index.query_tools(pont_linguistique(query), k=k,
+                                  where={"server": {"$in": servers}})
 
 
 # ── exécution ───────────────────────────────────────────────────────────────────
