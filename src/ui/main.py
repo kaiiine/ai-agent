@@ -61,6 +61,27 @@ if len(sys.argv) > 1 and sys.argv[1] == "tennis-inventory":
     from src.agents.quant.betting_engine.sports.tennis.inventory_cli import main as _tennis_inv
     sys.exit(_tennis_inv(sys.argv[2:]))
 
+# ── 0quinquies-bis. `axon cron-test <id>` — lance une tâche planifiée MAINTENANT ─
+# Sans elle, la seule façon de savoir si une tâche marche est d'attendre son
+# déclenchement. L'exécution est réelle, seuls les effets sont suspendus.
+if len(sys.argv) > 2 and sys.argv[1] == "cron-test":
+    from dotenv import load_dotenv
+    load_dotenv()
+    from src.agents.cron.essai import essayer, rendre
+    print(rendre(essayer(sys.argv[2])))
+    sys.exit(0)
+
+if len(sys.argv) > 1 and sys.argv[1] == "cron-test":
+    from dotenv import load_dotenv
+    load_dotenv()
+    from src.agents.cron.store import get_tasks
+    for t in get_tasks():
+        etat = "actif " if t.get("active") else "arrêté"
+        veille = " · veille" if t.get("surveillance") else ""
+        print(f"  {t['id']}  {etat}{veille}  {t.get('description', '')}")
+    print("\n  axon cron-test <id>  pour en essayer une")
+    sys.exit(0)
+
 # ── 0sexies. `axon providers-discover` — découverte de sources (Tavily), hors money-path (§25) ─
 if len(sys.argv) > 1 and sys.argv[1] == "providers-discover":
     from dotenv import load_dotenv
