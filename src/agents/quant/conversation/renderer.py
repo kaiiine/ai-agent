@@ -93,6 +93,16 @@ def _render_echec(run: RecommendationRun) -> str:
         suite = f" (+{len(run.available) - 20} autres)" if len(run.available) > 20 else ""
         lignes += ["", f"Disponible dans ce scan : {apercu}{suite}"]
     if code == "CLARIFICATION_REQUIRED":
+        # Ce bloc a porté un temps « À FAIRE MAINTENANT : appelle
+        # `ask_clarification` ». Retiré : le graphe émet désormais cet appel
+        # lui-même (`src/orchestrator/clarification.py`), sur la foi du champ
+        # `missing` que ce statut accompagne toujours.
+        #
+        # La consigne n'était pas seulement inutile, elle était trompeuse : elle
+        # avait été mesurée SANS effet — la consigne arrivait intacte et le
+        # modèle répondait en prose. La laisser à côté du mécanisme qui marche
+        # ferait croire qu'elle y participe, et le prochain lecteur chercherait
+        # la garantie du mauvais côté.
         lignes += ["", "Aucune cote, aucune probabilité et aucune sélection ne peuvent être "
                        "affichées tant que la chaîne structurée n'a pas tourné."]
     return "\n".join(lignes)

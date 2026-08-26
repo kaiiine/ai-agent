@@ -184,4 +184,9 @@ def betting_recommend(
         EVIDENCE_KEY: (run.evidence.to_dict()
                        if run.status == COMPLETED and run.evidence else None),
         "constraints": run.constraints.describe(),
+        # Les champs qui manquent, NOMMÉS. Le graphe s'en sert pour poser la
+        # question lui-même : les redériver depuis `constraints` reviendrait à
+        # dupliquer la règle de `missing()` dans un second endroit, où elle
+        # divergerait au premier champ obligatoire ajouté.
+        "missing": list(run.constraints.missing()),
     }, ensure_ascii=False)

@@ -1032,8 +1032,13 @@ def test_l_outil_rend_le_contrat_attendu_par_le_graphe():
     charge, _ = _appel_outil(when="aujourd'hui", bankroll=100.0, sports=["tennis"],
                              config={"configurable": {"thread_id": "t-contrat"}})
 
-    assert set(charge) == {"status", "rendered", EVIDENCE_KEY, "constraints"}
+    assert set(charge) == {"status", "rendered", EVIDENCE_KEY, "constraints", "missing"}
     assert charge["status"] == COMPLETED
+    # `missing` n'est pas décoratif : le nœud `clarifier` du graphe le LIT pour
+    # émettre lui-même l'appel à `ask_clarification`. Le retirer ou le renommer
+    # ne casserait rien visiblement — le graphe repartirait simplement vers le
+    # modèle, qui répondrait en prose, ce qui était précisément le défaut.
+    assert charge["missing"] == [], "rien ne manque quand la bankroll est fournie"
     assert charge["rendered"].strip()
     assert charge[EVIDENCE_KEY] is not None          # preuve présente si COMPLETED
     # Le rendu passe le garde AVEC sa preuve — et serait bloqué sans elle, car il
@@ -1041,6 +1046,31 @@ def test_l_outil_rend_le_contrat_attendu_par_le_graphe():
     from src.agents.quant.conversation.evidence import BettingResponseEvidence
     preuve = BettingResponseEvidence.from_dict(charge[EVIDENCE_KEY])
     assert not enforce(charge["rendered"], preuve).blocked
+
+
+def test_sans_bankroll_l_outil_nomme_le_champ_manquant():
+    """Le contrat que le nœud `clarifier` consomme.
+
+    Sans ce champ, le graphe ne peut pas savoir QUOI demander — et retomberait
+    sur la seule chose qui restait avant : espérer que le modèle lise la consigne
+    en prose et appelle l'outil de son plein gré. Mesuré : il ne le fait pas.
+    """
+    from src.orchestrator.clarification import champs_manquants
+
+    session.reset()
+    charge, _ = _appel_outil(when="aujourd'hui", sports=["tennis"],
+                             config={"configurable": {"thread_id": "t-manque"}})
+
+    assert charge["status"] == "CLARIFICATION_REQUIRED"
+    assert charge["missing"] == ["bankroll"]
+
+    # Bout en bout : ce que l'outil rend est bien ce que le graphe sait lire.
+    import json as _j
+
+    from langchain_core.messages import ToolMessage
+    message = ToolMessage(content=_j.dumps(charge), tool_call_id="tc",
+                          name="betting_recommend")
+    assert champs_manquants(message) == ("bankroll",)
 
 
 def test_l_outil_memorise_les_contraintes_du_fil():
