@@ -21,6 +21,10 @@ mistral:
   model: "mistral-small-2603"
   coding_model: "codestral-2508"
 
+nvidia:
+  model: "meta/muse-glimmer-30b"
+  coding_model: "meta/muse-glimmer-30b"
+
 search:
   backend: "tavily"
   max_results: 10

@@ -18,7 +18,8 @@ _CONTEXT_LIMITS: dict[str, int] = {
     "ollama_cloud": 131_072,   
     "groq": 131_072,
     "gemini": 1_048_576,       
-    "mistral": 128_000,     
+    "mistral": 128_000,
+    "nvidia": 128_000,
 }
 
 _CONTEXT_LIMIT_DEFAUT = 128_000
@@ -35,6 +36,7 @@ _BACKEND_POLICY = {
     "gemini": {"ratio": 0.75, "keep_recent": 24},
     "mistral": {"ratio": 0.60, "keep_recent": 8},
     "groq": {"ratio": 0.65, "keep_recent": 12},
+    "nvidia": {"ratio": 0.60, "keep_recent": 8},
 }
 
 _SUMMARY_MARKER = "[COMPRESSED SESSION MEMORY]"

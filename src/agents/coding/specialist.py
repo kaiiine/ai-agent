@@ -219,6 +219,7 @@ _CONTEXT_CHAR_BUDGET: dict[str, int] = {
     "ollama":        48_000,   
     "gemini":       400_000,   
     "mistral":      60_000,
+    "nvidia":       60_000,   # aligné sur la fenêtre prudente de context.py
 }
 _CONTEXT_CHAR_BUDGET_DEFAULT = 180_000  # fallback
 

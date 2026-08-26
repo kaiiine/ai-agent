@@ -12,6 +12,7 @@ langchain-ollama
 langchain-groq
 langchain-tavily
 langchain-mistralai
+langchain_nvidia_ai_endpoints
 requests
 openai
 googlemaps

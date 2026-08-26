@@ -116,6 +116,23 @@ config_groq() {
     prompt_key "GROQ_API_KEY" "Clé API Groq" "Format : gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 }
 
+config_mistral() {
+    step "Mistral — Backend LLM européen"
+    echo -e "  ${DIM}Mistral fournit les modèles Mistral et Codestral (spécialisé code).${NC}"
+    echo -e "  ${DIM}Créer un compte → https://console.mistral.ai${NC}"
+    echo -e "  ${DIM}API Keys → Create new key → Copy${NC}"
+    prompt_key "MISTRAL_API_KEY" "Clé API Mistral" "Format : xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+}
+
+config_nvidia() {
+    step "NVIDIA — Backend LLM cloud (NIM)"
+    echo -e "  ${DIM}NVIDIA NIM donne accès à des modèles hébergés (Llama, DeepSeek, Nemotron…).${NC}"
+    echo -e "  ${DIM}Créer un compte → https://build.nvidia.com${NC}"
+    echo -e "  ${DIM}Choisir un modèle → « Get API Key » → Copy${NC}"
+    prompt_key "NVIDIA_API_KEY" "Clé API NVIDIA" "Format : nvapi-xxxxxxxxxxxxxxxxxxxx"
+    echo -e "  ${DIM}Modèle utilisé : réglable dans configs/base.yaml (nvidia.model) ou /model dans Axon.${NC}"
+}
+
 config_ollama_cloud() {
     step "Ollama Cloud — Backend cloud (optionnel)"
     echo -e "  ${DIM}Permet d'utiliser des modèles cloud via Ollama (ex: kimi-k2, qwen3-next).${NC}"
@@ -491,6 +508,8 @@ show_status() {
     env_status "GROQ_API_KEY"    "Groq      (LLM cloud)"
     env_status "GEMINI_API_KEY"  "Gemini    (LLM gratuit — recommandé)"
     env_status "OLLAMA_API_KEY"  "Ollama Cloud (optionnel)"
+    env_status "NVIDIA_API_KEY"  "NVIDIA    (LLM cloud NIM)"
+    env_status "MISTRAL_API_KEY" "Mistral   (LLM européen · Codestral)"
     env_status "SLACK_USER_TOKEN" "Slack"
     env_status "JIRA_API_KEY"    "Jira      (gestion de projet)"
     env_status "API_FOOTBALL_KEY" "API-Football (value betting Winamax)"
@@ -534,13 +553,15 @@ config_menu() {
         echo -e "  ${ORANGE}2${NC}  Gemini       ${DIM}(LLM gratuit — 1M tokens — recommandé)${NC}"
         echo -e "  ${ORANGE}3${NC}  Groq         ${DIM}(LLM cloud rapide)${NC}"
         echo -e "  ${ORANGE}4${NC}  Ollama Cloud ${DIM}(optionnel)${NC}"
-        echo -e "  ${ORANGE}5${NC}  Slack${NC}"
-        echo -e "  ${ORANGE}6${NC}  Google       ${DIM}(Gmail · Calendar · Drive · Docs · Slides)${NC}"
-        echo -e "  ${ORANGE}7${NC}  Jira         ${DIM}(gestion de tickets et projets)${NC}"
-        echo -e "  ${ORANGE}8${NC}  Dossier de projets  ${DIM}(pour que l'IA trouve tes repos plus vite)${NC}"
-        echo -e "  ${ORANGE}9${NC}  API-Football ${DIM}(value betting Winamax)${NC}"
-        echo -e "  ${ORANGE}10${NC} football-data.org ${DIM}(saison en cours, value betting)${NC}"
-        echo -e "  ${ORANGE}11${NC} MCP          ${DIM}(serveurs d'outils externes — Blender, etc.)${NC}"
+        echo -e "  ${ORANGE}5${NC}  NVIDIA       ${DIM}(LLM cloud NIM)${NC}"
+        echo -e "  ${ORANGE}6${NC}  Mistral      ${DIM}(LLM européen · Codestral pour le code)${NC}"
+        echo -e "  ${ORANGE}7${NC}  Slack${NC}"
+        echo -e "  ${ORANGE}8${NC}  Google       ${DIM}(Gmail · Calendar · Drive · Docs · Slides)${NC}"
+        echo -e "  ${ORANGE}9${NC}  Jira         ${DIM}(gestion de tickets et projets)${NC}"
+        echo -e "  ${ORANGE}10${NC} Dossier de projets  ${DIM}(pour que l'IA trouve tes repos plus vite)${NC}"
+        echo -e "  ${ORANGE}11${NC} API-Football ${DIM}(value betting Winamax)${NC}"
+        echo -e "  ${ORANGE}12${NC} football-data.org ${DIM}(saison en cours, value betting)${NC}"
+        echo -e "  ${ORANGE}13${NC} MCP          ${DIM}(serveurs d'outils externes — Blender, etc.)${NC}"
         echo -e "  ${ORANGE}a${NC}  Tout configurer"
         echo -e "  ${ORANGE}q${NC}  Quitter le menu"
         echo ""
@@ -552,18 +573,22 @@ config_menu() {
             2) config_gemini ;;
             3) config_groq ;;
             4) config_ollama_cloud ;;
-            5) config_slack ;;
-            6) config_google ;;
-            7) config_jira ;;
-            8) config_projects_dir ;;
-            9) config_quant ;;
-            10) config_football_data ;;
-            11) config_mcp ;;
+            5) config_nvidia ;;
+            6) config_mistral ;;
+            7) config_slack ;;
+            8) config_google ;;
+            9) config_jira ;;
+            10) config_projects_dir ;;
+            11) config_quant ;;
+            12) config_football_data ;;
+            13) config_mcp ;;
             a|A)
                 config_tavily
                 config_gemini
                 config_groq
                 config_ollama_cloud
+                config_nvidia
+                config_mistral
                 config_slack
                 config_google
                 config_jira
@@ -626,15 +651,22 @@ deploy() {
     # ── 2. Environnement virtuel ──────────────────────────────
     step "Environnement virtuel Python"
 
-    if [[ ! -d "venv" ]]; then
-        info "Création du venv..."
-        python3 -m venv venv
-        ok "venv créé"
-    else
-        ok "venv déjà présent"
+    # `.venv` plutôt que `venv` : c'est la convention que suivent uv, Poetry,
+    # VS Code et PyCharm, qui le détectent alors sans qu'on ait à le désigner.
+    if [[ -d "venv" && ! -d ".venv" ]]; then
+        info "Renommage venv → .venv..."
+        mv venv .venv
+        ok "venv renommé en .venv"
     fi
-    source venv/bin/activate
-    ok "venv activé"
+    if [[ ! -d ".venv" ]]; then
+        info "Création du venv..."
+        python3 -m venv .venv
+        ok ".venv créé"
+    else
+        ok ".venv déjà présent"
+    fi
+    source .venv/bin/activate
+    ok ".venv activé"
 
     # ── 3. Dépendances ────────────────────────────────────────
     step "Dépendances Python"
@@ -645,12 +677,12 @@ deploy() {
 
     # ── 3b. Playwright (browser headless) ────────────────────
     echo ""
-    if venv/bin/python -c "from playwright.sync_api import sync_playwright; b = sync_playwright().start(); b.stop()" &>/dev/null 2>&1; then
+    if .venv/bin/python -c "from playwright.sync_api import sync_playwright; b = sync_playwright().start(); b.stop()" &>/dev/null 2>&1; then
         ok "Playwright — navigateur déjà installé"
     else
         info "Installation des binaires Playwright (Chromium, ~200 MB)..."
-        venv/bin/python -m playwright install chromium --with-deps --quiet 2>/dev/null \
-            || venv/bin/python -m playwright install chromium 2>/dev/null \
+        .venv/bin/python -m playwright install chromium --with-deps --quiet 2>/dev/null \
+            || .venv/bin/python -m playwright install chromium 2>/dev/null \
             || warn "Playwright install échoué — l'agent browser sera indisponible"
         ok "Playwright — Chromium prêt"
     fi
@@ -674,11 +706,15 @@ deploy() {
     # ── 4. .env ───────────────────────────────────────────────
     step "Fichier de configuration"
 
+    # Le CHEMIN, pas seulement le fait. Le setup s'exécute dans le dossier
+    # d'installation, qui n'est pas forcément celui d'où on l'a lancé : dire
+    # « .env déjà présent » sans dire où envoie chercher le fichier au mauvais
+    # endroit, et conclure qu'il n'a pas été créé.
     if [[ ! -f ".env" ]]; then
         cp .env.sample .env
-        ok ".env créé depuis .env.sample"
+        ok ".env créé → $(pwd)/.env"
     else
-        ok ".env déjà présent"
+        ok ".env déjà présent → $(pwd)/.env"
     fi
     config_user_name
 
@@ -741,7 +777,7 @@ echo -e "${ORANGE}  ────────────────────
 echo -e "${ORANGE}  Prêt.${NC}"
 echo ""
 echo -e "  ${WHITE}Lancer Axon :${NC}"
-echo -e "    ${ORANGE}source venv/bin/activate${NC}"
+echo -e "    ${ORANGE}source .venv/bin/activate${NC}"
 echo -e "    ${ORANGE}python -m src.ui.main${NC}"
 echo ""
 echo -e "  ${DIM}Reconfigurer les intégrations :${NC}  ${ORANGE}bash setup.sh --config-only${NC}"

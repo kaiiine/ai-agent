@@ -58,6 +58,9 @@ class KeyPool:
         elif provider == "mistral":
             keys = _parse_csv(getattr(settings, "mistral_api_keys", ""))
             single = settings.mistral_api_key
+        elif provider == "nvidia":
+            keys = _parse_csv(getattr(settings, "nvidia_api_keys", ""))
+            single = settings.nvidia_api_key
         elif provider == "groq":
             keys = _parse_csv(getattr(settings, "groq_api_keys", ""))
             single = settings.groq_api_key

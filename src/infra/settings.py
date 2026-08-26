@@ -15,6 +15,8 @@ class Settings(BaseSettings):
 
     # Ollama Cloud
     ollama_cloud_model: str = "gpt-oss:120b-cloud"
+    ollama_cloud_api_keys: str = "" # OLLAMA_CLOUD_API_KEYS=key1,key2,key3,key4,key5
+      
 
     # Coding specialist (delegated coding tasks)
     # Même valeur que `configs/base.yaml`. Les deux avaient divergé : le défaut
@@ -42,8 +44,13 @@ class Settings(BaseSettings):
     mistral_coding_model: str = "codestral-2508"
     mistral_api_keys: str = ""       # MISTRAL_API_KEYS=key1,key2,...
 
-    # Multi-clés ollama cloud
-    ollama_cloud_api_keys: str = ""  # OLLAMA_CLOUD_API_KEYS=key1,key2,key3,key4,key5
+    # Nvidia
+    nvidia_api_key: str | None = None
+    nvidia_model: str = "meta/muse-glimmer-30b"
+    nvidia_coding_model: str = ""
+    nvidia_api_keys: str = ""
+
+
 
     # Ordre de fallback inter-providers : FALLBACK_ORDER=ollama_cloud,gemini,mistral
     fallback_order: str = "ollama_cloud,gemini,mistral"
@@ -140,6 +147,8 @@ def _merge_yaml_into_settings() -> Settings:
         gemini_coding_model=yml.get("gemini", {}).get("coding_model", "gemini-2.5-flash"),
         mistral_model=yml.get("mistral", {}).get("model", "mistral-small-2603"),
         mistral_coding_model=yml.get("mistral", {}).get("coding_model", "codestral-2508"),
+        nvidia_model=yml.get("nvidia", {}).get("model", "meta/muse-glimmer-30b"),
+        nvidia_coding_model=yml.get("nvidia", {}).get("coding_model", "meta/muse-glimmer-30b")
     )
 
 

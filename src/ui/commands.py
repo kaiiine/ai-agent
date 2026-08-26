@@ -60,17 +60,14 @@ _COMMANDS = [
     ("@fichier",           "injecte un fichier dans ton message — autocomplété par Tab"),
 ]
 
-_BACKENDS = ["groq", "ollama", "ollama_cloud", "gemini", "mistral"]
+_BACKENDS = ["groq", "ollama", "ollama_cloud", "gemini", "mistral", "nvidia"]
 
 
 _OLLAMA_FALLBACK = ["qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b"]
 _GROQ_MODELS     = [
-    "llama-3.3-70b-versatile",       # meilleur équilibre vitesse/qualité
-    "compound-beta",                  # compound routing (Groq recommandé agentic)
-    "deepseek-r1-distill-llama-70b", # raisonnement
-    "qwen-qwq-32b",                  # raisonnement léger
-    "llama-3.1-8b-instant",          # rapide/léger
+    "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
+    "qwen/qwen3.6-27b",
 ]
 _CLOUD_MODELS    = [
     "minimax-m3:cloud",
@@ -95,6 +92,13 @@ _GEMINI_MODELS   = [
 _MISTRAL_MODELS = [
     "mistral-small-2603",
 ]
+_NVIDIA_MODELS = [
+    "meta/muse-glimmer-30b",
+    "deepseek-ai/deepseek-v4-flash-0731",
+    "minimaxai/minimax-m3",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "openai/gpt-oss-120b",
+]
 
 
 def _get_ollama_local_models() -> list[str]:
@@ -108,41 +112,51 @@ def _get_ollama_local_models() -> list[str]:
         return _OLLAMA_FALLBACK
 
 
+#: Ce que chaque backend expose, en UN endroit : la liste proposée par `/model`
+#: et le champ de `settings` qui porte le choix.
+#:
+#: Ces deux informations vivaient dans trois cascades de `if` parallèles. C'est
+#: exactement ainsi que `nvidia` a été oublié : `_get_model_options` avait reçu
+#: sa branche, `_current_model` et `_set_model` non. Rien ne levait — les deux
+#: retombaient sur leur `else`, donc `/model` proposait les modèles NVIDIA, lisait
+#: `settings.ollama_model` et y écrivait le choix, pendant que `models.py` lisait
+#: `settings.nvidia_model`. Sélectionner un modèle NVIDIA ne changeait donc rien
+#: au modèle utilisé, et écrasait au passage le réglage Ollama local.
+#:
+#: Une table ne peut pas être à moitié mise à jour : ajouter un backend sans son
+#: champ le fait tomber sur le défaut, et le test qui parcourt `_BACKENDS` le dit.
+_MODELES_PAR_BACKEND: dict[str, tuple[list[str] | None, str]] = {
+    "groq":         (_GROQ_MODELS,    "groq_model"),
+    "ollama_cloud": (_CLOUD_MODELS,   "ollama_cloud_model"),
+    "gemini":       (_GEMINI_MODELS,  "gemini_model"),
+    "mistral":      (_MISTRAL_MODELS, "mistral_model"),
+    "nvidia":       (_NVIDIA_MODELS,  "nvidia_model"),
+    # Local : la liste est découverte à l'exécution, pas déclarée.
+    "ollama":       (None,            "ollama_model"),
+}
+
+#: Backend inconnu : on vise le local, qui est le seul à ne rien coûter.
+_CHAMP_DEFAUT = "ollama_model"
+
+
+def _champ_modele(backend: str) -> str:
+    entree = _MODELES_PAR_BACKEND.get(backend)
+    return entree[1] if entree else _CHAMP_DEFAUT
+
+
 def _get_model_options(backend: str) -> list[str]:
-    if backend == "groq":
-        return _GROQ_MODELS
-    if backend == "ollama_cloud":
-        return _CLOUD_MODELS
-    if backend == "gemini":
-        return _GEMINI_MODELS
-    if backend == "mistral":
-        return _MISTRAL_MODELS
+    entree = _MODELES_PAR_BACKEND.get(backend)
+    if entree and entree[0] is not None:
+        return entree[0]
     return _get_ollama_local_models()
 
 
 def _current_model(settings) -> str:
-    if settings.llm_backend == "groq":
-        return settings.groq_model
-    if settings.llm_backend == "ollama_cloud":
-        return settings.ollama_cloud_model
-    if settings.llm_backend == "gemini":
-        return settings.gemini_model
-    if settings.llm_backend == "mistral":
-        return settings.mistral_model
-    return settings.ollama_model
+    return getattr(settings, _champ_modele(settings.llm_backend))
 
 
 def _set_model(settings, model: str) -> None:
-    if settings.llm_backend == "groq":
-        settings.groq_model = model
-    elif settings.llm_backend == "ollama_cloud":
-        settings.ollama_cloud_model = model
-    elif settings.llm_backend == "gemini":
-        settings.gemini_model = model
-    elif settings.llm_backend == "mistral":
-        settings.mistral_model = model
-    else:
-        settings.ollama_model = model
+    setattr(settings, _champ_modele(settings.llm_backend), model)
 
 
 def _handle_history(cfg: SessionConfig, state: dict, console) -> None:

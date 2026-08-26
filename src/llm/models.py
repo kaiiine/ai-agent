@@ -131,6 +131,14 @@ def make_coding_llm_with_key(provider: str, key: str):
             timeout=_REQUEST_TIMEOUT,
             max_retries=_CLIENT_MAX_RETRIES,
         )
+    elif provider == "nvidia":
+        from langchain_nvidia_ai_endpoints import ChatNVIDIA
+        return ChatNVIDIA(
+            model=settings.nvidia_coding_model or settings.nvidia_model,
+            api_key=key,
+            temperature=0.0,
+            max_completion_tokens=8192,
+        )
     elif provider == "groq":
         return ChatGroq(
             api_key=key,
@@ -197,6 +205,14 @@ def make_coding_llm():
             timeout=_REQUEST_TIMEOUT,
             max_retries=_CLIENT_MAX_RETRIES,
         )
+    elif settings.llm_backend == "nvidia":
+        from langchain_nvidia_ai_endpoints import ChatNVIDIA
+        return ChatNVIDIA(
+            model=settings.nvidia_coding_model or settings.nvidia_model,
+            api_key=settings.nvidia_api_key,
+            temperature=0.0,
+            max_completion_tokens=8192,
+        )
     else:
         # ollama_cloud
         coding_model = settings.coding_model
@@ -246,6 +262,12 @@ def make_orchestrator_llm_with_key(provider: str, key: str):
         return ChatMistralAI(model=settings.mistral_model, mistral_api_key=key,
                              temperature=0.0, streaming=True, timeout=_REQUEST_TIMEOUT,
                              max_retries=_CLIENT_MAX_RETRIES)
+    elif provider == "nvidia":
+        from langchain_nvidia_ai_endpoints import ChatNVIDIA
+        return ChatNVIDIA(
+            model=settings.nvidia_model, api_key=key,
+            temperature=settings.temperature, max_completion_tokens=8192,
+        )
     elif provider == "groq":
         return ChatGroq(
             api_key=key, model=settings.groq_model,
@@ -311,3 +333,25 @@ def make_llm_mistral():
                          mistral_api_key=settings.mistral_api_key,
                          temperature=0.0, streaming=True, timeout=_REQUEST_TIMEOUT,
                              max_retries=_CLIENT_MAX_RETRIES)
+
+def make_llm_nvidia():
+    try:
+        from src.llm.key_pool import get_pool
+        key = get_pool().next_healthy("nvidia")
+        if key:
+            from langchain_nvidia_ai_endpoints import ChatNVIDIA
+            return ChatNVIDIA(
+                model=settings.nvidia_model,
+                api_key=key, 
+                temperature=settings.temperature,
+                max_completion_tokens=8192,
+            )
+    except Exception:
+        pass
+    from langchain_nvidia_ai_endpoints import ChatNVIDIA
+    return ChatNVIDIA(
+        model=settings.nvidia_model,
+        api_key=settings.nvidia_api_key, 
+        temperature=settings.temperature,
+        max_completion_tokens=8192,
+    )

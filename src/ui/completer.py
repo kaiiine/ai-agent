@@ -23,7 +23,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/history",           "liste les threads passés et permet d'en reprendre un (flèches ↑↓)"),
     ("/help",              "affiche cette liste de commandes"),
     ("/backend",       "change le backend LLM — groq · ollama · ollama_cloud · gemini · mistral"),
-    ("/model <nom>",       "change le modèle du backend actif (ex: llama3.1:8b, openai/gpt-oss-20b)"),
+    ("/model",       "change le modèle du backend actif (ex: llama3.1:8b, openai/gpt-oss-20b)"),
     ("/temp <val>",        "change la température (ex: /temp 0.7)"),
     ("/lang <fr|en>",      "force la langue de réponse"),
     ("/save",              "sauvegarde le transcript de la session"),
@@ -35,6 +35,8 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/debug",             "active/désactive le mode debug"),
     ("/dump",              "affiche tous les messages du thread"),
     ("/mcp",               "serveurs MCP — list · add · test · tools · refresh · restart…"),
+    ("/graph",             "génère GRAPH_REPORT.md + graph.json + notes Obsidian via graphify"),
+    ("/keys",              "état des clés API (multi-comptes) · /keys reset pour tout remettre sain"),
     ("q / exit",           "quitte Axon"),
     ("Ctrl+T",             "bascule le mode plan — l'IA planifie sans écrire"),
     ("Ctrl+O",             "attacher un fichier  (= /attach)"),
@@ -43,8 +45,11 @@ _COMMANDS: list[tuple[str, str]] = [
     ("@fichier",           "injecte un fichier dans ton message — autocomplété par Tab"),
 ]
 
+#: `/backend` N'EST PAS ici : sa liste est celle de `commands._BACKENDS`, et la
+#: recopier la fait dériver. Elle avait déjà perdu `mistral`, puis `nvidia` —
+#: deux backends utilisables que la complétion ne proposait pas, ce qui les rend
+#: invisibles à qui découvre l'outil par la touche Tab.
 _SUBCOMMANDS: dict[str, list[str]] = {
-    "/backend": ["groq", "ollama", "ollama_cloud", "gemini"],
     "/lang":    ["fr", "en", "auto"],
     "/mode":    ["ask", "auto"],
 }
@@ -121,7 +126,12 @@ class SlashCompleter(Completer):
             if cmd == "/mcp":
                 yield from self._mcp_completions(sub)
                 return
-            options = _SUBCOMMANDS.get(cmd) or (self._model_options() if cmd == "/model" else [])
+            if cmd == "/backend":
+                options = self._backend_options()
+            elif cmd == "/model":
+                options = self._model_options()
+            else:
+                options = _SUBCOMMANDS.get(cmd, [])
             for opt in options:
                 if opt.startswith(sub):
                     yield Completion(opt, start_position=-len(sub))
@@ -206,6 +216,14 @@ class SlashCompleter(Completer):
         _file_cache_ts = now
         _file_cache_cwd = cwd
         return _file_cache
+
+    def _backend_options(self) -> list[str]:
+        """La liste qui fait foi, lue chez `commands` — jamais recopiée."""
+        try:
+            from src.ui.commands import _BACKENDS
+            return list(_BACKENDS)
+        except Exception:
+            return []
 
     def _model_options(self) -> list[str]:
         try:
