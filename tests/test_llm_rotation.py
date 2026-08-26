@@ -117,3 +117,77 @@ def test_les_chemins_directs_utilisent_la_rotation(chemin, fabrique):
 
     assert "from src.llm.rotation import" in source
     assert fabrique in source
+
+
+# ── Classification des erreurs ───────────────────────────────────────────────
+#
+# Un quota par MINUTE n'a ni le code ni le vocabulaire d'un quota par requête.
+# Groq rend le sien en 413, sans « 429 » nulle part :
+#
+#   Error code: 413 — Request too large for model `qwen/qwen3.6-27b` ... on
+#   tokens per minute (TPM): Limit 8000, Requested 16927 ... 'code':
+#   'rate_limit_exceeded'
+#
+# Il tombait dans `_CONTEXTE`, parce que « token » figure dans « tokens per
+# minute ». Classé comme une requête trop longue, donc jugé non réessayable :
+# ni rotation de clé, ni repli de fournisseur. Le tour mourait sur un dump brut
+# du fournisseur, alors que six clés `ollama_cloud` attendaient derrière.
+#
+# La cause tenait à un séparateur : `rate_limit_exceeded` ne matchait ni
+# « rate limit » ni « ratelimit », l'underscore tombant entre les deux.
+
+_413_TPM = (
+    "Error code: 413 - {'error': {'message': 'Request too large for model "
+    "`qwen/qwen3.6-27b` in organization `org_01` service tier `on_demand` on "
+    "tokens per minute (TPM): Limit 8000, Requested 16927, please reduce your "
+    "message size and try again.', 'type': 'tokens', 'code': "
+    "'rate_limit_exceeded'}}"
+)
+
+
+@pytest.mark.parametrize("message, attendu", [
+    (_413_TPM, "quota"),
+    # Les trois graphies de la même notion. Aucune ne doit dépendre du séparateur.
+    ("Error code: 429 - rate limit exceeded", "quota"),
+    ("Error: rate_limit_exceeded", "quota"),
+    ("RateLimitError: too many requests", "quota"),
+    ("resource_exhausted: quota exceeded for this project", "quota"),
+    # Une vraie erreur de longueur reste une erreur de longueur : le correctif
+    # ne doit pas transformer tout ce qui contient « token » en quota.
+    ("This model's maximum context length is 8192 tokens, "
+     "however you requested 9000 tokens", "contexte"),
+    ("401 Unauthorized: invalid_api_key", "cle_morte"),
+    ("Error code: 503 - service unavailable", "serveur"),
+])
+def test_une_erreur_est_classee_par_sa_NATURE_pas_par_son_code(message, attendu):
+    from src.llm.rotation import classer_erreur
+
+    assert classer_erreur(Exception(message)) == attendu
+
+
+def test_un_quota_par_minute_declenche_le_repli():
+    """Le point entier : sans ça, six clés de repli restaient inutilisées."""
+    from src.llm.rotation import vaut_la_peine_de_reessayer
+
+    assert vaut_la_peine_de_reessayer(Exception(_413_TPM))
+
+
+def test_une_requete_trop_longue_ne_declenche_PAS_le_repli():
+    """L'inverse compte autant : changer de clé ne raccourcit pas un message.
+    Réessayer huit fois la même requête trop longue ne fait que perdre huit
+    allers-retours avant d'échouer pareil."""
+    from src.llm.rotation import vaut_la_peine_de_reessayer
+
+    assert not vaut_la_peine_de_reessayer(Exception(
+        "This model's maximum context length is 8192 tokens, "
+        "however you requested 9000 tokens"))
+
+
+def test_le_separateur_ne_change_pas_la_classification():
+    """La règle générale, énoncée à part de ses exemples : c'est elle qui évitera
+    le prochain fournisseur qui écrira la notion d'une quatrième façon."""
+    from src.llm.rotation import classer_erreur
+
+    formes = ["rate limit", "rate_limit", "rate-limit", "RATE_LIMIT"]
+    classes = {classer_erreur(Exception(f"Error: {f} exceeded")) for f in formes}
+    assert classes == {"quota"}, f"classifications divergentes : {classes}"

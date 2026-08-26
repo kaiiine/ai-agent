@@ -11,29 +11,57 @@ le générateur `clients`.
 """
 from __future__ import annotations
 
+import re
 from typing import Callable, Iterator
+
+#: Underscores et tirets : des séparateurs de mots, pas des caractères.
+_SEPARATEURS = re.compile(r"[_\-]+")
 
 # Une clé refusée est à écarter définitivement ; un quota se contente d'attendre.
 # Ni 403 ni « forbidden » : c'est la réponse d'un modèle payant, pas d'une clé morte.
 _CLE_MORTE = ("401", "unauthorized", "invalid api key", "invalid_api_key",
               "api key not valid")
 _QUOTA = ("429", "too many requests", "rate limit", "quota exceeded",
-          "resource_exhausted", "ratelimit")
+          "resource exhausted",
+          # Un quota par MINUTE, pas par requête. Groq le rend en 413 avec
+          # « tokens per minute (TPM): Limit 8000, Requested 16927 » — aucun
+          # « 429 » nulle part. Sans ces marqueurs il tombait dans `_CONTEXTE`,
+          # parce que « token » figure dans « tokens per minute » : classé comme
+          # une requête trop longue, donc jugé non réessayable, donc ni rotation
+          # de clé ni repli de fournisseur. Le tour mourait sur un dump brut.
+          "tokens per minute", "tpm", "per minute")
 _CONTEXTE = ("context", "length", "token", "400", "exceed")
 _SERVEUR = ("500", "502", "503", "504", "server error", "internal error",
             "bad gateway", "service unavailable")
 
 
+def _normaliser(texte: str) -> str:
+    """Minuscules, et séparateurs de mots unifiés.
+
+    Les fournisseurs écrivent la même notion de trois façons : `rate_limit`,
+    `rate limit`, `ratelimit`. Maintenir les trois variantes dans chaque table
+    est une dette qui se paie au premier fournisseur qui en choisit une
+    quatrième — et elle s'est payée : `rate_limit_exceeded` de Groq ne matchait
+    ni « rate limit » ni « ratelimit », l'underscore tombant entre les deux.
+
+    Normaliser des DEUX côtés fait disparaître la distinction une bonne fois.
+    """
+    return _SEPARATEURS.sub(" ", texte.lower())
+
+
 def classer_erreur(exc: Exception) -> str:
     """« cle_morte » · « quota » · « contexte » · « serveur » · « autre ».
 
-    L'ordre compte : « 400 » figure parmi les marqueurs de contexte et
-    happerait un 401 si la clé morte n'était pas testée d'abord.
+    L'ordre compte deux fois :
+      - « 400 » figure parmi les marqueurs de contexte et happerait un 401 si la
+        clé morte n'était pas testée d'abord ;
+      - « token » y figure aussi, et happerait un quota par minute si le quota
+        n'était pas testé avant.
     """
-    message = str(exc).lower()
+    message = _normaliser(str(exc))
     for marqueurs, nom in ((_CLE_MORTE, "cle_morte"), (_QUOTA, "quota"),
                            (_CONTEXTE, "contexte"), (_SERVEUR, "serveur")):
-        if any(m in message for m in marqueurs):
+        if any(_normaliser(m) in message for m in marqueurs):
             return nom
     return "autre"
 
