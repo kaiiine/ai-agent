@@ -99,7 +99,7 @@ async def _keys(args: str, thread_id: str) -> AsyncIterator[str]:
 
 # ── /backend ──────────────────────────────────────────────────────────────────
 
-_BACKENDS = ["ollama", "ollama_cloud", "gemini", "mistral", "groq"]
+_BACKENDS = ["ollama", "ollama_cloud", "gemini", "mistral", "nvidia","groq"]
 
 
 async def _backend(args: str, thread_id: str) -> AsyncIterator[str]:
@@ -122,10 +122,11 @@ async def _model(args: str, thread_id: str) -> AsyncIterator[str]:
     backend = settings.llm_backend
     _model_attr = {
         "ollama_cloud": "ollama_cloud_model",
-        "groq":         "groq_model",
-        "gemini":       "gemini_model",
-        "mistral":      "mistral_model",
-        "ollama":       "ollama_model",
+        "groq": "groq_model",
+        "gemini": "gemini_model",
+        "mistral": "mistral_model",
+        "ollama": "ollama_model",
+        "nvidia": "nvidia_model"
     }
     attr = _model_attr.get(backend, "ollama_model")
     if not args:
