@@ -1,7 +1,9 @@
 # Chantiers en cours
 
-État au 26 août 2026, branche `feat/updateGraph`.
-Six chantiers livrés dans la journée, **aucun éprouvé en session réelle**.
+État au 27 août 2026, branche `feat/newRouting`.
+Six chantiers de graphe puis la refonte du routage, **aucun éprouvé en session
+réelle**. Redémarrer AXON avant de tester : la session en cours tourne sur
+l'ancien code.
 
 ---
 
@@ -36,6 +38,40 @@ Puis `/mode ask` (sinon la revue de fichiers écrit sans demander).
 | 10 | `liste les fichiers`, `git status`, `lance les tests` | **aucune question** | frottement sur le quotidien |
 
 Le n° 10 est le plus important : un garde qu'on trouve pénible finit désactivé.
+
+### Scénarios du nouveau routage
+
+`/debug` d'abord — il montre enfin la sélection du tour en cours, plus celle du
+tour précédent.
+
+| # | À taper | Attendu | Ce qui serait un bug |
+|---|---|---|---|
+| 11 | n'importe quelle requête, `/debug` actif | **~15 outils liés**, jamais 35 | plus de 16, ou une plage qui explose |
+| 12 | `schématise comment fonctionne un RAG en prod` | **aucun outil Blender ni Playwright** | ils reviennent alors que rien ne les demande |
+| 13 | `crée un cube dans blender` | les outils Blender arrivent | la porte a tué le serveur |
+| 14 | puis, sans le nommer : `rends-le plus grand` | Blender **reste** lié (collance) | le serveur disparaît au tour suivant |
+| 15 | `donne-moi les cotes du match PSG-Marseille` | pas `parlay_analyze` ni `same_match_combo_analyze` | les 7 outils quant reviennent |
+| 16 | `analyse la forme de Liverpool` | `sports_stats_fetch` présent | seuls les deux outils de tête arrivent |
+| 17 | `quel est le prix du Lenovo Legion 7i` | la recherche web est atteinte | le mot souple ne rend plus le groupe joignable |
+| 18 | `surveille le Bitcoin, préviens-moi si le prix change de 1%` | `cron` au **rang 1** | `search` prend le rang 1 à cause de « prix » |
+| 19 | une requête dont l'outil n'est **pas** dans la sélection | `+ catalogue → nom` s'affiche, **ou** l'outil est appelé directement | le modèle dit que la capacité n'existe pas |
+| 20 | `envoie le récap dans le salon` | `slack_send_message` lié | seuls les outils de lecture Slack arrivent |
+| 21 | `rappelle-moi dans 2 heures` | `schedule_task` lié | il sort dernier de son groupe et se fait couper |
+
+Le n° 19 est le plus important du lot : c'est le filet qui rend le resserrement
+acceptable, et il n'est validé que sur trois cas.
+
+### Scénarios des correctifs du jour
+
+| # | À taper | Attendu | Ce qui serait un bug |
+|---|---|---|---|
+| 22 | `/mode plan`, puis `écris dans /tmp/axon-essai/x.txt` | **refusé à l'exécution** | le fichier est écrit |
+| 23 | `/compact` sur un fil court | « rien à compresser — N messages… » | « contexte compressé — X → X (-0) » |
+| 24 | `/compact` sur un fil de plus de 12 échanges | des tokens réellement libérés | (-0) alors que le fil est long |
+| 25 | `schématise un RAG` | le diagramme est **généré**, chemin donné | un objet JSON rendu en texte |
+
+Le n° 25 rejoue le bug qui a mangé un diagramme : le modèle écrivait les
+arguments de `mermaid_diagram` au lieu de l'appeler.
 
 ### Sur la veille
 

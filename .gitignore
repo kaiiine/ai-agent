@@ -223,3 +223,5 @@ graphify-out/
 # `.axon-apercu/` ne subsiste que si le processus est tué en cours de route.
 .playwright-mcp/
 .axon-apercu/
+
+finetune/
