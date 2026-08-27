@@ -16,7 +16,7 @@ from src.agents.google_doc.tools import google_docs_create, google_docs_write, g
 # disque et l'agent ne pouvait pas les appeler. C'est ce qui a laissé passer un
 # constructeur de service mort et un `add_slide` qui jetait son contenu.
 from src.agents.google_sheet.tools import sheets_create, sheets_append_rows, sheets_read
-from src.agents.coding.tools import edit_file, propose_file_change
+from src.agents.coding.tools import edit_file, propose_file_change, propose_file_delete
 from src.agents.slides.tools import create_slides
 from src.agents.translator.tools import translator
 from src.agents.google_slide.tools import (
@@ -168,6 +168,10 @@ def build_all_tools() -> List[BaseTool]:
         # existait ; seul le fil entre les deux manquait.
         edit_file,
         propose_file_change,
+        # Sans lui, « supprime ce fichier » n'a AUCUN outil : `rm` passe par
+        # `shell_run`, refusé comme destructif, et l'agent de code ne peut demander
+        # aucune confirmation depuis sa boucle.
+        propose_file_delete,
         # === TRADUCTION ===
         # Documenté dans le README, jamais importé : même panne silencieuse que
         # `create_slides`.

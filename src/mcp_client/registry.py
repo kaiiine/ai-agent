@@ -212,6 +212,7 @@ def resync_index(diff: ToolDiff, server: str, tool_index: ToolIndex, *,
 
 # ── routing à deux étages ───────────────────────────────────────────────────────
 def route(query: str, tool_index: ToolIndex, *, top_servers: int = 3, k: int = 7,
+          servers: Iterable[str] | None = None,
           unrouted_servers: Iterable[str] = ()) -> list[str]:
     """Étage 1 : quels serveurs sont pertinents. Étage 2 : tools filtrés sur eux.
 
@@ -234,7 +235,11 @@ def route(query: str, tool_index: ToolIndex, *, top_servers: int = 3, k: int = 7
     # parce que l'outil se décrit « Perform click on a web page ». Avec le pont :
     # 3/5, et `browser_click` présent deux fois. Aucune perte sur les requêtes
     # de diagnostic (2/3 avant comme après).
-    servers = list(tool_index.query_servers(query, n=top_servers))
+    # `servers` fourni : l'appelant a déjà tranché la pertinence (porte lexicale).
+    # L'étage 1 sémantique ne sait pas le faire — il rend toujours ses `top_servers`,
+    # donc TOUS les serveurs quand il y en a moins que ça.
+    servers = (list(servers) if servers is not None
+               else list(tool_index.query_servers(query, n=top_servers)))
     servers += [s for s in unrouted_servers if s not in servers]
     if not servers:
         return []

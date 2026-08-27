@@ -425,12 +425,26 @@ _LANG_INSTRUCTIONS: dict[str, str] = {
 }
 
 
+_CATALOGUE = """\
+━━ CATALOGUE ━━
+Your bound tools are an INCOMPLETE selection. The list below is every tool that exists.
+MANDATORY FIRST STEP: scan this list for the tool that matches the request most \
+precisely. If that tool is NOT among your bound tools, call \
+`obtenir_outil(nom="<exact name>")` and nothing else this turn.
+Using an approximate bound tool when a precise one is listed here is an ERROR. \
+Never invent a name — take it verbatim from the list. If nothing in the list fits, \
+call ask_clarification rather than improvising.
+
+{lignes}\
+"""
+
 def build_system_prompt(
     tool_names: list[str],
     today: str,
     user_name: str,
     plan_mode: bool = False,
     lang: str = "fr",
+    catalogue: str = "",
 ) -> str:
     """
     Returns a minimal system prompt including only sections relevant to the
@@ -448,6 +462,9 @@ def build_system_prompt(
     parts = [_CORE.format(today=today, user_name=user_name, lang_instruction=lang_instruction)]
     if _s.llm_backend == "gemini":
         parts.append(_GEMINI_FORMAT)
+
+    if catalogue:
+        parts.append(_CATALOGUE.format(lignes=catalogue))
 
     if plan_mode:
         parts.append(_PLAN_MODE)

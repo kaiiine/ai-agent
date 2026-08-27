@@ -27,6 +27,7 @@ from typing import Any
 from langchain_core.tools import BaseTool
 
 from src.mcp_client.config import load_config
+from src.mcp_client.pertinence import serveurs_pertinents, signatures
 from src.mcp_client.manager import MCPClientManager, diff_server_tools
 from src.mcp_client.models import (
     DiagnosticReport,
@@ -65,6 +66,7 @@ class MCPRuntime:
         self._index = index
         self._index_provided = index is not None
         self._indexed: dict[str, list[MCPToolRef]] = {}          # ce qui est DANS l'index
+        self._signatures_cache: dict[str, set[str]] | None = None
         self._index_state: dict[str, str] = {}                   # serveur -> raison de l'échec
         self._collisions: dict[str, list[tuple[MCPToolRef, str]]] = {}
         self._tools: dict[str, BaseTool] = {}                    # public_name -> BaseTool
@@ -185,22 +187,6 @@ class MCPRuntime:
         """Tools MCP exécutables, à passer au `ToolNode` aux côtés des natifs."""
         return list(self._tools.values())
 
-    def select(self, query: str) -> list[BaseTool]:
-        """Routing à deux étages. Un serveur dont l'étage 1 n'a pas pu être indexé
-        reste joignable par l'étage 2 seul ; sans index du tout, on expose un
-        sous-ensemble borné. Une capacité dégradée vaut mieux qu'une capacité
-        muette — mais jamais au prix d'un mensonge sur son état (cf. `/mcp list`)."""
-        if not self._tools:
-            return []
-        if self._index is None:
-            return self.tools[:_MAX_UNROUTED_TOOLS]
-        try:
-            names = route(query, self._index, unrouted_servers=tuple(self._index_state))
-        except Exception as exc:
-            logger.warning("mcp_routing_failed", extra={"error": str(exc)})
-            return self.tools[:_MAX_UNROUTED_TOOLS]
-        return [self._tools[n] for n in names if n in self._tools]
-
     def _ensure_index(self) -> ToolIndex | None:
         if self._index is not None or self._index_provided:
             return self._index
@@ -220,20 +206,48 @@ class MCPRuntime:
         """Tools MCP exécutables, à passer au `ToolNode` aux côtés des natifs."""
         return list(self._tools.values())
 
-    def select(self, query: str) -> list[BaseTool]:
-        """Routing à deux étages. Un serveur dont l'étage 1 n'a pas pu être indexé
-        reste joignable par l'étage 2 seul ; sans index du tout, on expose un
-        sous-ensemble borné. Une capacité dégradée vaut mieux qu'une capacité
-        muette — mais jamais au prix d'un mensonge sur son état (cf. `/mcp list`)."""
+    def _signatures(self) -> dict[str, set[str]]:
+        if self._signatures_cache is None:
+            from src.mcp_client.config import load_config
+            cfgs = load_config(self.config_path) or {}
+            # Le hint SEUL. Enrichir la signature avec le vocabulaire des outils a
+            # été mesuré : bruit de 6 à 10 %, et pas un cas servi de plus.
+            self._signatures_cache = signatures(
+                {nom: getattr(c, "capabilities_hint", "") or ""
+                 for nom, c in cfgs.items()})
+        return self._signatures_cache
+
+    def select(self, query: str, actifs: set[str] = frozenset()) -> list[BaseTool]:
+        """Routing à deux étages, précédé d'une PORTE.
+
+        Sans elle, `top_servers=3` retenait les deux serveurs installés et `k=7`
+        rendait sept outils — sur chaque requête, quelle qu'elle soit. Mesuré :
+        Blender et Playwright liés sur 100 % des tours, 644 tokens par tour, pour
+        des outils hors sujet partout sauf sur 8 tours de 184.
+
+        Un serveur dont l'étage 1 n'a pas pu être indexé reste joignable par
+        l'étage 2 seul ; sans index du tout, on expose un sous-ensemble borné.
+        Une capacité dégradée vaut mieux qu'une capacité muette — mais jamais au
+        prix d'un mensonge sur son état (cf. `/mcp list`).
+        """
         if not self._tools:
             return []
+        # Sans index, on est en mode dégradé : la porte suppose un routage derrière
+        # elle pour trier ce qu'elle laisse passer. L'appliquer ici ne filtrerait
+        # pas, ça tairait — et une capacité muette est pire qu'une capacité large.
         if self._index is None:
             return self.tools[:_MAX_UNROUTED_TOOLS]
+        retenus = set(serveurs_pertinents(query, self._signatures(), actifs))
+        retenus |= set(self._index_state)      # jamais indexés : joignables ou muets
+        if not retenus:
+            return []
         try:
-            names = route(query, self._index, unrouted_servers=tuple(self._index_state))
+            names = route(query, self._index, servers=tuple(retenus),
+                          unrouted_servers=tuple(self._index_state))
         except Exception as exc:
             logger.warning("mcp_routing_failed", extra={"error": str(exc)})
-            return self.tools[:_MAX_UNROUTED_TOOLS]
+            return [t for t in self.tools
+                    if t.name.split("__")[0] in retenus][:_MAX_UNROUTED_TOOLS]
         return [self._tools[n] for n in names if n in self._tools]
 
     # ---------- surface consommée par la CLI ----------
@@ -314,6 +328,7 @@ class MCPRuntime:
         self._tools.clear()
         self._indexed.clear()
         self._index_state.clear()
+        self._signatures_cache = None
         self._collisions.clear()
         self._started = False
 

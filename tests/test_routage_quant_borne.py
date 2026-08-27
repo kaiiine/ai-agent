@@ -70,9 +70,18 @@ def test_une_requete_sans_rapport_n_embarque_aucun_outil_de_paris(retriever, que
     "tous les sports et toutes les competitions",
     "uniquement l'ATP aujourd'hui",
 ])
-def test_une_vraie_demande_de_paris_garde_tous_ses_outils(retriever, query):
-    """Le contrepoids : le seuil ne doit pas rendre le domaine inatteignable."""
-    assert _outils_de_paris(retriever, query) == len(PARIS)
+def test_une_vraie_demande_de_paris_atteint_son_domaine(retriever, query):
+    """Le contrepoids : le seuil ne doit pas rendre le domaine inatteignable.
+
+    Ce test exigeait les SEPT outils. Ce n'était pas ce qu'il vérifiait — il
+    vérifiait que `requires_top_rank=3` ne coupe pas le domaine —, et le groupe
+    déclare depuis des familles d'intention : demander les cotes n'appelle ni le
+    calcul de probabilité ni l'analyse d'un combiné. Ce qui doit rester vrai est
+    l'ACCÈS au domaine, et `betting_recommend` en est l'unique chemin. Un outil
+    de la famille visée qui manquerait reste réclamable au catalogue."""
+    lies = PARIS & {t.name for t in retriever.get(query)}
+    assert "betting_recommend" in lies, query
+    assert len(lies) >= 2, lies
 
 
 # ── Le mécanisme ──────────────────────────────────────────────────────────────
@@ -98,8 +107,13 @@ def test_le_seuil_de_rang_ne_desarme_pas_le_filet_lexical(retriever):
     # lexicale reconnaît : c'est exactement le cas que le seuil pourrait tuer.
     requete = "combien miser sur ce combiné ?"
     assert _money_intent(requete)
-    assert _outils_de_paris(retriever, requete) == len(PARIS), \
-        "le seuil de rang a désarmé la porte lexicale"
+    # Le compte exact des sept outils servait à dire « le domaine est atteint ».
+    # Depuis que `quant` déclare des familles d'intention, une demande de combiné
+    # ramène le combiné, pas le domaine entier — ce qui reste vérifiable est que
+    # la porte a bien ouvert le domaine, et sur la bonne famille.
+    lies = PARIS & {t.name for t in retriever.get(requete)}
+    assert "betting_recommend" in lies, "le seuil de rang a désarmé la porte lexicale"
+    assert lies & {"parlay_analyze", "same_match_combo_analyze"}, lies
 
 
 def test_la_porte_ne_retire_jamais_un_groupe(retriever):
@@ -117,7 +131,10 @@ def test_le_filet_lexical_reste_efficace(retriever):
     """Une demande que le sémantique raterait doit encore être rattrapée par le
     vocabulaire — c'est la raison d'être de `_money_intent`."""
     assert _money_intent("combien miser sur ce combiné ?")
-    assert _outils_de_paris(retriever, "combien miser sur ce combiné ?") == len(PARIS)
+    # Le domaine, pas son inventaire : `quant` déclare des familles d'intention
+    # et ne rend plus ses sept outils sur chaque demande.
+    lies = PARIS & {t.name for t in retriever.get("combien miser sur ce combiné ?")}
+    assert "betting_recommend" in lies, lies
 
 
 def test_le_gain_en_tokens_est_reel(retriever):

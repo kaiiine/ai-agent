@@ -25,6 +25,7 @@ from src.orchestrator.context import (
 )
 from src.orchestrator.provider_quirks import (
     _MALFORMED_TOOL_CALL_RE,
+    outil_ecrit_en_json,
     _sanitize_messages_for_mistral,
 )
 from src.orchestrator.invocation import invoke_with_recovery
@@ -158,11 +159,16 @@ from src.llm.models import (
 from src.llm.prompts import build_system_prompt
 from src.orchestrator.registry import build_all_tools
 from src.orchestrator.state import GlobalState
+from src.orchestrator.catalogue import (
+    indexer as _indexer, menu as _menu, obtenir_outil, ouverts as _ouverts,
+    outil as _outil_du_catalogue, serveurs_actifs as _serveurs_actifs,
+)
 from src.orchestrator.tool_retriever import ToolRetriever
 
 
 def _ensure_system_prompt(
-    messages: List, selected_tools: List, today: str, plan_mode: bool = False
+    messages: List, selected_tools: List, today: str, plan_mode: bool = False,
+    catalogue: str = "",
 ) -> List:
     import os
 
@@ -170,7 +176,8 @@ def _ensure_system_prompt(
     tool_names = [t.name for t in selected_tools]
     system_msg = SystemMessage(
         content=build_system_prompt(
-            tool_names, today, user_name, plan_mode=plan_mode, lang=_lang_pref
+            tool_names, today, user_name, plan_mode=plan_mode, lang=_lang_pref,
+            catalogue=catalogue,
         )
     )
     if not messages:
@@ -182,6 +189,31 @@ def _ensure_system_prompt(
     if role0 == "system":
         return [system_msg] + messages[1:]
     return [system_msg] + messages
+
+
+def _panneau_debug(selected_tools: list, working: list) -> None:
+    """Ce qui part RÉELLEMENT au modèle, imprimé au moment où ça part.
+
+    L'affichage vivait dans `streaming.py`, appelé AVANT le tour : il montrait
+    donc la sélection du tour précédent, et un prompt reconstruit depuis la liste
+    complète des outils au lieu du prompt envoyé. Vécu sur « schématise un RAG en
+    prod » : le panneau listait shell, cron, blender et playwright — les outils
+    d'une requête d'avant — sans `mermaid_diagram`, pourtant le seul appelé.
+    """
+    from rich.box import SIMPLE_HEAD
+    from rich.panel import Panel
+
+    from src.ui.commands import debug_state
+
+    if not debug_state.get("enabled"):
+        return
+    lignes = [f"[dim]tools sélectionnés :[/dim] {', '.join(t.name for t in selected_tools)}"]
+    for message in working:
+        role = getattr(message, "type", "?")
+        contenu = str(getattr(message, "content", ""))
+        lignes.append(f"[dim]{role}:[/dim] {contenu[:300]}{'...' if len(contenu) > 300 else ''}")
+    console.print(Panel("\n\n".join(lignes), box=SIMPLE_HEAD,
+                        border_style="dim", title="prompt"))
 
 
 def _chat_node_factory():
@@ -200,7 +232,9 @@ def _chat_node_factory():
     from src.mcp_client.runtime import mcp_runtime
 
     _mcp = mcp_runtime()
-    tools = tools + _mcp.tools
+    # `obtenir_outil` est lié à chaque tour côté modèle, mais le ToolNode est
+    # construit une fois : sans lui ici, l'appel remonterait « outil inconnu ».
+    tools = tools + _mcp.tools + [obtenir_outil]
 
     def chatbot(state: GlobalState):
         from src.infra.settings import settings
@@ -256,7 +290,8 @@ def _chat_node_factory():
                 if hasattr(last_message, "content")
                 else str(last_message)
             )
-        selected_tools = retriever.get(query) + _mcp.select(query)
+        selected_tools = retriever.get(query) + _mcp.select(
+            query, actifs=_serveurs_actifs(state["messages"]))
 
         global _last_selected_tools
         _last_selected_tools = [t.name for t in selected_tools]
@@ -275,6 +310,24 @@ def _chat_node_factory():
                         selected_tools.append(_tools_by_name[_tname])
             selected_tools = [t for t in selected_tools if t.name not in BLOCKED_TOOLS]
 
+        # Le CATALOGUE, reconstruit à chaque tour : les outils MCP apparaissent et
+        # disparaissent avec leurs serveurs, une liste figée au démarrage mentirait.
+        _indexer(tools + _mcp.tools)
+        _interdits = BLOCKED_TOOLS if plan_mode else frozenset()
+        _noms = {t.name for t in selected_tools}
+        for _nom in _ouverts(state["messages"]):
+            if _nom in _noms or _nom in _interdits:
+                continue
+            _reclame = _outil_du_catalogue(_nom)
+            if _reclame is not None:
+                selected_tools.append(_reclame)
+                _noms.add(_nom)
+                # Visible : c'est ce taux qui dira jusqu'où la sélection peut
+                # être resserrée. Sans trace, l'arbitrage se referait au doigt.
+                console.print(f"[dim]  +  catalogue → {_nom}[/dim]")
+        selected_tools.append(obtenir_outil)
+        catalogue = _menu(_interdits)
+
         # Tool-round cap — force text response after _MAX_TOOL_ROUNDS consecutive rounds
         force_text = _consecutive_tool_rounds(state["messages"]) >= _MAX_TOOL_ROUNDS
         if force_text:
@@ -282,13 +335,15 @@ def _chat_node_factory():
                 f"[dim]  ↩  {_MAX_TOOL_ROUNDS} rounds atteints — synthèse forcée[/dim]"
             )
             llm_with_tools = factory()
+            catalogue = ""
         else:
             llm_with_tools = factory().bind_tools(selected_tools)
 
         messages = state["messages"]
         today = datetime.now().strftime("%Y-%m-%d")
         messages = _ensure_system_prompt(
-            messages, selected_tools, today, plan_mode=plan_mode
+            messages, selected_tools, today, plan_mode=plan_mode,
+            catalogue=catalogue,
         )
 
         # Proactive compression before calling the LLM (once per user turn max)
@@ -336,6 +391,8 @@ def _chat_node_factory():
             if not _compressed_this_turn:
                 _compressed_this_turn = True
                 _on_compress()
+
+        _panneau_debug(selected_tools, working)
 
         _issue = invoke_with_recovery(
             llm_with_tools, working,
@@ -402,15 +459,19 @@ def _chat_node_factory():
         if not force_text:
             no_real_tool_call = not getattr(response, "tool_calls", None)
             raw_text = _content_to_str(response.content)
-            if no_real_tool_call and _MALFORMED_TOOL_CALL_RE.search(raw_text):
+            _en_json = (outil_ecrit_en_json(raw_text, selected_tools)
+                        if no_real_tool_call else None)
+            if no_real_tool_call and (_MALFORMED_TOOL_CALL_RE.search(raw_text) or _en_json):
                 console.print(
-                    "[dim]  ↩  appel d'outil mal formé détecté — correction…[/dim]"
+                    f"[dim]  ↩  appel d'outil écrit en texte"
+                    f"{f' ({_en_json})' if _en_json else ''} — correction…[/dim]"
                 )
                 fix_reminder = HumanMessage(
                     content=(
                         "[SYSTEME] Ta dernière réponse contenait un faux appel d'outil "
-                        "écrit en texte brut (une balise type 'xxx:tool_call ... "
-                        "</xxx:tool_call>'). Cette syntaxe n'existe pas et n'exécute rien. "
+                        "écrit en texte brut au lieu d'un vrai appel : une balise "
+                        "'xxx:tool_call', ou les arguments rendus comme objet JSON. "
+                        "Ni l'un ni l'autre n'exécute quoi que ce soit. "
                         "Refais le même appel en utilisant le vrai mécanisme de function "
                         "calling à ta disposition, pas du texte."
                     )

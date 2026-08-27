@@ -24,6 +24,7 @@ from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 
+from src.infra.pont_fr_en import pont_linguistique
 from src.infra.retrieval import build_catalog_document, unique
 
 
@@ -49,6 +50,16 @@ class ToolGroup:
     # rate jamais. Un terme ambigu ici ferait élire un groupe à tort : n'y mettre
     # que ce qui ne désigne rien d'autre.
     keywords: frozenset[str] = frozenset()
+    # Termes qui INDIQUENT le groupe sans le désigner. Ils le rendent joignable,
+    # jamais certain — pas de rang 1.
+    #
+    # `prix` a fait la démonstration des deux côtés : sur les 112 requêtes réelles
+    # il déclenchait 0 fois juste pour 2 faux (« si le prix change de plus de 1 % »
+    # est une surveillance, pas un achat, et poser le rang 1 sur `search` volait la
+    # place à `cron`) — mais « quel est le prix du Lenovo Legion 7i » a besoin de
+    # la recherche web. Un mot peut être un bon indice et une mauvaise certitude ;
+    # le supprimer comme le garder dur étaient tous deux faux.
+    soft_keywords: frozenset[str] = frozenset()
     # Rang minimal exigé à l'étage 1 pour que le groupe entre dans la sélection.
     # `None` = aucun seuil, le cas normal : admettre `local_grep` au rang 5 ne
     # coûte qu'un outil de plus dans le prompt.
@@ -60,6 +71,27 @@ class ToolGroup:
     # Un seuil de rang généralise à toutes les formulations, là où une liste de
     # phrases ne couvrirait que celles qu'on a pensé écrire.
     requires_top_rank: int | None = field(default=None, compare=False)
+    # Outils qui MÈNENT le groupe : liés les premiers dès que le groupe l'est.
+    #
+    # Le budget coupe dans le classement du groupe, or ce classement est dense —
+    # et l'embedding ne sépare pas les verbes d'une même famille : sur « crée un
+    # événement », `calendar_delete_event` sort avant `calendar_create_event`.
+    # Un invariant métier ne peut donc pas reposer dessus. `betting_recommend`
+    # est l'UNIQUE chemin de recommandation : lier `parlay_analyze` sans lui rend
+    # au modèle la configuration exacte qui lui faisait produire des paris
+    # lui-même. Ce qui doit toujours être là se déclare, ne s'espère pas.
+    tete: tuple[str, ...] = ()
+    # Sous-familles d'INTENTION à l'intérieur du groupe. Un groupe peut être
+    # cohésif au niveau 1 — tout y parle de paris — sans que ses outils soient
+    # nécessaires ensemble : demander les cotes n'appelle pas l'analyse d'un
+    # combiné. Quand elles sont déclarées, seule la famille visée est liée, ce
+    # qui rend au budget les places que le reste du groupe occupait.
+    #
+    # Pas d'index dédié : une famille vaut le rang de son meilleur outil, déjà
+    # calculé à l'étage 2. Un vecteur de plus par famille agirait comme un a
+    # priori sur le groupe — mesuré ailleurs, le rang-1 global tombait de 41 à
+    # 30 % quand un groupe portait cinq documents au lieu d'un.
+    capabilities: dict[str, tuple[str, ...]] | None = field(default=None, compare=False)
 
     def document(self, name: str, *, max_chars: int = 2000) -> str:
         covers = self.covers
@@ -67,12 +99,40 @@ class ToolGroup:
             extra = ", ".join(self.extend())
             if extra:
                 covers = f"{covers} Domaines disponibles : {extra}."
+        # La liste des noms d'outils RESTE dans le document, malgré l'intuition
+        # que l'étage 1 score un domaine et non des outils. Retirée, le vecteur
+        # seul gagnait deux points au rang 1 — mais le pipeline complet perdait
+        # cinq points de rappel groupe (82 -> 77 %) et six à l'outil. Les noms
+        # portent un signal que les clauses et la correspondance exacte
+        # exploitent ; le rang isolé n'est pas le service rendu.
         return build_catalog_document(
             {"Groupe": name, "Couvre": covers}, "Outils", self.tools, max_chars=max_chars
         )
 
 
 _WORD = re.compile(r"[\w-]+", re.UNICODE)
+
+
+def _familles_visees(spec: "ToolGroup", classes: list[str]) -> list[str]:
+    """Les outils des `_FAMILLES_MAX` familles les mieux placées, plus la tête.
+
+    Une famille vaut le rang de son meilleur outil. Garder la tête quoi qu'il
+    arrive n'est pas un confort : elle porte un invariant — `betting_recommend`
+    est l'unique chemin de recommandation, et une demande de cotes reste une
+    demande de pari.
+    """
+    rang = {nom: i for i, nom in enumerate(classes)}
+    familles = sorted(spec.capabilities.items(),
+                      key=lambda kv: min((rang.get(t, 999) for t in kv[1]), default=999))
+    gardes = {t for _, outils in familles[:_FAMILLES_MAX] for t in outils}
+    gardes.update(spec.tete)
+    return [t for t in classes if t in gardes]
+
+
+def _soft_keyword_groups(query: str) -> list[str]:
+    """Groupes seulement INDIQUÉS. Mêmes mots entiers, sans le rang 1."""
+    mots = {m.group(0).lower() for m in _WORD.finditer(query)}
+    return [g for g, spec in TOOL_GROUPS.items() if spec.soft_keywords & mots]
 
 
 def _keyword_groups(query: str) -> list[str]:
@@ -160,6 +220,36 @@ _CODING_INTENT = re.compile(
 
 def _coding_intent(query: str) -> bool:
     return bool(_CODING_INTENT.search(query or ""))
+
+
+# ── Porte déterministe d'intention « modifier un fichier existant » ───────────
+# `filesystem` mêle cinq outils de lecture et deux d'écriture, et la similarité
+# dense range TOUJOURS les lectures devant : `edit_file` sortait 7e sur 7, sur
+# « commente ces deux lignes », « change la valeur de timeout » comme sur « lis
+# le fichier ». Tant qu'on prenait le groupe entier ça ne se voyait pas ; depuis
+# le budget, l'écriture est coupée à chaque fois.
+#
+# Le pont FR→EN a été essayé d'abord : il remonte `edit_file` du rang 7 au rang 5
+# sur deux des trois cas, et ne bouge pas « commente ». Insuffisant — les
+# descriptions des outils de lecture dominent quoi qu'on ajoute à la requête.
+#
+# Un verbe de modification suivi de ce qu'on modifie : le même patron que les
+# trois autres portes, et pour la même raison — ce que le sémantique ne sait pas
+# voir, le lexical ne le rate pas.
+_ECRITURE_INTENT = re.compile(
+    r"(?i)"
+    r"\b(?:commente[rz]?|d[ée]commente[rz]?|modifie[rz]?|change[rz]?|remplace[rz]?"
+    r"|ajoute[rz]?|retire[rz]?|renomme[rz]?|corrige[rz]?|[ée]dite?[rz]?"
+    r"|rajoute[rz]?|insere[rz]?|ins[èe]re[rz]?)\b"
+    r"[^.?!]{0,50}"
+    r"\b(?:ligne|lignes|fichier|fichiers|config|configuration|conf|valeur|valeurs"
+    r"|param[èe]tre|param[èe]tres|option|options|\S+\.(?:conf|cfg|ini|ya?ml|toml"
+    r"|json|env|sh|zshrc|bashrc|py|js|ts|md))\b"
+)
+
+
+def _ecriture_intent(query: str) -> bool:
+    return bool(_ECRITURE_INTENT.search(query or ""))
 
 
 # ── Porte déterministe d'intention « récurrence » ─────────────────────────────
@@ -269,7 +359,7 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "local_grep", "local_glob",
                # Lire sans pouvoir écrire enfermait l'orchestrateur : `shell_run`
                # bloque l'écriture et renvoie vers ces deux-là, qu'il n'avait pas.
-               "edit_file", "propose_file_change"),
+               "edit_file", "propose_file_change", "propose_file_delete"),
     ),
     "shell": ToolGroup(
         covers="Terminal de la machine : exécuter une commande ou un script, lancer un "
@@ -375,8 +465,12 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
         # produit. La description contenait déjà le mot « salon » et le groupe
         # sortait quand même hors du top 5 : l'embedder dilue un terme rare dans
         # une phrase courte et banale, la correspondance exacte ne le rate jamais.
-        keywords=frozenset({"slack", "salon", "salons", "canal", "canaux",
-                            "channel", "channels"}),
+        # `canal`/`canaux` passés en indice : 0 déclenchement juste pour 2 faux —
+        # « surveille le cours d'actions » n'a rien de Slack. `salon` reste dur,
+        # contrairement à ce que l'intuition dit : c'est la mesure qui départage,
+        # pas l'air ambigu d'un mot.
+        keywords=frozenset({"slack", "salon", "salons", "channel", "channels"}),
+        soft_keywords=frozenset({"canal", "canaux"}),
     ),
     "jira": ToolGroup(
         covers="Jira : tickets, issues, sprints, epics et projets. Voir les tickets qui "
@@ -409,10 +503,16 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "de l'art, comparatif argumenté, faire le tour d'un sujet.",
         tools=("web_research_report", "deep_research", "url_fetch",
                "arxiv_search", "arxiv_get_paper"),
-        keywords=frozenset({"arxiv", "internet", "web",
-                            "promo", "promos", "reduction", "réduction",
-                            "prix", "tarif", "tarifs", "solde", "soldes",
-                            "remise", "remises"}),
+        # Le vocabulaire commercial est passé en INDICE. Mesuré sur les 112
+        # requêtes réelles, `prix` déclenchait 0 fois juste pour 2 faux — mais le
+        # corpus de référence commercial en a besoin (« quel est le prix du Lenovo
+        # Legion 7i »). Un mot qui a raison une fois sur deux ne peut pas poser le
+        # rang 1 ; il peut rendre le groupe joignable.
+        keywords=frozenset({"arxiv", "web"}),
+        soft_keywords=frozenset({"internet",
+                                 "promo", "promos", "reduction", "réduction",
+                                 "prix", "tarif", "tarifs", "solde", "soldes",
+                                 "remise", "remises"}),
     ),
     "news": ToolGroup(
         covers="Actualités et événements récents : ce qui s'est passé aujourd'hui ou "
@@ -477,6 +577,11 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
                "récapitulatif quotidien automatique, lister ou arrêter les tâches "
                "programmées.",
         tools=("schedule_task", "surveiller", "list_cron_tasks", "stop_cron_task"),
+        # « rappelle moi dans 2 heures » classait `schedule_task` DERNIER de son
+        # propre groupe, derrière `stop_cron_task` : les quatre outils parlent de
+        # tâches planifiées, et seul le verbe les sépare. Planifier est l'action
+        # première du groupe ; lire et arrêter supposent qu'une tâche existe.
+        tete=("schedule_task",),
         # `surveiller` vit ici faute de mieux. Un groupe dédié donnait 5/5 en
         # réglage ET en held-out, contre 4/5 et 1/5 ici — mais l'étage 1 ne
         # discrimine pas les requêtes courtes : sur « mes rendez-vous de demain »,
@@ -496,9 +601,33 @@ TOOL_GROUPS: dict[str, ToolGroup] = {
         tools=("betting_recommend", "winamax_odds_fetch", "sports_stats_fetch",
                "probability_compute", "ev_analyze", "parlay_analyze",
                "same_match_combo_analyze"),
-        keywords=frozenset({"winamax", "pari", "paris", "parier", "cote", "cotes",
+        # Les deux PORTES D'ENTRÉE du domaine : recommander, et aller chercher les
+        # cotes. `probability_compute` et `ev_analyze` sont des étages en aval —
+        # ils sortaient pourtant devant `winamax_odds_fetch` sur « y a-t-il de bons
+        # paris ce soir », parce que la similarité dense classe des outils d'une
+        # même famille sans distinguer ce qui commence de ce qui poursuit.
+        tete=("betting_recommend", "winamax_odds_fetch"),
+        # Quatre actes distincts, pas sept outils interchangeables. Demander les
+        # cotes d'un match n'appelle ni le calcul de probabilité ni l'analyse
+        # d'un combiné — et ce groupe est le plus lourd du registre : sur « donne
+        # moi les cotes du match PSG Marseille » il liait six outils pour 5 436
+        # tokens, soit un tiers de l'entrée du tour.
+        capabilities={
+            "recommander": ("betting_recommend",),
+            "cotes": ("winamax_odds_fetch",),
+            "analyser": ("sports_stats_fetch", "probability_compute", "ev_analyze"),
+            "combine": ("parlay_analyze", "same_match_combo_analyze"),
+        },
+        keywords=frozenset({"winamax", "pari", "paris", "parier",
                             "combine", "combiné", "bankroll", "freebet", "freebets",
                             "miser", "mise"}),
+        # `cote`/`cotes` en indice : 2 déclenchements justes pour 4 faux, dont
+        # « les entreprises cotées en bourse ». Et comme ce groupe exige le rang 3,
+        # un simple indice ne l'ouvre pas — c'est voulu : on n'entre pas dans le
+        # groupe le plus lourd du registre sur un mot qui a tort deux fois sur
+        # trois. `winamax` et `paris` restent durs, et la porte `_money_intent`
+        # rattrape le vocabulaire de pari.
+        soft_keywords=frozenset({"cote", "cotes"}),
         # Le groupe le plus LOURD du registre : sept outils, ~5 000 tokens de
         # schémas, dont 1 984 pour `betting_recommend` seul. Le proposer parce
         # qu'il est arrivé quatrième coûte 45 % de l'entrée d'un tour.
@@ -593,10 +722,22 @@ _MARGE_CLAUSE = 0.20
 # de progresser franchement (82,6 % à 8, 87,0 % à 10 pour deux groupes de plus).
 _MAX_GROUPES_UNION = 8
 
-# Au-delà, on sous-classe dans le groupe au lieu de le prendre entier : seul
-# `jira` dépasse. En deçà, la cohésion prime — on ne veut jamais `git_status`
-# sans `git_add`.
-_GROUP_FANOUT_MAX = 12
+# Plafond d'outils liés, épinglés compris. OpenAI recommande moins de 20 au
+# début d'un tour ; au-delà, la capacité du modèle à choisir se dégrade.
+_BUDGET_OUTILS = 16
+
+# Familles retenues dans un groupe qui en déclare. Deux, pas une : une
+# demande porte souvent sur un acte et sa donnée — les cotes ET le pari.
+_FAMILLES_MAX = 1
+
+# Ce que la porte d'écriture met à portée. `propose_file_change` accompagne
+# `edit_file` : le second refuse un fichier absent en renvoyant vers le premier.
+_OUTILS_ECRITURE = ("edit_file", "propose_file_change", "propose_file_delete")
+
+# Rang attribué à un groupe seulement INDIQUÉ par un mot souple. Assez bas
+# pour passer les seuils `requires_top_rank` les plus courants, assez haut
+# pour ne jamais primer sur ce que le sémantique a élu.
+_RANG_INDICE = 4
 _GROUP_SOURCE, _TOOL_SOURCE = "group", "tool"
 
 
@@ -697,6 +838,11 @@ class ToolRetriever:
         ordre: list[str] = list(nommes)
         rangs: dict[str, int] = {g: 1 for g in nommes}
 
+        # Les indices n'entrent qu'APRÈS ce que le sémantique aura élu : ils
+        # rendent le groupe joignable sans lui donner la priorité. Placés ici en
+        # tête, ils reproduiraient le défaut qu'ils corrigent.
+        indices = [g for g in _soft_keyword_groups(query) if g not in rangs]
+
         morceaux = _clauses(query)
         compose = bool(morceaux)
 
@@ -735,24 +881,53 @@ class ToolRetriever:
                 if tour < len(elus) and elus[tour] not in ordre:
                     ordre.append(elus[tour])
 
+        for groupe in indices:
+            if groupe not in ordre:
+                ordre.append(groupe)
+                rangs[groupe] = _RANG_INDICE
+
         if morceaux:
             ordre = ordre[:_MAX_GROUPES_UNION]
         return ordre, rangs
 
     def _tools_of(self, group: str, query: str) -> list[str]:
-        """Étage 2. Un groupe cohésif est pris entier ; un gros groupe est
-        sous-classé en MMR, qui diversifie au lieu de ramener une famille de
-        quasi-doublons (18 tools Jira se ressemblent beaucoup entre eux)."""
+        """Étage 2 : les outils du groupe, CLASSÉS. Le budget coupe dans cette
+        liste, donc l'ordre décide de ce qui est lié — plus seulement de ce qui
+        entre dans un top-k.
+
+        Similarité et non MMR : le MMR diversifie, ce qui est exactement l'inverse
+        du besoin quand on ne garde que les premiers. Vérifié — les deux donnaient
+        le même ordre sur les cas testés, et la diversité n'a plus de rôle depuis
+        que le budget répartit entre groupes."""
         spec = TOOL_GROUPS[group]
-        if len(spec.tools) <= _GROUP_FANOUT_MAX:
-            return list(spec.tools)
         flt = {"$and": [{"source": _TOOL_SOURCE}, {"group": group}]}
+        vise = len(spec.tools)
+        # Le pont FR→EN, ici comme sur le chemin MCP. Le groupe est déjà trouvé ;
+        # ce qui reste à trancher est le VERBE, et c'est là que le français et
+        # l'anglais divergent : « envoie le recap dans le salon » classait
+        # `slack_send_message` 6e de son propre groupe, derrière trois outils de
+        # lecture. Avec le pont : 1er. L'embedding dense ne sépare pas les verbes
+        # d'une même famille — `calendar_delete_event` sort avant
+        # `calendar_create_event` sur « crée un événement ».
+        texte = pont_linguistique(query)
         try:
-            docs = self._store.max_marginal_relevance_search(
-                query, k=self._k, fetch_k=max(self._k * 4, 20), lambda_mult=0.5, filter=flt)
+            docs = self._store.similarity_search(texte, k=vise, filter=flt)
         except Exception:
-            docs = self._store.similarity_search(query, k=self._k, filter=flt)
-        return unique(d.metadata.get("tool_name") for d in docs)
+            docs = []
+        classes = unique(d.metadata.get("tool_name") for d in docs)
+        # Un outil absent de l'index (fraîchement ajouté) ne doit pas disparaître :
+        # il passe en queue plutôt que d'être perdu.
+        classes = classes + [t for t in spec.tools if t not in classes]
+        # Les familles se choisissent sur le classement BRUT. La tête est
+        # appliquée après : posée avant, elle mettait ses propres outils au rang 1
+        # et 2, donc leurs familles gagnaient toujours — les huit demandes de
+        # paris testées rendaient les deux mêmes outils, « analyse la forme de
+        # Liverpool » comprise. Une tête déclare ce qu'on garde, pas ce qui est
+        # pertinent.
+        if spec.capabilities:
+            classes = _familles_visees(spec, classes)
+        return ([t for t in spec.tete if t in classes]
+                + [t for t in classes if t not in spec.tete])
 
     def get(self, query: str) -> list:
         ranked, rangs = self._rank_groups_detaille(query)
@@ -778,11 +953,37 @@ class ToolRetriever:
                 groups = [groupe] + groups
 
         selected: set[str] = set(_PINNED_TOOLS)
+        # Posés AVANT le budget, comme les épinglés : ils doivent tenir leur place,
+        # pas la disputer à cinq outils de lecture qui les devancent toujours.
+        # Le retrait qui suit, quand `coding` gagne l'étage 1, les reprend — c'est
+        # voulu : le specialist gère lui-même ses fichiers.
+        if _ecriture_intent(query):
+            selected.update(_OUTILS_ECRITURE)
+        files: list[list[str]] = []
         for position, group in enumerate(groups, start=1):
             seuil = TOOL_GROUPS[group].requires_top_rank
             if seuil is not None and rangs.get(group, position) > seuil:
                 continue
-            selected.update(self._tools_of(group, query))
+            files.append(self._tools_of(group, query))
+
+        # Le BUDGET, et non l'union. Unir les groupes entiers liait 26,6 outils en
+        # moyenne, jusqu'à 47 — au-dessus des 20 recommandés par OpenAI et très
+        # au-dessus des 3-5 d'Anthropic. Ce n'est pas qu'une question de tokens :
+        # différer les outils AMÉLIORE la précision du choix (49 -> 74 % mesuré
+        # par Anthropic sur Opus 4). Un outil manquant, lui, reste réclamable au
+        # catalogue — c'est ce filet qui rend le resserrement acceptable.
+        #
+        # Tourniquet et non concaténation : sans lui, le premier groupe mange tout
+        # le budget et les intentions suivantes n'ont plus rien, exactement comme
+        # les clauses avant leur propre tourniquet.
+        for tour in range(max((len(f) for f in files), default=0)):
+            for elus in files:
+                if len(selected) >= _BUDGET_OUTILS:
+                    break
+                if tour < len(elus):
+                    selected.add(elus[tour])
+            if len(selected) >= _BUDGET_OUTILS:
+                break
 
         # Le specialist gère lui-même les fichiers et git : les lui laisser évite
         # que l'orchestrateur commence le travail au lieu de déléguer. Seulement

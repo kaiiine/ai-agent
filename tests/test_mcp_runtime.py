@@ -130,7 +130,10 @@ def test_le_graphe_branche_les_tools_mcp_a_cote_des_natifs():
     src = pathlib.Path("src/orchestrator/graph.py").read_text(encoding="utf-8")
     assert "from src.mcp_client.runtime import mcp_runtime" in src
     assert "tools = tools + _mcp.tools" in src                  # exécutables
-    assert "retriever.get(query) + _mcp.select(query)" in src   # sélectionnables
+    # La forme exacte de l'appel a changé quand `select` a reçu les serveurs
+    # actifs de la conversation ; ce qui est gardé ici, c'est que la sélection
+    # native et la sélection MCP se composent, pas leur rédaction.
+    assert "retriever.get(query) + _mcp.select(" in src         # sélectionnables
     # l'index natif est construit AVANT l'ajout des tools MCP : il ne les indexe pas
     assert src.index("retriever = ToolRetriever(tools)") < src.index("tools = tools + _mcp.tools")
 
