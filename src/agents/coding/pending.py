@@ -1,6 +1,7 @@
 """Shared in-memory stores for coding agent state (HITL review + plan tracking)."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import List
 
@@ -77,6 +78,29 @@ class FileChange:
     original: str     
     proposed: str
     description: str
+    # Supprimer passe par la MÊME revue qu'écrire. L'agent de code n'avait aucun
+    # outil capable d'effacer un fichier : sa seule voie était `rm` via
+    # `shell_run`, refusée comme destructive — et aucune confirmation ne peut
+    # être demandée depuis sa boucle, qui n'a pas de graphe. « supprime x.py »
+    # y était donc structurellement impossible.
+    supprime: bool = field(default=False)
+
+
+def appliquer(change: FileChange) -> None:
+    """Écrit ou efface, après avoir gardé de quoi défaire.
+
+    Le même bloc était recopié aux trois endroits qui appliquent une revue ; une
+    suppression y aurait fait un quatrième oubli possible.
+    """
+    from pathlib import Path as _Path
+
+    cible = _Path(change.path)
+    snapshots.save(change.path, change.original)
+    if change.supprime:
+        cible.unlink(missing_ok=True)
+        return
+    cible.parent.mkdir(parents=True, exist_ok=True)
+    cible.write_text(change.proposed, encoding="utf-8")
 
 
 class PendingStore:
@@ -125,8 +149,21 @@ class PlanStep:
 
 
 class DevPlanStore:
+    """Le plan du specialist, et le fait qu'il en exige un.
+
+    `exige_un_plan` distingue « le specialist n'a pas encore planifié » de « ce
+    n'est pas le specialist qui appelle ». Sans cette distinction, la garde de
+    `propose_file_change` s'appliquait aussi à l'orchestrateur, qui n'a pas de
+    `dev_plan_create` : `shell_run` refusait `>` en renvoyant vers
+    `propose_file_change`, `edit_file` refusait un fichier absent en renvoyant
+    vers `propose_file_change`, et `propose_file_change` réclamait un plan que
+    rien ne pouvait créer. Créer un fichier depuis l'orchestrateur était donc
+    impossible par le chemin que les messages d'erreur désignaient.
+    """
+
     def __init__(self) -> None:
         self._steps: List[PlanStep] = []
+        self.exige_un_plan = False
 
     def create(self, steps: List[str]) -> None:
         self._steps = [PlanStep(label=s) for s in steps]
@@ -146,6 +183,16 @@ class DevPlanStore:
 
     def clear(self) -> None:
         self._steps.clear()
+
+    @contextmanager
+    def run_specialist(self):
+        """Le temps d'un run du specialist, écrire exige d'avoir planifié."""
+        precedent = self.exige_un_plan
+        self.exige_un_plan = True
+        try:
+            yield
+        finally:
+            self.exige_un_plan = precedent
 
     def __bool__(self) -> bool:
         return bool(self._steps)

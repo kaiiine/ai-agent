@@ -24,6 +24,7 @@ _ALWAYS_INCLUDED = frozenset({
     "dev_explain",
     "ask_clarification",
     "propose_file_change",
+    "propose_file_delete",
     "edit_file",
     "load_skill",
 })

@@ -141,7 +141,9 @@ def _render_diff(change: FileChange) -> None:
     # File header
     t = Text()
     t.append("  ")
-    if is_new:
+    if change.supprime:
+        t.append("- supprimer  ", style="bold red")
+    elif is_new:
         t.append("+ nouveau  ", style="bold green")
     else:
         t.append("~ modifier  ", style=f"bold {ACCENT}")
@@ -150,7 +152,14 @@ def _render_diff(change: FileChange) -> None:
     console.print(t)
     console.print()
 
-    if is_new:
+    if change.supprime:
+        lines = change.original.splitlines()
+        for line in lines[:_MAX_DIFF_LINES]:
+            console.print(Text(f"  - {line}", style="red"))
+        if len(lines) > _MAX_DIFF_LINES:
+            console.print(Text(f"  … ({len(lines) - _MAX_DIFF_LINES} lignes supplémentaires)",
+                               style="dim"))
+    elif is_new:
         lines = change.proposed.splitlines()
         for line in lines[:_MAX_DIFF_LINES]:
             console.print(Text(f"  + {line}", style="green"))
@@ -244,12 +253,10 @@ def review_single_latest() -> Tuple[str, str | None]:
 
     if choice == "apply":
         try:
-            from src.agents.coding.pending import snapshots
+            from src.agents.coding.pending import appliquer
             from src.infra.tools_cache import session_cache
             p = Path(change.path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            snapshots.save(change.path, change.original)  # save before overwriting
-            p.write_text(change.proposed, encoding="utf-8")
+            appliquer(change)
             session_cache.invalidate_filesystem()
             t = Text()
             t.append("  ✓  ", style="bold green")
@@ -284,15 +291,12 @@ def auto_write_all(console_override=None) -> None:
     if not changes:
         return
 
-    from src.agents.coding.pending import snapshots
+    from src.agents.coding.pending import appliquer, snapshots
     from src.infra.tools_cache import session_cache
     applied, errors = [], []
     for change in changes:
         try:
-            p = Path(change.path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            snapshots.save(change.path, change.original)
-            p.write_text(change.proposed, encoding="utf-8")
+            appliquer(change)
             applied.append(change.path)
         except Exception as e:
             errors.append(f"{change.path}: {e}")
@@ -539,15 +543,12 @@ def review_pending() -> Tuple[str, str | None]:
     console.print()
 
     if choice == "apply":
-        from src.agents.coding.pending import snapshots
+        from src.agents.coding.pending import appliquer, snapshots
         from src.infra.tools_cache import session_cache
         applied, errors = [], []
         for change in pending_changes.pop_all():
             try:
-                p = Path(change.path)
-                p.parent.mkdir(parents=True, exist_ok=True)
-                snapshots.save(change.path, change.original)
-                p.write_text(change.proposed, encoding="utf-8")
+                appliquer(change)
                 applied.append(change.path)
             except Exception as e:
                 errors.append(f"{change.path}: {e}")

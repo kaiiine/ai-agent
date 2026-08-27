@@ -584,8 +584,40 @@ def _contenu_invalide(p: Path, content: str) -> str:
     return ""
 
 
+@tool("propose_file_delete")
+def propose_file_delete(path: str, description: str = "") -> Dict[str, Any]:
+    """
+    Proposes DELETING a file. The user is shown its content and approves or refuses.
+    Use this instead of `rm` — a shell deletion cannot be confirmed from here.
+
+    Args:
+        path: absolute path of the file to delete
+        description: one-line reason (optional)
+    Returns:
+        {"status": "proposed", "path": path, "awaiting_confirmation": true}
+    """
+    p = Path(path)
+    if not p.exists():
+        return {"status": "error", "error": f"'{path}' n'existe pas — rien à supprimer."}
+    if not p.is_file():
+        return {"status": "error",
+                "error": f"'{path}' n'est pas un fichier. Cet outil ne supprime pas de dossier."}
+    try:
+        original = p.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return {"status": "error", "error": f"'{path}' illisible : {exc}"}
+
+    pending_changes.add(FileChange(
+        path=str(p), original=original, proposed="",
+        description=description.strip() or f"suppression de {p.name}",
+        supprime=True,
+    ))
+    return {"status": "proposed", "path": str(p), "supprime": True,
+            "awaiting_confirmation": True}
+
+
 @tool("propose_file_change")
-def propose_file_change(path: str, content: str, description: str) -> Dict[str, Any]:
+def propose_file_change(path: str, content: str, description: str = "") -> Dict[str, Any]:
     """
     Writes a file WHOLE — use it only to CREATE a file, or to rewrite one end to end.
     To change part of an existing file, use edit_file: it costs the size of the change,
@@ -595,17 +627,27 @@ def propose_file_change(path: str, content: str, description: str) -> Dict[str, 
     Args:
         path: absolute path of the file to create or modify
         content: complete new content for the file
-        description: one-line description of what this change does (ex: "Ajoute la route /health")
+        description: one-line description of what this change does (ex: "Ajoute la route /health").
+                     Optional — derived from the path when omitted.
     Returns:
         {"status": "proposed", "path": path, "awaiting_confirmation": true}
     """
-    if not dev_plan.steps:
+    # La garde n'est celle QUE du specialist. L'orchestrateur appelle le même
+    # outil et n'a pas de `dev_plan_create` : lui opposer cette erreur fermait le
+    # seul chemin de création de fichier qui lui restait — `shell_run` refuse
+    # `>` en renvoyant ici, `edit_file` refuse un fichier absent en renvoyant ici.
+    if dev_plan.exige_un_plan and not dev_plan.steps:
         return {
             "status": "error",
             "error": "Tu dois d'abord appeler dev_plan_create() pour créer un plan avant de proposer des fichiers.",
         }
 
     p = Path(path)
+    # Dérivable plutôt qu'obligatoire : trois arguments requis pour écrire un
+    # fichier, c'est un appel malformé de plus à chaque tentative. Le libellé sert
+    # au panneau de revue, et le nom du fichier le renseigne déjà correctement.
+    description = description.strip() or (
+        f"création de {p.name}" if not p.exists() else f"réécriture de {p.name}")
 
     refus = _contenu_invalide(p, content)
     if refus:

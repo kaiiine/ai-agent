@@ -76,7 +76,7 @@ def _get_coding_llm():
 def _get_coding_tools():
     from src.agents.coding.tools import (
         dev_plan_create, dev_plan_update, dev_plan_step_done, dev_explain, ask_clarification,
-        find_git_repos, propose_file_change, edit_file, load_skill,
+        find_git_repos, propose_file_change, propose_file_delete, edit_file, load_skill,
         project_graph_query,
     )
     # Les quatre requêtes du graphe. `project_graph_query` reste en repli : il ne
@@ -174,6 +174,31 @@ _PROGRESS_TOOLS = {
     "load_skill", "project_graph_query",
 }
 _SHELL_PREVIEW_TOOLS = {"shell_run", "shell_cd"}
+
+#: Les statuts par lesquels un outil refuse — mêmes noms que dans `cron_daemon`.
+_STATUTS_DE_REFUS = ("requires_confirmation", "blocked")
+
+
+def _refus_definitif(nom: str, resultat):
+    """Transforme un refus en impasse explicite, pour que le modèle change de voie.
+
+    Le specialist n'a pas de graphe : aucun questionnaire ne peut s'afficher
+    depuis sa boucle. Un refus y est donc irrécupérable, et le présenter comme un
+    incident passager invite à réessayer.
+    """
+    if not isinstance(resultat, dict) or resultat.get("status") not in _STATUTS_DE_REFUS:
+        return resultat
+    return {
+        "status": "error",
+        "error": (
+            f"`{nom}` a refusé cette commande ({resultat.get('reason') or 'non autorisée'}) "
+            "et AUCUNE confirmation ne peut être demandée depuis l'agent de code. "
+            "Ne relance pas la même commande : elle sera refusée à l'identique. "
+            "Passe par `edit_file` ou `propose_file_change` pour écrire un fichier, "
+            "ou termine en expliquant ce qui reste à faire à l'utilisateur."
+        ),
+        "command": resultat.get("command"),
+    }
 _MAX_ITERATIONS = 80
 ECHEC_PREFIXE = "[ÉCHEC]"
 _phase_max_iterations: int | None = None 
@@ -356,9 +381,13 @@ def run_coding_task(task: str) -> str:
     Calls the global progress callback on plan/file events so the UI can update in real time.
     Returns a summary string.
     """
+    from src.agents.coding.pending import dev_plan
+
     _vram_swap_in()
     try:
-        return _run(task)
+        # Le temps de ce run SEULEMENT, écrire un fichier exige d'avoir planifié.
+        with dev_plan.run_specialist():
+            return _run(task)
     finally:
         _vram_swap_out()
 
@@ -735,6 +764,14 @@ def _run(task: str) -> str:
                         except Exception:
                             pass    
                     result = {"status": "error", "error": str(e)}
+
+            # Un refus d'outil est DÉFINITIF ici : la confirmation passe par un
+            # `interrupt()` du graphe, que cette boucle n'a pas. Sans le dire au
+            # modèle, il relance la même commande indéfiniment — vécu, trois fois
+            # de suite le même `mkdir … && rm -f …`, puis un message à
+            # l'utilisateur lui demandant de valider un questionnaire qui ne
+            # pouvait pas s'afficher. Le démon cron applique déjà cette règle.
+            result = _refus_definitif(name, result)
 
             # Observateurs passifs AVANT le hook de progression : ils doivent voir
             # le résultat tel que l'outil l'a produit, pas tel qu'un override l'a
