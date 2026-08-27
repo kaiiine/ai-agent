@@ -618,6 +618,7 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
             return command_panel("pas de graph actif", error=True)
         try:
             from src.infra.settings import settings
+            from src.orchestrator.context import _backend_policy
             from src.orchestrator.graph import _compress_context, _chat_node_factory
             from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini, make_llm_mistral
             from langchain_core.messages import RemoveMessage
@@ -658,6 +659,21 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
 
             after_tokens = _estimate_tokens(compressed)
             freed = before_tokens - after_tokens
+
+            # Deux seuils qui ne se parlaient pas : la commande refusait sous
+            # 3 messages, le compresseur garde les `keep_recent` derniers intacts
+            # — 12 sur ollama_cloud. Entre les deux, /compact ne compressait rien
+            # et annonçait quand même « contexte compressé — 3 666 → 3 666 (-0) ».
+            # Un rapport qui appelle succès une opération sans effet est pire que
+            # l'absence d'opération : il fait chercher le bug ailleurs.
+            if freed <= 0:
+                garde = _backend_policy(backend)["keep_recent"]
+                echanges = sum(1 for m in messages if not isinstance(m, SystemMessage))
+                return command_panel(
+                    f"rien à compresser — {echanges} messages dans le fil, et les "
+                    f"{garde} derniers sont gardés intacts sur {backend}. "
+                    f"La compression prendra effet au-delà."
+                )
 
             # Persist dans LangGraph
             removals = [RemoveMessage(id=m.id) for m in removed if getattr(m, "id", None)]

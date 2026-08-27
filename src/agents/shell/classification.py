@@ -87,6 +87,11 @@ SANS_CONFIRMATION: frozenset[str] = frozenset({
     "du", "df", "tree", "realpath", "readlink", "basename", "dirname",
     "diff", "cmp", "md5sum", "sha256sum", "sort", "uniq", "cut", "awk",
     "sed", "tr", "column", "jq", "yq", "xxd", "strings",
+    # Créer sans jamais détruire. `mkdir` ne peut rien écraser, et `touch` ne
+    # change qu'une date sur un fichier existant. Vécu : « crée un fichier x.py »
+    # ouvrait un questionnaire « commande non reconnue comme sûre » sur un
+    # `mkdir -p` — le frottement exact qui fait désactiver un garde.
+    "mkdir", "touch", "mktemp",
     # Contexte
     "pwd", "cd", "echo", "printf", "date", "whoami", "hostname", "uname",
     "which", "type", "whereis", "printenv", "id", "groups", "uptime",

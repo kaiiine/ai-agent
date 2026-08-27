@@ -378,46 +378,6 @@ def _demande_du_graphe(graph, config):
     return None
 
 
-def _debug_prompt(state: dict, graph, cfg: SessionConfig):
-    try:
-        from src.llm.prompts import build_system_prompt
-        from src.utils.tools import get_tool_names
-
-        config = {"configurable": {"thread_id": cfg.thread_id}}
-        snapshot = graph.get_state(config)
-        messages = snapshot.values.get("messages", []) if snapshot.values else state.get("messages", [])
-
-        from datetime import date
-        import os
-        _user_name = os.getenv("USER_NAME", "l'utilisateur")
-        _tool_list = get_tool_names()  # already a list
-        _prompt_preview = build_system_prompt(_tool_list, str(date.today()), _user_name)[:300]
-
-        from src.orchestrator.graph import get_last_selected_tools
-        _selected = get_last_selected_tools()
-        _selected_str = ", ".join(_selected) if _selected else "—"
-        parts = [
-            f"[dim]tools sélectionnés :[/dim] {_selected_str}",
-            f"[dim]system:[/dim] {_prompt_preview}...",
-        ]
-        for m in messages:
-            content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
-            role = m.get("role", "?") if isinstance(m, dict) else getattr(m, "type", "?")
-            parts.append(f"[dim]{role}:[/dim] {content[:200]}")
-
-        console.print(Panel(
-            "\n\n".join(parts),
-            box=__import__("rich.box", fromlist=["SIMPLE_HEAD"]).SIMPLE_HEAD,
-            border_style="dim",
-            title="prompt",
-        ))
-    except Exception as e:
-        console.print(f"[dim]debug error: {e}[/dim]")
-
-
-
-
-
 def _build_pdf_content(attachments) -> str:
     """Assemble le contenu textuel des pièces jointes pour /fiche et /exo.
     Utilise le contenu brut complet (pas la version tronquée à 25k de l'orchestrateur)."""
@@ -1408,9 +1368,6 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
 
     config = {"configurable": {"thread_id": cfg.thread_id}}
 
-    if cfg.debug:
-        _debug_prompt(state, graph, cfg)
-
     from src.ui.edit_mode import get_mode
     from src.agents.coding.specialist import set_progress_callback
     from src.orchestrator.graph import set_compile_callback
@@ -1537,7 +1494,18 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
 
         # ── Shell result (after execution) ────────────────────────────────────
         elif tool_name == "shell_run":
-            if result:
+            # Une commande REFUSÉE n'a pas d'`exit_code`, et le défaut à 0 la
+            # peignait en vert : « $ mkdir … && rm -f … ✓ » alors que rien n'avait
+            # tourné. Le modèle rejouait la même commande trois fois, et l'écran
+            # confirmait chaque fois qu'elle avait marché.
+            if result and result.get("status") in ("requires_confirmation", "blocked"):
+                t = Text()
+                t.append("     ")
+                t.append("⊘", style="bold yellow")
+                t.append("  non exécutée — ", style="dim")
+                t.append(str(result.get("reason") or result.get("status")), style="dim yellow")
+                console.print(t)
+            elif result:
                 stdout = (result.get("stdout") or "").strip()
                 stderr = (result.get("stderr") or "").strip()
                 exit_code = result.get("exit_code", 0)

@@ -11,6 +11,30 @@ from langgraph.prebuilt import ToolNode
 
 from src.orchestrator.resilience import tool_error_to_message
 
+def _refus_mode_plan(tool_calls: list) -> list[ToolMessage]:
+    """Le mode plan retirait les outils d'écriture de la LIAISON seulement.
+
+    Ça tenait tant que le modèle ignorait les noms non liés. Le catalogue les lui
+    donne tous, et un modèle qui lit un nom l'appelle directement — vérifié sur
+    gpt-oss:120b, qui appelle `get_weather_by_city` retiré de sa sélection au lieu
+    de le réclamer. Le ToolNode exécute tout ce qu'on lui a enregistré : 30 des 36
+    outils bloqués restaient donc joignables, `gmail_send_email` et `shell_run`
+    compris. La liaison est un tri, pas une barrière ; la barrière est ici.
+    """
+    from src.ui.plan_mode import BLOCKED_TOOLS, is_active
+
+    if not is_active():
+        return []
+    return [
+        ToolMessage(
+            content=f"`{tc['name']}` écrit — refusé en mode plan. "
+                    f"Décris l'action dans le plan au lieu de l'exécuter.",
+            tool_call_id=tc["id"], name=tc["name"], status="error",
+        )
+        for tc in tool_calls if tc["name"] in BLOCKED_TOOLS
+    ]
+
+
 class CachedToolNode:
     """Wraps LangGraph's ToolNode with session-level result caching.
     If ALL tool calls in a batch are cached, skips execution entirely.
@@ -28,6 +52,18 @@ class CachedToolNode:
         last = state["messages"][-1] if state.get("messages") else None
         tool_calls = getattr(last, "tool_calls", None) or []
 
+        # Un lot peut mêler une lecture et une écriture : refuser le lot entier
+        # laisserait des `tool_call` sans réponse, ce que les providers rejettent.
+        refus = _refus_mode_plan(tool_calls)
+        if refus:
+            bloques = {m.tool_call_id for m in refus}
+            restants = [tc for tc in tool_calls if tc["id"] not in bloques]
+            if not restants:
+                return {"messages": refus}
+            state = {**state, "messages": state["messages"][:-1]
+                     + [last.model_copy(update={"tool_calls": restants})]}
+            tool_calls = restants
+
         # Attempt full-batch cache hit
         cached_msgs: list[ToolMessage] = []
         for tc in tool_calls:
@@ -44,7 +80,7 @@ class CachedToolNode:
             )
 
         if cached_msgs:
-            return {"messages": cached_msgs}
+            return {"messages": refus + cached_msgs}
 
         # Execute and cache eligible results
         result = self._inner.invoke(state, config or {})
@@ -90,4 +126,6 @@ class CachedToolNode:
                 cleaned.append(msg)
             result = {"messages": cleaned}
 
+        if refus:
+            result = {**result, "messages": refus + list(result.get("messages", []))}
         return result
