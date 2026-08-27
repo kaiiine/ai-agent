@@ -33,6 +33,7 @@ _COMMANDS = [
     ("/exo",               "exercices interactifs HTML/JS (QCM, ouvert…) depuis PDF(s) — /attach tes cours"),
     ("/spec [prompt]",     "wizard interactif de spécification — l'IA pose des questions guidées"),
     ("/build [projet]",   "exécute spec.md par phases — 60-70% moins de tokens qu'une session unique"),
+    ("/deep <sujet>",     "recherche approfondie — décompose en sous-questions, cherche, recoupe"),
     ("/graph [projet]",   "génère GRAPH_REPORT.md + graph.json + notes Obsidian via graphify (subprocess direct)"),
     ("/mcp <sous-cmd>",   "serveurs MCP — list · add · remove · enable · disable · test [--deep] · tools · refresh · restart"),
     ("/clear",             "efface l'écran et réaffiche l'en-tête"),

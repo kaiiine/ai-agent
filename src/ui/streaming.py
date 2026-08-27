@@ -1361,6 +1361,22 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     cfg.debug = debug_state["enabled"]
     user_lang = cfg.lang_pref if cfg.lang_pref in {"fr", "en"} else detect_lang(user_message)
 
+    # `/deep` réécrit le message, il n'ouvre pas un chemin parallèle. L'outil
+    # `deep_research` et le nœud `approfondir` existent depuis d43876a ; seule la
+    # commande manquait — « /deep » restait « non reconnu » alors que la même
+    # demande en langage naturel fonctionnait. Passer par le graphe garde tout ce
+    # qui s'y applique : confirmation, révision, compression, trace.
+    if user_message.strip() == "/deep" or user_message.startswith("/deep "):
+        sujet = user_message[len("/deep"):].strip()
+        if not sujet:
+            console.print(command_panel("usage : /deep <ce que tu veux creuser>", error=True))
+            return
+        user_message = (
+            f"{sujet}\n\n[SYSTEME] Recherche APPROFONDIE demandée : appelle "
+            f"`deep_research` sur ce sujet. N'y réponds pas de mémoire et ne te "
+            f"contente pas d'une recherche simple."
+        )
+
     # Injecter les pièces jointes dans le message
     attachments = _attachments.pop_all()
     message_dict = build_message_with_attachments(user_message, attachments)

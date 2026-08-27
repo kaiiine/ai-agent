@@ -18,6 +18,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/exo",               "exercices interactifs HTML/JS (QCM, ouvert…) depuis PDF(s) — /attach tes cours"),
     ("/spec [prompt]",     "wizard interactif de spécification — l'IA pose des questions guidées"),
     ("/build [projet]",   "exécute spec.md par phases — 60-70% moins de tokens qu'une session unique"),
+    ("/deep <sujet>",     "recherche approfondie — décompose en sous-questions, cherche, recoupe"),
     ("/clear",             "efface l'écran et réaffiche l'en-tête"),
     ("/new",               "démarre un nouveau thread de conversation"),
     ("/history",           "liste les threads passés et permet d'en reprendre un (flèches ↑↓)"),
