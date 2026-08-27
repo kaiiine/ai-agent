@@ -76,7 +76,7 @@ def _get_coding_llm():
 def _get_coding_tools():
     from src.agents.coding.tools import (
         dev_plan_create, dev_plan_update, dev_plan_step_done, dev_explain, ask_clarification,
-        find_git_repos, propose_file_change, propose_file_delete, edit_file, load_skill,
+        find_git_repos, propose_file_change, propose_file_delete, deleguer, edit_file, load_skill,
         project_graph_query,
     )
     # Les quatre requêtes du graphe. `project_graph_query` reste en repli : il ne
@@ -104,7 +104,10 @@ def _get_coding_tools():
     )
     return [
         dev_plan_create, dev_plan_update, dev_plan_step_done, dev_explain, ask_clarification,
-        find_git_repos, propose_file_change, edit_file, load_skill,
+        find_git_repos, propose_file_change, propose_file_delete, edit_file, load_skill,
+        # `deleguer` ouvre un éventail d'explorations en lecture seule : le
+        # modèle reçoit un rapport, pas les vingt lectures qui l'ont produit.
+        deleguer,
         graph_affected, graph_explain, graph_path, graph_query,
         project_graph_query,
         local_find_file, local_read_file, local_list_directory,
@@ -174,6 +177,15 @@ _PROGRESS_TOOLS = {
     "load_skill", "project_graph_query",
 }
 _SHELL_PREVIEW_TOOLS = {"shell_run", "shell_cd"}
+
+#: Ce qu'une exploration déléguée peut appeler. Lecture seule, délibérément :
+#: elle tourne sous `Send`, où une interruption ne remonte pas proprement — donc
+#: rien qui puisse exiger un accord. Elle rapporte, elle ne construit pas.
+_OUTILS_LECTURE = frozenset({
+    "local_read_file", "local_grep", "local_glob", "local_find_file",
+    "local_list_directory", "graph_query", "graph_explain", "graph_path",
+    "graph_affected", "git_log", "git_diff", "git_status", "notebook_read",
+})
 
 #: Les statuts par lesquels un outil refuse — mêmes noms que dans `cron_daemon`.
 _STATUTS_DE_REFUS = ("requires_confirmation", "blocked")
@@ -457,362 +469,334 @@ def _build_specialist_trace(messages: list) -> str:
     return "[SPECIALIST-TRACE]\n" + "\n".join(parts) + "\n[/SPECIALIST-TRACE]\n"
 
 
+
+
+
+#: Relances déjà consommées sur un plan inachevé, pour ce run.
+_relances = {"texte": 0, "outils": 0, "skill": False}
+
+
+def interpreter_reponse(reponse, messages: list, tool_map: dict, tache: str):
+    """`(appels, fini, rappel)` — ce que la boucle décidait après chaque réponse.
+
+    Trois politiques qui n'ont rien de structurel et qui restent donc ici :
+    récupérer un appel d'outil écrit en JSON (les petits modèles le font),
+    refuser de conclure sur un plan inachevé, et rappeler `load_skill` sur une
+    tâche front.
+    """
+    from src.agents.coding.pending import dev_plan
+
+    appels = list(getattr(reponse, "tool_calls", None) or [])
+
+    if not appels and getattr(reponse, "content", ""):
+        parse = _extract_json_tool_call(reponse.content)
+        if parse and parse["name"] in tool_map:
+            appels = [{"name": parse["name"], "args": parse["args"], "id": str(uuid.uuid4())}]
+
+    if appels:
+        _relances["outils"] += 1
+        if (_relances["outils"] == 5 and not _relances["skill"]
+                and any(mot in tache.lower() for mot in _FRONTEND_KW)
+                and not any(a["name"] == "load_skill" for a in appels)):
+            return appels, False, (
+                "[Rappel automatique] load_skill() n'a pas encore été appelé après "
+                "5 actions. Charge le guide de la stack avant de continuer.")
+        if any(a["name"] == "load_skill" for a in appels):
+            _relances["skill"] = True
+        return appels, False, ""
+
+    # Pas d'appel : conclure n'est légitime que si le plan est achevé.
+    reste = [e for e in dev_plan.steps if not e.done] if dev_plan.steps else []
+    if not reste:
+        return [], True, ""
+    if _relances["texte"] < 2:
+        _relances["texte"] += 1
+        return [], False, ("[System] You still have incomplete plan steps. "
+                           "Use your tools to continue — don't summarize yet.")
+    # Un plan inachevé n'est pas un résultat, mais insister sans fin non plus.
+    return [], True, ""
+
+
+class SessionModele:
+    """Un appel au modèle, et tout ce qu'il faut pour qu'il aboutisse.
+
+    Extrait de la boucle sans rien changer : clés du pool essayées l'une après
+    l'autre, bascule de fournisseur ANNONCÉE et persistée dans `settings`,
+    compression sur erreur de contexte, backoff sur erreur serveur. Un nœud de
+    graphe ne peut pas porter ça en variables locales — d'où l'objet.
+    """
+
+    def __init__(self) -> None:
+        from src.infra.settings import settings as _settings
+        from src.llm.key_pool import get_pool
+        from src.llm.models import make_coding_llm_with_key
+
+        self._faire = make_coding_llm_with_key
+        self._pool = get_pool()
+        self.fournisseur = _settings.llm_backend
+        # Jamais de clé vide : un client sans clé s'authentifie avec l'identité
+        # machine, donc sur un compte qu'on ne surveille pas.
+        self.cle = self._pool.next_healthy(self.fournisseur) or ""
+        if not self.cle:
+            configurees = self._pool.keys_for(self.fournisseur) or []
+            if configurees:
+                self.cle = configurees[0]
+        self.llm = self._faire(self.fournisseur, self.cle) if self.cle else _get_coding_llm()
+        self.budget = _CONTEXT_CHAR_BUDGET.get(self.fournisseur, _CONTEXT_CHAR_BUDGET_DEFAULT)
+
+    def _basculer(self, essayes: set[str]) -> bool:
+        from src.infra.settings import settings as _settings
+        from src.llm import rotation
+
+        precedent = self.fournisseur
+        essayes.add(self.fournisseur)
+        trouve = rotation.fournisseur_suivant(essayes)
+        if trouve is None:
+            return False
+        suivant, cle = trouve
+        _settings.llm_backend = suivant
+        self.fournisseur, self.cle = suivant, cle
+        self.llm = self._faire(suivant, cle)
+        self.budget = _CONTEXT_CHAR_BUDGET.get(suivant, _CONTEXT_CHAR_BUDGET_DEFAULT)
+        _notifier("specialist:backend_switch",
+                  {"from": precedent, "to": suivant, "key": cle[:10] + "..."})
+        return True
+
+    def appeler(self, messages: list, outils: list, lier: bool = True):
+        """Rend `(reponse, echec, messages)`.
+
+        `messages` peut différer de l'entrée : une erreur de contexte déclenche
+        une compression, et c'est la liste compressée qui a servi.
+        """
+        import time as _time
+
+        from src.llm import rotation
+
+        derniere, en_faute = "aucune", self.fournisseur
+        cles_essayees: set[str] = set()
+        fournisseurs_essayes: set[str] = set()
+        compresse = False
+        tentatives = rotations = 0
+
+        while tentatives < 3 and rotations < _MAX_ROTATIONS_CLE:
+            essai = tentatives
+            invoker = self.llm.bind_tools(outils) if (lier and outils) else self.llm
+            try:
+                return invoker.invoke(messages), None, messages
+            except Exception as erreur:
+                derniere, en_faute = str(erreur), self.fournisseur
+                genre = rotation.classer_erreur(erreur)
+
+                if genre in ("cle_morte", "quota"):
+                    rotation.marquer_echec(self.fournisseur, self.cle, erreur)
+                    cles_essayees.add(self.cle)
+                    suivante = rotation.cle_suivante(self.fournisseur, cles_essayees)
+                    if suivante:
+                        self.cle = suivante
+                        self.llm = self._faire(self.fournisseur, suivante)
+                        _notifier("specialist:key_rotate", {
+                            "provider": self.fournisseur,
+                            "key": suivante[:10] + "...",
+                            "raison": "clé invalide" if genre == "cle_morte" else "quota atteint",
+                        })
+                        rotations += 1        # une rotation n'est pas une tentative
+                        continue
+                    if self._basculer(fournisseurs_essayes):
+                        cles_essayees.clear()
+                        rotations += 1
+                        continue
+                    combien = len(self._pool.keys_for(self.fournisseur) or [])
+                    return None, (
+                        ECHEC_PREFIXE + f" Toutes les clés de « {self.fournisseur} » sont "
+                        f"épuisées ou invalides ({combien} clé(s) configurée(s)), "
+                        f"et aucun autre fournisseur n'a de clé disponible.\n"
+                        f"Erreur du fournisseur : {derniere}\n"
+                        "→ Attendre le renouvellement d'un quota, ou ajouter "
+                        "une clé (`/config` pour l'état courant)."), messages
+
+                if genre == "contexte":
+                    if not compresse and len(messages) > 3:
+                        messages = _compress_specialist_messages(messages, self.llm)
+                        compresse = True
+                        tentatives += 1
+                        continue
+                    # Au premier tour il n'y a rien à compresser : ne pas
+                    # prétendre l'avoir fait.
+                    quoi = ("même après compression" if compresse
+                            else "et il n'y avait rien à compresser (premier tour)")
+                    return None, (ECHEC_PREFIXE + f" Le modèle a refusé la requête {quoi}.\n"
+                                  f"Erreur du fournisseur : {derniere}"), messages
+
+                if genre == "serveur" and essai < 2:
+                    _time.sleep(2 ** essai)
+                    tentatives += 1
+                    continue
+                raise
+
+        return None, (ECHEC_PREFIXE + " Aucun fournisseur LLM n'a répondu après 3 tentatives.\n"
+                      f"Dernière erreur ({en_faute}) : {derniere}\n"
+                      "→ Si c'est un quota : `/backend <autre>` pour changer de fournisseur, "
+                      "et `/config` pour voir lequel est actif."), messages
+
+
+def executer_un_outil(nom: str, args: dict, tool_map: dict, compteurs: dict) -> object:
+    """Un appel d'outil, avec toute la politique qui l'entoure.
+
+    Extrait de la boucle pour qu'un nœud de graphe puisse l'appeler tel quel :
+    ce qui est réglé ici — garde anti-répétition, cache, aperçu shell, refus
+    définitif, suivi du plan — ne doit pas être réécrit en changeant de
+    structure. `compteurs` porte l'état du run que la boucle tenait en local.
+    """
+    from src.agents.coding.pending import dev_plan, recent_tools
+    from src.infra.tools_cache import CACHEABLE_TOOLS, session_cache
+
+    if _progress_cb and nom in _SHELL_PREVIEW_TOOLS:
+        try:
+            _progress_cb(f"{nom}:before", args)
+        except Exception:
+            pass
+
+    cle = (nom, json.dumps(args, sort_keys=True, ensure_ascii=False, default=str))
+    compteurs[cle] = compteurs.get(cle, 0) + 1
+
+    outil = tool_map.get(nom)
+    if not outil:
+        resultat = {"status": "error", "error": f"Outil inconnu : {nom}"}
+    elif compteurs[cle] >= 3 and nom not in _REPETITION_EXEMPT:
+        resultat = {
+            "status": "repeated_call",
+            "message": (
+                f"'{nom}' a été appelé {compteurs[cle]} fois avec les mêmes arguments. "
+                "Le résultat n'a pas changé depuis la dernière lecture. "
+                "→ Si tu attends un changement suite à une écriture, vérifie que "
+                "propose_file_change a bien été accepté. "
+                "→ Sinon, tu as déjà l'information — avance à l'étape suivante du plan."
+            ),
+        }
+    elif nom in CACHEABLE_TOOLS and (hit := session_cache.get(nom, args)) is not None:
+        resultat = hit
+    else:
+        def _flux(actif: bool) -> None:
+            if nom != "shell_run":
+                return
+            try:
+                from src.agents.shell.tools import set_shell_stream_callback
+                if not actif:
+                    set_shell_stream_callback(None)
+                    return
+
+                def _ligne(ligne: str):
+                    if _progress_cb:
+                        _progress_cb("shell_run:stream", {"line": ligne}, None)
+                set_shell_stream_callback(_ligne)
+            except Exception:
+                pass
+
+        try:
+            _flux(True)
+            resultat = outil.invoke(args)
+            _flux(False)
+            if nom in CACHEABLE_TOOLS:
+                session_cache.set(nom, args, resultat)
+            session_cache.on_tool_executed(nom)
+        except Exception as erreur:
+            _flux(False)
+            resultat = {"status": "error", "error": str(erreur)}
+
+    resultat = _refus_definitif(nom, resultat)
+    _observer(nom, resultat)
+
+    if _progress_cb and (nom in _PROGRESS_TOOLS or nom in _SHELL_PREVIEW_TOOLS):
+        saute = (nom == "dev_plan_step_done" and isinstance(resultat, dict)
+                 and resultat.get("status") in ("already_done", "error"))
+        if not saute:
+            try:
+                remplacement = _progress_cb(nom, args, resultat)
+                if isinstance(remplacement, dict):
+                    resultat = remplacement
+            except Exception:
+                pass
+
+    if nom != "dev_plan_step_done":
+        recent_tools.record(nom, args, resultat)
+    if nom == "dev_plan_create" and isinstance(resultat, dict) and resultat.get("status") == "ok":
+        recent_tools.clear()
+        compteurs.clear()
+    if nom == "dev_plan_step_done" and isinstance(resultat, dict) and resultat.get("status") == "ok":
+        compteurs.clear()
+    return resultat
+
+
 def _run(task: str) -> str:
-    import time as _time
+    """La boucle est un SOUS-GRAPHE — voir `graphe_agent.py` pour le pourquoi.
+
+    Ce qui reste ici est la politique : quel client, quels outils, quoi faire
+    d'une réponse. La structure — quels pas sont checkpointés, où l'on peut
+    interrompre sans tout rejouer — est dans le graphe.
+    """
+    from src.agents.coding.graphe_agent import construire
+    from src.agents.coding.task_enricher import enrich_task
     from src.agents.coding.tool_retriever import CodingToolRetriever, retrieval_query
     from src.infra.settings import settings as _settings
 
-    from src.llm import rotation
-    from src.llm.key_pool import get_pool as _get_pool
-    from src.llm.models import make_coding_llm_with_key as _make_llm_key
-    _pool = _get_pool()
-    _current_provider: str = _settings.llm_backend
-    # Jamais de clé vide : un client sans clé s'authentifie avec l'identité
-    # machine, donc sur un compte qu'on ne surveille pas.
-    _current_key: str = _pool.next_healthy(_current_provider) or ""
-    if not _current_key:
-        _configurees = _pool.keys_for(_current_provider) or []
-        if _configurees:
-            _current_key = _configurees[0]
-    if _current_key:
-        llm = _make_llm_key(_current_provider, _current_key)
-    else:
-        llm = _get_coding_llm()
+    global _phase_abort, _retriever_cache, _retriever_tool_names
+    _phase_abort = False
+    _relances.update({"texte": 0, "outils": 0, "skill": False})
 
-    all_tools = _get_coding_tools()
-    tool_map = {t.name: t for t in all_tools}  # full map — every tool remains callable
+    session = SessionModele()
+    outils = _get_coding_tools()
+    # `tool_map` couvre TOUS les outils : un outil non lié reste exécutable.
+    par_nom = {o.name: o for o in outils}
+    compteurs: dict = {}
 
-    # DEUX VOIES, comme l'orchestrateur (graph.py) : les outils natifs passent par
-    # l'index sémantique, les outils MCP par LEUR PROPRE routeur à deux étages,
-    # qui lit déjà le `capabilities_hint` de chaque serveur.
-    #
-    # Les indexer ensemble faisait une TROISIÈME architecture, différente des deux
-    # qui existaient. Mesurée, elle ne dégradait rien (22/23 sur un jeu de
-    # référence incluant cinq requêtes ambiguës) — mais elle portait 31 % de la
-    # cardinalité de l'index, et surtout elle faisait diverger deux chemins qui
-    # résolvent le même problème. C'est cette divergence qui coûte : le jour où
-    # l'un des deux évolue, l'autre le suit par erreur ou reste en arrière sans
-    # que rien ne le signale.
-    #
-    # `tool_map` reste construit sur TOUS les outils : un outil non lié demeure
-    # exécutable, et retirer MCP de l'index ne doit pas retirer ce filet.
-    # Re-use cached retriever — rebuilding Chroma embeds ~100 docs on every call otherwise
-    global _retriever_cache, _retriever_tool_names
-    _names = tuple(t.name for t in all_tools)
-    if _retriever_cache is None or _retriever_tool_names != _names:
-        _retriever_cache = CodingToolRetriever(all_tools, k=8)
-        _retriever_tool_names = _names
+    noms = tuple(o.name for o in outils)
+    if _retriever_cache is None or _retriever_tool_names != noms:
+        _retriever_cache = CodingToolRetriever(outils, k=8)
+        _retriever_tool_names = noms
     retriever = _retriever_cache
 
-    _budget = _CONTEXT_CHAR_BUDGET.get(_current_provider, _CONTEXT_CHAR_BUDGET_DEFAULT)
-
-    from src.agents.coding.task_enricher import enrich_task
-    enriched_task = enrich_task(task)
-
-    messages = [SystemMessage(BASE_PROMPT), HumanMessage(enriched_task)]
-    _plan_complete = False
-    _call_counts: dict[tuple, int] = {}  # (tool, args_json) → count, reset per plan step
-    _load_skill_called = False
-    _tool_call_count = 0
-    _is_frontend_task = any(kw in enriched_task.lower() for kw in _FRONTEND_KW)
-    _text_only_retries = 0
-
-    _notifier("specialist:start", {"model": getattr(llm, "model", "unknown")})
-
+    _notifier("specialist:start", {"model": getattr(session.llm, "model", "unknown")})
     try:
         from src.skills import warmup as _skill_warmup
         _skill_warmup()
     except Exception:
         pass
 
-    global _phase_abort
-    _phase_abort = False  # reset at start of each run
-    _iter_limit = _phase_max_iterations if _phase_max_iterations is not None else _MAX_ITERATIONS
-    for _ in range(_iter_limit):
+    tache_vue = {"texte": task}
+
+    def _enrichir(brut: str) -> str:
+        tache_vue["texte"] = enrich_task(brut)
+        return tache_vue["texte"]
+
+    def _selectionner(messages: list, tache: str) -> list:
+        return retriever.get(retrieval_query(messages, tache or tache_vue["texte"]))
+
+    def _appeler(messages: list, actifs: list, _fournisseur: str):
         if _phase_abort:
-            return ECHEC_PREFIXE + " Tâche interrompue (boucle détectée — phase abandonnée par le système)."
-        total_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
-        # Guard: never compress with only system+task — transcript would be empty → infinite loop
-        if total_chars > _budget and len(messages) > 3:
-            messages = _compress_specialist_messages(messages, llm)
+            return None, (ECHEC_PREFIXE + " Tâche interrompue (boucle détectée — "
+                          "phase abandonnée par le système)."), messages
+        return session.appeler(messages, actifs)
 
-        # Per-turn tool selection: only bind tools relevant to the current step
-        _query = retrieval_query(messages, enriched_task)
-        _active_tools = retriever.get(_query)
-        _bound_llm = llm.bind_tools(_active_tools)
+    def _interpreter(reponse, messages: list):
+        return interpreter_reponse(reponse, messages, par_nom, tache_vue["texte"])
 
-        invoker = llm if _plan_complete else _bound_llm
-        response = None
-        _compressed = False
-        _derniere_erreur = "aucune"
-        _provider_en_faute = _current_provider
-        _cles_essayees: set[str] = set()
-        # Fournisseurs déjà vidés dans ce run : empêche la bascule de boucler.
-        _fournisseurs_essayes: set[str] = set()
+    sous_graphe = construire(
+        outils=outils,
+        selectionner=_selectionner,
+        appeler_modele=_appeler,
+        enrichir=_enrichir,
+        prompt_systeme=BASE_PROMPT,
+        executer=lambda nom, args: executer_un_outil(nom, args, par_nom, compteurs),
+        tracer=_build_specialist_trace,
+        rendre=lambda r: tronquer_resultat(
+            r if isinstance(r, str) else json.dumps(r, ensure_ascii=False, default=str)),
+        interpreter=_interpreter,
+        outils_exploration=[o for o in outils if o.name in _OUTILS_LECTURE],
+        notifier=_notifier,
+    )
 
-        def _reconstruire(fournisseur: str, cle: str) -> None:
-            """Rebâtit le client sur (fournisseur, clé) et re-lie les outils du tour."""
-            nonlocal llm, _bound_llm, invoker, _current_provider, _current_key
-            _current_provider, _current_key = fournisseur, cle
-            llm = _make_llm_key(fournisseur, cle)
-            _bound_llm = llm.bind_tools(_active_tools)
-            invoker = llm if _plan_complete else _bound_llm
-
-        def _basculer_fournisseur() -> bool:
-            """Passe au fournisseur suivant qui a une clé saine. `False` si aucun.
-
-            ANNONCÉE ET PERSISTÉE : `settings.llm_backend` est réellement mis à
-            jour, sinon `/config` et `/backend` afficheraient le fournisseur
-            épuisé pendant que le travail se fait ailleurs.
-            """
-            nonlocal _budget
-            precedent = _current_provider
-            _fournisseurs_essayes.add(_current_provider)
-            trouve = rotation.fournisseur_suivant(_fournisseurs_essayes)
-            if trouve is None:
-                return False
-            suivant, cle = trouve
-            _settings.llm_backend = suivant
-            _cles_essayees.clear()
-            _budget = _CONTEXT_CHAR_BUDGET.get(suivant, _CONTEXT_CHAR_BUDGET_DEFAULT)
-            _reconstruire(suivant, cle)
-            _notifier("specialist:backend_switch",
-                      {"from": precedent, "to": suivant, "key": cle[:10] + "..."})
-            return True
-
-        _tentatives, _rotations = 0, 0
-        while _tentatives < 3 and _rotations < _MAX_ROTATIONS_CLE:
-            attempt = _tentatives
-            try:
-                response = invoker.invoke(messages)
-                break
-            except Exception as e:
-                _derniere_erreur = str(e)
-                _provider_en_faute = _current_provider
-                _genre = rotation.classer_erreur(e)
-
-                if _genre in ("cle_morte", "quota"):
-                    rotation.marquer_echec(_current_provider, _current_key, e)
-                    _cles_essayees.add(_current_key)
-                    # Toutes les clés du fournisseur d'abord ; on ne bascule qu'après.
-                    _suivante = rotation.cle_suivante(_current_provider, _cles_essayees)
-                    if _suivante:
-                        _reconstruire(_current_provider, _suivante)
-                        _notifier("specialist:key_rotate", {
-                            "provider": _current_provider,
-                            "key": _suivante[:10] + "...",
-                            "raison": "clé invalide" if _genre == "cle_morte" else "quota atteint",
-                        })
-                        # Une rotation n'est pas une tentative : budget d'essais intact.
-                        _rotations += 1
-                        continue
-                    if _basculer_fournisseur():
-                        _rotations += 1
-                        continue
-                    _n = len(_pool.keys_for(_current_provider) or [])
-                    return (
-                        ECHEC_PREFIXE + f" Toutes les clés de « {_current_provider} » sont "
-                        f"épuisées ou invalides ({_n} clé(s) configurée(s)), "
-                        f"et aucun autre fournisseur n'a de clé disponible.\n"
-                        f"Erreur du fournisseur : {_derniere_erreur}\n"
-                        "→ Attendre le renouvellement d'un quota, ou ajouter "
-                        "une clé (`/config` pour l'état courant)."
-                    )
-
-                if _genre == "contexte":
-                    if not _compressed and len(messages) > 3:
-                        messages = _compress_specialist_messages(messages, llm)
-                        invoker = llm if _plan_complete else _bound_llm
-                        _compressed = True
-                        _tentatives += 1
-                        continue
-                    # Au premier tour il n'y a rien à compresser : ne pas
-                    # prétendre l'avoir fait.
-                    _quoi = ("même après compression" if _compressed
-                             else "et il n'y avait rien à compresser (premier tour)")
-                    return (ECHEC_PREFIXE + f" Le modèle a refusé la requête {_quoi}.\n"
-                            f"Erreur du fournisseur : {_derniere_erreur}")
-
-                if _genre == "serveur" and attempt < 2:
-                    _time.sleep(2 ** attempt)  # 1s, 2s backoff
-                    _tentatives += 1
-                    continue
-                raise
-        if response is None:
-            # La vraie erreur du fournisseur, jamais une cause supposée.
-            return (ECHEC_PREFIXE + " Aucun fournisseur LLM n'a répondu après 3 tentatives.\n"
-                    f"Dernière erreur ({_provider_en_faute}) : {_derniere_erreur}\n"
-                    "→ Si c'est un quota : `/backend <autre>` pour changer de fournisseur, "
-                    "et `/config` pour voir lequel est actif.")
-        tool_calls = response.tool_calls or []
-
-        # Small models sometimes return tool calls as JSON text instead of using the API
-        if not tool_calls and response.content:
-            parsed = _extract_json_tool_call(response.content)
-            if parsed and parsed["name"] in tool_map:
-                tc_id = str(uuid.uuid4())
-                tool_calls = [{"name": parsed["name"], "args": parsed["args"], "id": tc_id}]
-                # Declare the tool_call in the AIMessage so Mistral sees balanced pairs
-                messages.append(AIMessage(content="", tool_calls=tool_calls))
-            else:
-                messages.append(response)
-                from src.agents.coding.pending import dev_plan
-
-                plan_complete = all(s.done for s in dev_plan.steps) if dev_plan.steps else False
-                if plan_complete or not dev_plan.steps:
-                    trace = _build_specialist_trace(messages)
-                    _result = _clean_output(response.content) or "Task completed"
-                    _persist_session_memory(messages, enriched_task, _result, _settings.llm_backend)
-                    return trace + _result
-                else:
-                    if _text_only_retries < 2:
-                        _text_only_retries += 1
-                        messages.append(HumanMessage(content=(
-                            "[System] You still have incomplete plan steps. "
-                            "Use your tools to continue — don't summarize yet."
-                        )))
-                        continue
-                    else:
-                        _text_only_retries = 0
-                        trace = _build_specialist_trace(messages)
-                        _result = _clean_output(response.content) or "Task completed"
-                        # Un plan inachevé n'est pas un résultat. Le rendre tel quel
-                        # laissait croire le site livré alors que quatre étapes sur
-                        return trace + _result
-        else:
-            messages.append(response)
-
-        for tc in tool_calls:
-            name = tc["name"]
-            args = tc.get("args", {})
-
-            # load_skill() reminder guard: if 5 tool calls pass without load_skill on frontend
-            _tool_call_count += 1
-            if name == "load_skill":
-                _load_skill_called = True
-            elif (
-                _tool_call_count == 5
-                and not _load_skill_called
-                and _is_frontend_task
-            ):
-                messages.append(HumanMessage(
-                    content=(
-                        "[Rappel automatique] load_skill() n'a pas encore été appelé après 5 actions. "
-                        "Pour ce projet frontend, appelle load_skill('nextjs') / load_skill('vue') / etc. "
-                        "MAINTENANT, avant de modifier d'autres fichiers."
-                    )
-                ))
-
-            # Pre-execution hook: show shell commands BEFORE they run
-            if _progress_cb and name in _SHELL_PREVIEW_TOOLS:
-                try:
-                    _progress_cb(f"{name}:before", args)
-                except Exception:
-                    pass
-
-            # Execute the tool (with session cache for read-only tools)
-            from src.infra.tools_cache import session_cache, CACHEABLE_TOOLS
-            from src.agents.coding.pending import recent_tools, dev_plan
-
-            # Repetition guard: same read tool called ≥3 times → redirect instead of re-executing
-            _args_key = (name, json.dumps(args, sort_keys=True, ensure_ascii=False, default=str))
-            _call_counts[_args_key] = _call_counts.get(_args_key, 0) + 1
-
-            tool_fn = tool_map.get(name)
-            if not tool_fn:
-                result = {"status": "error", "error": f"Outil inconnu : {name}"}
-            elif _call_counts[_args_key] >= 3 and name not in _REPETITION_EXEMPT:
-                result = {
-                    "status": "repeated_call",
-                    "message": (
-                        f"'{name}' a été appelé {_call_counts[_args_key]} fois avec les mêmes arguments. "
-                        "Le résultat n'a pas changé depuis la dernière lecture. "
-                        "→ Si tu attends un changement suite à une écriture, vérifie que propose_file_change a bien été accepté. "
-                        "→ Sinon, tu as déjà l'information — avance à l'étape suivante du plan."
-                    ),
-                }
-            elif name in CACHEABLE_TOOLS and (hit := session_cache.get(name, args)) is not None:
-                result = hit
-            else:
-                try:
-                    if name == "shell_run":
-                        try:
-                            from src.agents.shell.tools import set_shell_stream_callback
-
-                            def _stream_line(line: str):
-                                if _progress_cb:
-                                    _progress_cb("shell_run:stream", {"line": line}, None)
-
-                            set_shell_stream_callback(_stream_line)
-                        except Exception:
-                            pass
-                    result = tool_fn.invoke(args)
-                    if name == "shell_run":
-                        try:
-                            from src.agents.shell.tools import set_shell_stream_callback
-                            set_shell_stream_callback(None)
-                        except Exception:
-                            pass
-                    if name in CACHEABLE_TOOLS:
-                        session_cache.set(name, args, result)
-                    session_cache.on_tool_executed(name)
-                except Exception as e:
-                    if name == "shell_run":
-                        try:
-                            from src.agents.shell.tools import set_shell_stream_callback
-                            set_shell_stream_callback(None)
-                        except Exception:
-                            pass    
-                    result = {"status": "error", "error": str(e)}
-
-            # Un refus d'outil est DÉFINITIF ici : la confirmation passe par un
-            # `interrupt()` du graphe, que cette boucle n'a pas. Sans le dire au
-            # modèle, il relance la même commande indéfiniment — vécu, trois fois
-            # de suite le même `mkdir … && rm -f …`, puis un message à
-            # l'utilisateur lui demandant de valider un questionnaire qui ne
-            # pouvait pas s'afficher. Le démon cron applique déjà cette règle.
-            result = _refus_definitif(name, result)
-
-            # Observateurs passifs AVANT le hook de progression : ils doivent voir
-            # le résultat tel que l'outil l'a produit, pas tel qu'un override l'a
-            # remplacé. Aucun d'eux ne peut influencer la suite.
-            _observer(name, result)
-
-            # Post-execution hook: notify UI of result — MUST run before record() so
-            # propose_file_change gets the "accepted" override before being tracked.
-            if _progress_cb and (name in _PROGRESS_TOOLS or name in _SHELL_PREVIEW_TOOLS):
-                skip = (name == "dev_plan_step_done" and
-                        isinstance(result, dict) and
-                        result.get("status") in ("already_done", "error"))
-                if not skip:
-                    try:
-                        override = _progress_cb(name, args, result)
-                        if isinstance(override, dict):
-                            result = override
-                    except Exception:
-                        pass
-
-            # Record tool outcome for proof validation (after override so "accepted" is captured)
-            if name != "dev_plan_step_done":
-                recent_tools.record(name, args, result)
-            # Reset state when a new plan is created or a step is completed
-            if name == "dev_plan_create" and isinstance(result, dict) and result.get("status") == "ok":
-                recent_tools.clear()
-                _call_counts.clear()
-            if name == "dev_plan_step_done" and isinstance(result, dict) and result.get("status") == "ok":
-                _call_counts.clear()
-
-            _brut = (result if isinstance(result, str)
-                     else json.dumps(result, ensure_ascii=False))
-            messages.append(ToolMessage(
-                content=tronquer_resultat(_brut),
-                tool_call_id=tc["id"],
-                name=name,
-            ))
-
-            if name == "dev_plan_step_done" and isinstance(result, dict) and result.get("remaining") == 0:
-                _plan_complete = True
-
-    trace = _build_specialist_trace(messages)
-    _persist_session_memory(messages, enriched_task, "Tâche interrompue.", _settings.llm_backend)
-    return trace + "Tâche interrompue (limite d'itérations atteinte)."  # end of _run
+    sortie = sous_graphe.invoke({"tache": task})
+    resultat = _clean_output(str(sortie.get("resultat") or "")) or "Task completed"
+    _persist_session_memory(sortie.get("messages") or [], tache_vue["texte"],
+                            resultat, _settings.llm_backend)
+    return resultat

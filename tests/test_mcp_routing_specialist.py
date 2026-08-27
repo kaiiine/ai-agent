@@ -302,7 +302,9 @@ def test_les_outils_mcp_restent_executables_meme_non_selectionnes():
     from src.agents.coding import specialist
 
     source = inspect.getsource(specialist)
-    assert "tool_map = {t.name: t for t in all_tools}" in source
+    # La carte s'appelle `par_nom` depuis que la boucle est un sous-graphe ;
+    # ce qui est gardé, c'est qu'elle couvre TOUS les outils, pas son nom.
+    assert "par_nom = {o.name: o for o in outils}" in source
     assert "_get_coding_tools()" in source
 
 

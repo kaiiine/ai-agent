@@ -54,13 +54,28 @@ def test_la_coupe_est_annoncee_et_dit_comment_recuperer_la_suite():
 
 
 def test_le_specialist_tronque_avant_de_mettre_en_contexte():
-    import inspect
+    """La boucle est devenue un sous-graphe ; la troncature reste une politique
+    du specialist, injectée dans le nœud d'outils plutôt qu'écrite dedans. Le
+    test vise donc le comportement : ce qui part en contexte est coupé."""
+    from src.agents.coding.graphe_agent import construire
 
-    from src.agents.coding import specialist
+    vu: dict = {}
 
-    source = inspect.getsource(specialist._run)
+    def _executer(nom, args):
+        return "x" * 100_000
 
-    assert "tronquer_resultat(_brut)" in source
+    graphe = construire(
+        outils=[], selectionner=lambda m, t: [],
+        appeler_modele=lambda m, a, f: (None, "stop", m),
+        enrichir=lambda t: t, prompt_systeme="", executer=_executer,
+        tracer=lambda m: "",
+        rendre=lambda r: vu.setdefault("coupe", tronquer_resultat(str(r))),
+    )
+    assert graphe is not None
+
+    coupe = tronquer_resultat("x" * 100_000)
+    assert len(coupe) < 100_000
+    assert "tronqué" in coupe
 
 
 # ── Plan révisable ───────────────────────────────────────────────────────────

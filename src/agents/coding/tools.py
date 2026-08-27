@@ -584,6 +584,29 @@ def _contenu_invalide(p: Path, content: str) -> str:
     return ""
 
 
+@tool("deleguer")
+def deleguer(taches: List[str]) -> Dict[str, Any]:
+    """
+    Explores several questions IN PARALLEL, each with its own context.
+    Use it to understand a codebase before acting: where something lives, how a
+    convention is applied, what a change would affect. Each sub-task READS and
+    reports — none of them writes, runs a command, or modifies anything.
+    You get one consolidated report, not the twenty file reads behind it.
+
+    Args:
+        taches: 2 to 4 precise questions, one per exploration
+    Returns:
+        un rapport unique regroupant ce que chaque exploration a trouvé
+    """
+    from src.agents.coding.graphe_agent import MARQUEUR_DELEGATION, SOUS_TACHES_MAX
+
+    propres = [str(t).strip() for t in (taches or []) if str(t).strip()]
+    if not propres:
+        return {"status": "error",
+                "error": "Donne au moins une question à explorer."}
+    return {"status": MARQUEUR_DELEGATION, "taches": propres[:SOUS_TACHES_MAX]}
+
+
 @tool("propose_file_delete")
 def propose_file_delete(path: str, description: str = "") -> Dict[str, Any]:
     """
