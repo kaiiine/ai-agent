@@ -1,6 +1,7 @@
 ---
 name: silent-failure-hunter
 description: Review code for silent failures, swallowed errors, bad fallbacks, and missing error propagation.
+lexique: [echec silencieux, échec silencieux, erreur avalee, erreur avalée, ne fait rien, except pass, swallowed, erreur ignoree, erreur ignorée]
 scope: coding
 ---
 

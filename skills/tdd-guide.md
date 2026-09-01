@@ -1,6 +1,7 @@
 ---
 name: tdd-guide
 description: Test-Driven Development specialist enforcing write-tests-first methodology. Ensures 80%+ test coverage.
+lexique: [tdd, pytest, test unitaire, tests unitaires, ecris des tests, écris des tests, couverture de test, jest, vitest]
 scope: coding
 ---
 

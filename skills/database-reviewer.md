@@ -1,6 +1,7 @@
 ---
 name: database-reviewer
 description: PostgreSQL database specialist for query optimization, schema design, security, and performance. Incorporates Supabase best practices.
+lexique: [base de donnees, base de données, bdd, database, postgres, postgresql, supabase, schema de base, schéma de base, requete sql, requête sql, migration de base]
 scope: coding
 ---
 

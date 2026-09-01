@@ -30,12 +30,28 @@ Returns:
 """
 
 
-def make_load_skill(scope: str) -> StructuredTool:
+#: Combien de skills on montre quand la requête est connue. Mesuré sur vingt
+#: requêtes dont on connaît la bonne réponse : le rappel est de 80 % à 3 et de
+#: 95 % à 5, et il ne bouge plus au-delà. Le catalogue entier coûtait 2 241
+#: tokens à chaque tour — et devant 49 entrées, le modèle n'en prenait aucune.
+BUDGET_SKILLS = 5
+
+
+def make_load_skill(scope: str, requete: str = "") -> StructuredTool:
     """Une fabrique et non un singleton : les deux agents tournent dans le même
-    processus, un objet partagé montrerait à l'un le catalogue de l'autre."""
-    from src.skills import describe_skills, get_skill, list_skills
+    processus, un objet partagé montrerait à l'un le catalogue de l'autre.
+
+    `requete` RESTREINT le catalogue à ce qui la concerne. Sans elle — au
+    démarrage, quand aucune question n'est encore posée — on montre tout : mieux
+    vaut un catalogue large qu'un catalogue deviné.
+    """
+    from src.skills import describe_skills, get_skill, list_skills, skills_pertinentes
 
     entries = describe_skills(scope)
+    if requete.strip():
+        retenues = set(skills_pertinentes(requete, scope, BUDGET_SKILLS))
+        if retenues:
+            entries = [(n, d) for n, d in entries if n in retenues]
     catalogue = "\n".join(f"  - {n}: {d}" for n, d in entries) if entries else "  (aucun)"
 
     def _run(stack: str) -> str:

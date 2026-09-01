@@ -1,6 +1,7 @@
 ---
 name: security-reviewer
 description: Security vulnerability detection and remediation specialist. Flags secrets, SSRF, injection, unsafe crypto, and OWASP Top 10 vulnerabilities.
+lexique: [securite, sécurité, security, vulnerabilite, vulnérabilité, faille, owasp, injection, xss, csrf, ssrf, fuite de cle, fuite de clé]
 scope: coding
 ---
 

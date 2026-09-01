@@ -14,8 +14,9 @@ from src.skills.retriever import (
     list_skills,
     scopes_in_use,
     skill_anchors,
+    skills_pertinentes,
     warmup,
 )
 
 __all__ = ["describe_skills", "get_skill", "list_skills", "scopes_in_use",
-           "skill_anchors", "warmup"]
+           "skill_anchors", "skills_pertinentes", "warmup"]

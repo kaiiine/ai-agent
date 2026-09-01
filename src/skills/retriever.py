@@ -61,6 +61,14 @@ def _document(name: str, skill: dict) -> str:
     Les ancres gardent leur emploi ailleurs : `tool_retriever._skill_topics()`
     les lit pour router vers le GROUPE d'outils. Elles ne servent pas à
     départager les skills entre eux.
+
+    Le champ `lexique:` n'entre PAS ici, et c'est tout son intérêt. Il porte les
+    tournures qui déclenchent un skill — « échec silencieux », « base de
+    données » — pour la porte lexicale, où le nombre ne nuit pas puisque la
+    correspondance est exacte. Les mettre dans `aliases:` les faisait indexer :
+    sept phrases françaises ont suffi à faire de `silent-failure-hunter` le
+    document le plus proche de « refais le design de mon site ». Mesuré, puis
+    séparé — `aliases:` désigne, `lexique:` déclenche.
     """
     morceaux = [name, " ".join(skill.get("aliases") or []),
                 skill.get("description") or ""]
@@ -90,7 +98,9 @@ def termes_identifiants(name: str, skill: dict) -> set[str]:
     Sert à repérer qu'une requête vise un domaine revendiqué par plusieurs
     skills — `python` (alias `fastapi`) et `fastapi-reviewer` par exemple.
     """
-    termes = {name.lower()} | {a.lower() for a in skill.get("aliases") or []}
+    termes = ({name.lower()}
+              | {a.lower() for a in skill.get("aliases") or []}
+              | {t.lower() for t in skill.get("lexique") or []})
     for suffixe in _SUFFIXES_DE_ROLE:
         if name.endswith(suffixe):
             base = name[: -len(suffixe)].lower()
@@ -104,6 +114,19 @@ def termes_identifiants(name: str, skill: dict) -> set[str]:
                 termes.add(tete)
             break
     return {t for t in termes if t}
+
+
+def _plie(texte: str) -> str:
+    """Sans accents ni casse : « référencement » doit rencontrer « referencement »."""
+    import unicodedata
+
+    plie = unicodedata.normalize("NFD", texte.lower())
+    return "".join(c for c in plie if unicodedata.category(c) != "Mn")
+
+
+def _mots_de(requete: str) -> set[str]:
+    """Les mots ENTIERS de la requête. Un fragment ferait élire `go` par « django »."""
+    return set(re.findall(r"[a-z0-9.+#-]+", _plie(requete)))
 
 
 def voisins_de_domaine(requete: str, visible: dict, choisi: str) -> list[str]:
@@ -181,6 +204,9 @@ class SkillRetriever:
                 "name": name,
                 "description": meta.get("description", name),
                 "aliases": [a.lower() for a in meta.get("aliases", [])],
+                # Ce qui DÉCLENCHE, par opposition à ce qui DÉSIGNE. Lu par la
+                # porte lexicale seule ; `_document` l'ignore délibérément.
+                "lexique": [t.lower() for t in meta.get("lexique", [])],
                 "anchors": [str(a) for a in meta.get("anchors", [])],
                 "content": content.strip(),
                 "path": str(f),
@@ -287,6 +313,53 @@ class SkillRetriever:
         return f"Skill '{query}' non trouvé. Disponibles : {', '.join(visible)}"
 
 
+    def pertinentes(self, requete: str, scope: str | None = None,
+                    budget: int = 5) -> list[str]:
+        """Les skills que cette requête pourrait vouloir — les plus proches d'abord.
+
+        Sert à RESTREINDRE le catalogue montré au modèle. Il en voyait 49 d'un
+        coup, soit 2 241 tokens dans la description de `load_skill`, à chaque
+        tour ; devant une liste pareille, il n'en choisissait aucune.
+
+        Le classement est HYBRIDE, et l'ordre a été mesuré sur vingt requêtes dont
+        on connaît la bonne réponse :
+
+            dense seul                  rappel@1 55 %   rappel@3 65 %
+            dense + pont linguistique   rappel@1 55 %   rappel@3 70 %
+            lexical puis dense          rappel@1 75 %   rappel@3 80 %   @5 95 %
+
+        Le pont linguistique n'apporte presque rien : la langue n'était pas la
+        cause. `fiche` et `exo` disent « HTML/CSS » et « HTML/JS », ce qui les
+        rapproche de toute requête web — la largeur d'un document achète de la
+        proximité avec tout, comme pour les groupes d'outils.
+
+        Ce qui débloque, ce sont les alias curés à la main : une requête qui NOMME
+        un domaine (`next.js`, `accessible`, `référencement`) élit sa skill sans
+        passer par l'embedding. « fais-moi un site vitrine en Next.js » rendait
+        `fiche, exo, browser-driving` et met maintenant `nextjs` en tête.
+        """
+        visible = self._visible(scope)
+        if not visible:
+            return []
+
+        nommees = [n for n in visible if _mots_de(requete) & termes_identifiants(n, visible[n])
+                   or any(" " in t and t in _plie(requete)
+                          for t in termes_identifiants(n, visible[n]))]
+
+        self._build_index()
+        denses: list[str] = []
+        if self._index is not None:
+            try:
+                trouves = self._index.similarity_search(
+                    requete, k=max(budget * 4, len(self._skills)))
+                denses = [r.metadata["name"] for r in trouves
+                          if r.metadata.get("name") in visible]
+            except Exception:                                # noqa: BLE001
+                denses = []
+
+        classe = nommees + [n for n in denses if n not in nommees]
+        return classe[:budget] or list(visible)[:budget]
+
     def list_names(self, scope: str|None = None) -> list[str]:
         self._load()
         return list(self._visible(scope))
@@ -327,6 +400,15 @@ def describe_skills(scope: str | None = None) -> list[tuple[str, str]]:
 def skill_anchors(scope: str|None = None) -> list[str]:
     return _retriever.anchors(scope)
 
+
+
+def skills_pertinentes(requete: str, scope: str | None = None,
+                       budget: int = 5) -> list[str]:
+    """Les skills à montrer pour cette requête. Vide si rien n'est indexable."""
+    try:
+        return _retriever.pertinentes(requete, scope, budget)
+    except Exception:                                        # noqa: BLE001
+        return []
 
 
 def scopes_in_use() -> set[str]:
