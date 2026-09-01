@@ -1,9 +1,11 @@
 # Chantiers en cours
 
 État au 27 août 2026, branche `feat/newRouting`.
-Six chantiers de graphe puis la refonte du routage, **aucun éprouvé en session
-réelle**. Redémarrer AXON avant de tester : la session en cours tourne sur
-l'ancien code.
+La refonte du routage et l'agent de code en sous-graphe sont livrés, **rien n'est
+éprouvé en session réelle**. Redémarrer AXON avant de tester.
+
+L'interface est **Rich**. Le paquet `src/ui/tui/` est en instance de suppression :
+ne rien y ajouter.
 
 ---
 
@@ -73,6 +75,20 @@ acceptable, et il n'est validé que sur trois cas.
 Le n° 25 rejoue le bug qui a mangé un diagramme : le modèle écrivait les
 arguments de `mermaid_diagram` au lieu de l'appeler.
 
+### Scénarios de l'agent de code en nœud
+
+| # | À taper | Attendu | Ce qui serait un bug |
+|---|---|---|---|
+| 26 | `va dans <projet> et supprime le fichier X` | l'agent **demande** avant de supprimer | il annonce qu'il ne peut pas |
+| 27 | sur cette question : **Oui** | reprend où il en était | il refait ce qu'il avait déjà fait |
+| 28 | sur cette question : **Non** | il change de voie | il repose la même commande |
+| 29 | `crée un plan pour <tâche>` puis **Préciser** | plan révisé soumis à nouveau | le plan s'exécute sans être remontré |
+| 30 | `explore ce dépôt et dis-moi comment il est organisé` | **un** rapport, pas vingt lectures | le contexte se remplit de fichiers |
+| 31 | `coucou`, puis `aide-moi` | questionnaire posé **une fois** | il boucle, ou répond en texte libre |
+
+Le n° 26 est le cœur du chantier : il était impossible avant, parce que demander
+aurait tout rejoué. Le n° 31 vérifie la clarification, qui bouclait six fois.
+
 ### Sur la veille
 
 ```bash
@@ -136,10 +152,11 @@ l'indexation avant une refonte ; elles ont été retirées. À regarder.
 
 ---
 
-## 2. Unifier les graphes
+## 2. Unifier les graphes — il n'en reste qu'un à rejoindre
 
-`src/cron_daemon.py:174` utilise `create_react_agent` — un second graphe qui n'a
-**aucun** des huit nœuds construits. Pas de policy, pas de routage (liste fixe de
+L'agent de code a rejoint le graphe principal (voir plus bas). Reste
+`src/cron_daemon.py:174`, qui utilise `create_react_agent` — un second graphe qui
+n'a **aucun** des dix nœuds construits. Pas de policy, pas de routage (liste fixe de
 dix outils), et demain pas de trace ni de verify.
 
 C'est pour ça que `commandes_autorisees` existe : un contournement du fait que le
@@ -248,10 +265,24 @@ pondérations ont déjà été rejetées faute de preuve.
 sur X, je tourne sur Y ». Automatiser ce choix reprend la seule chose qui a
 permis de le voir.
 
-**Migrer le specialist en sous-graphe — pas maintenant.** ~600 lignes réglées
-(swap VRAM, abandon de phase, plafonds), aucun bug actuel ne l'exige. Le signal
-pour s'y mettre : le premier moment où « j'aurais aimé qu'il me demande ça au
-milieu du build ».
+**~~Migrer le specialist en sous-graphe — pas maintenant.~~ FAIT.** Le signal
+qu'on attendait est arrivé : le specialist a écrit « à toi de valider la commande
+ci-dessus » pour un questionnaire qui ne pouvait pas s'afficher.
+
+La mesure qui a décidé de la forme, avant d'écrire une ligne :
+
+    boucle ordinaire dans un nœud   étape déjà faite exécutée 2×  ← REJEU
+    sous-graphe compilé             exécutée 1×                   ← pas de rejeu
+
+Il ne demandait rien parce que demander aurait réécrit les fichiers et relancé
+les commandes déjà passées. Les ~600 lignes réglées n'ont pas bougé : elles sont
+extraites en `SessionModele` et `executer_un_outil`, appelées par les nœuds.
+`graphe_agent.py` ne porte que la structure.
+
+Et il est maintenant un **nœud du graphe principal**, pas un outil :
+`run_coding_agent` pose un marqueur, `apres_les_outils` route vers `coder`.
+Motif de `deep_research` → `approfondir`. Un outil est atomique — son enveloppe
+était ré-entrée à chaque reprise.
 
 ---
 
