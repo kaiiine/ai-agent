@@ -30,12 +30,15 @@ from src.orchestrator.provider_quirks import (
 )
 from src.orchestrator.invocation import invoke_with_recovery
 from src.orchestrator.resilience import tool_error_to_message
-from src.orchestrator.clarification import apres_les_outils, clarifier
+from src.orchestrator.clarification import (
+    appel_clarification, appels_en_attente, apres_les_outils, clarifier, clarifier_appel,
+)
 from src.orchestrator.confirmation import apres_confirmation, confirmer
 from src.orchestrator.envoi import envoyer
+from src.agents.coding.noeud import coder
 from src.agents.deep.noeud import approfondir
 from src.orchestrator.plan import plan_a_valider, valider
-from src.orchestrator.revision import reviser
+from src.orchestrator.revision import reviser, revision_attendue
 from src.orchestrator.tool_node import CachedToolNode
 
 console = RichConsole()
@@ -66,7 +69,6 @@ _DEMANDE_EXPLICITE = re.compile(
 #: l'utilisateur la lit puis répond en tapant : moins confortable que le
 #: questionnaire, jamais bloquant.
 _SUBSTANCE_REPONSE = 240
-
 
 def _demande_de_precision(texte: str) -> bool:
     """Le modèle RÉCLAME-T-IL une information au lieu de répondre ?
@@ -161,6 +163,7 @@ from src.orchestrator.registry import build_all_tools
 from src.orchestrator.state import GlobalState
 from src.orchestrator.catalogue import (
     indexer as _indexer, menu as _menu, obtenir_outil, ouverts as _ouverts,
+    signaler_delegation as _signaler_delegation, _EXPLORATION,
     outil as _outil_du_catalogue, serveurs_actifs as _serveurs_actifs,
 )
 from src.orchestrator.tool_retriever import ToolRetriever
@@ -313,7 +316,14 @@ def _chat_node_factory():
         # Le CATALOGUE, reconstruit à chaque tour : les outils MCP apparaissent et
         # disparaissent avec leurs serveurs, une liste figée au démarrage mentirait.
         _indexer(tools + _mcp.tools)
-        _interdits = BLOCKED_TOOLS if plan_mode else frozenset()
+        # Déléguer est possible ce tour-ci : le catalogue refuse alors d'ouvrir
+        # les outils qui fouillent un projet. `ouverts()` relit l'historique, où
+        # un nom refusé figure encore — la boucle doit donc filtrer aussi.
+        _peut_deleguer = any(t.name == "run_coding_agent" for t in selected_tools)
+        _signaler_delegation(_peut_deleguer)
+        _interdits = set(BLOCKED_TOOLS) if plan_mode else set()
+        if _peut_deleguer:
+            _interdits |= _EXPLORATION
         _noms = {t.name for t in selected_tools}
         for _nom in _ouverts(state["messages"]):
             if _nom in _noms or _nom in _interdits:
@@ -624,23 +634,28 @@ def build_orchestrator():
     g.add_node("chatbot", chatbot)
     g.add_node("tools", CachedToolNode(tools))
     g.add_node("clarifier", clarifier)
+    g.add_node("clarifier_appel", clarifier_appel)
     g.add_node("confirmer", confirmer)
     g.add_node("reviser", reviser)
     g.add_node("envoyer", envoyer)
     g.add_node("valider_plan", valider)
     g.add_node("approfondir", approfondir)
+    g.add_node("coder", coder)
 
     g.add_edge(START, "chatbot")
     # `tools_condition` mène à `tools` ou à la fin. On s'intercale avant la fin :
     # un plan se valide sur le TEXTE du modèle, pas sur un appel d'outil.
     def _apres_chatbot(state):
         route = tools_condition(state)
+        if route == "tools" and appel_clarification(state["messages"][-1]):
+            return "clarifier_appel"
         if route == END and plan_a_valider(state):
             return "valider_plan"
         return route
 
     g.add_conditional_edges("chatbot", _apres_chatbot,
-                            {"tools": "tools", "valider_plan": "valider_plan", END: END})
+                            {"tools": "tools", "clarifier_appel": "clarifier_appel",
+                             "valider_plan": "valider_plan", END: END})
     # `tools` ne revient au modèle que si aucun nœud de demande n'a la main.
     g.add_conditional_edges("tools", apres_les_outils, {
         "clarifier": "clarifier",
@@ -648,12 +663,16 @@ def build_orchestrator():
         "reviser": "reviser",
         "envoyer": "envoyer",
         "approfondir": "approfondir",
+        "coder": "coder",
         "chatbot": "chatbot",
     })
-    # Le questionnaire est un appel d'outil comme un autre : il repasse par
-    # `tools`, qui produit le `awaiting_input` que l'interface sait afficher.
     # `clarifier` a déjà les réponses, réinscrites dans l'historique.
     g.add_edge("clarifier", "chatbot")
+    # Le reste du lot doit être servi : un appel déclaré sans résultat déséquilibre
+    # les paires, et le fournisseur refuse le tour.
+    g.add_conditional_edges("clarifier_appel",
+                            lambda e: "tools" if appels_en_attente(e) else "chatbot",
+                            {"tools": "tools", "chatbot": "chatbot"})
     # `confirmer` réémet l'appel sur un accord, un simple message sur un refus.
     g.add_conditional_edges("confirmer", apres_confirmation,
                             {"tools": "tools", "chatbot": "chatbot"})
@@ -663,5 +682,13 @@ def build_orchestrator():
     # La décision revient au modèle : exécuter, réviser, ou renoncer.
     g.add_edge("valider_plan", "chatbot")
     g.add_edge("approfondir", "chatbot")
+    # PAS une arête simple : l'agent de code dépose ses fichiers dans
+    # `pending_changes` et compte sur le nœud `reviser` pour les faire relire —
+    # c'est écrit dans `_coding_progress`, mode `ask`. Le renvoyer droit au modèle
+    # laissait la proposition en plan : aucun diff, rien d'écrit, et le modèle
+    # redemandait confirmation d'un fichier que personne ne lui montrait.
+    g.add_conditional_edges("coder",
+                            lambda e: "reviser" if revision_attendue(e) else "chatbot",
+                            {"reviser": "reviser", "chatbot": "chatbot"})
 
     return g.compile(checkpointer=build_checkpointer())

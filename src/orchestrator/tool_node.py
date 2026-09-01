@@ -49,20 +49,33 @@ class CachedToolNode:
         self._cacheable = CACHEABLE_TOOLS
 
     def __call__(self, state: dict, config=None) -> dict:
-        last = state["messages"][-1] if state.get("messages") else None
-        tool_calls = getattr(last, "tool_calls", None) or []
-
+        messages = state.get("messages") or []
+        # Le dernier message PORTEUR d'appels, pas le dernier message : un nœud de
+        # demande a pu répondre à l'un d'eux avant nous, et l'état se termine
+        # alors par son résultat.
+        last = next((m for m in reversed(messages)
+                     if getattr(m, "tool_calls", None)), None)
+        repondus = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
+        tool_calls = [tc for tc in (getattr(last, "tool_calls", None) or [])
+                      if tc["id"] not in repondus]
+        if not tool_calls:
+            return {"messages": []}
         # Un lot peut mêler une lecture et une écriture : refuser le lot entier
         # laisserait des `tool_call` sans réponse, ce que les providers rejettent.
         refus = _refus_mode_plan(tool_calls)
         if refus:
             bloques = {m.tool_call_id for m in refus}
-            restants = [tc for tc in tool_calls if tc["id"] not in bloques]
-            if not restants:
+            tool_calls = [tc for tc in tool_calls if tc["id"] not in bloques]
+            if not tool_calls:
                 return {"messages": refus}
-            state = {**state, "messages": state["messages"][:-1]
-                     + [last.model_copy(update={"tool_calls": restants})]}
-            tool_calls = restants
+
+        if len(tool_calls) != len(last.tool_calls):
+            # Réexécuter un appel déjà servi produirait un second résultat pour le
+            # même identifiant : `clarifier_appel` a posé la question, l'outil la
+            # reposerait.
+            rang = messages.index(last)
+            state = {**state, "messages": list(messages[:rang])
+                     + [last.model_copy(update={"tool_calls": tool_calls})]}
 
         # Attempt full-batch cache hit
         cached_msgs: list[ToolMessage] = []

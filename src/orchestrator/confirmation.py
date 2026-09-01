@@ -29,7 +29,9 @@ OUI, NON = "Oui, exécuter", "Non, annuler"
 #: elle arrive au modèle comme telle, jamais comme un `AIMessage` — que le TUI
 #: afficherait et que le modèle relirait comme son propre tour.
 def note_pour_le_modele(texte: str) -> HumanMessage:
-    return HumanMessage(content=texte)
+    from src.orchestrator.note_interne import note
+
+    return note(texte)
 
 
 # ── Lecture des messages ─────────────────────────────────────────────────────
@@ -53,7 +55,13 @@ def commande_a_confirmer(message: Any) -> str | None:
 
 
 def _libelle(charge: dict, commande: str) -> str:
-    """L'intitulé de la question : le motif du blocage, puis la commande.
+    """L'intitulé de la question : le motif, la commande, et OÙ elle s'exécute.
+
+    Le répertoire manquait. « rm -rf ./* » ne dit pas ce que `./` désigne, et on
+    ne peut pas accorder ce qu'on ne voit pas : le même écran vaut pour un
+    dossier d'essai et pour la racine d'un projet. Il n'est montré que si la
+    commande porte un chemin RELATIF — sur « rm -rf /tmp/x », le répertoire
+    n'apprend rien et allongerait la question pour rien.
 
     L'aperçu d'écriture voyage à part, dans `Demande.apercu`.
     """
@@ -62,7 +70,24 @@ def _libelle(charge: dict, commande: str) -> str:
               "inconnue": "Commande non reconnue comme sûre"}.get(motif, "Commande")
     if charge.get("host"):
         entete = f"Écriture sur {charge['host']} (machine DISTANTE)"
+    lieu = charge.get("cwd") or ""
+    if lieu and _porte_un_chemin_relatif(commande):
+        return f"{entete} :\n\n{commande}\n\ndans  {lieu}"
     return f"{entete} :\n\n{commande}"
+
+
+#: Un argument qui n'est ni une option ni un chemin absolu : ce que la commande
+#: touche dépend alors du répertoire courant.
+_ABSOLU = ("/", "~")
+
+
+def _porte_un_chemin_relatif(commande: str) -> bool:
+    for mot in commande.split()[1:]:
+        if mot.startswith("-") or not mot:
+            continue
+        if not mot.startswith(_ABSOLU):
+            return True
+    return False
 
 
 # ── Le nœud ──────────────────────────────────────────────────────────────────

@@ -5,11 +5,13 @@ import os
 import signal
 import threading
 from pathlib import Path
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from typing import Optional, Dict, Any
 from langchain_core.tools import tool
 
 from src.agents.coding.pending import FileChange, pending_changes
 from .autorisation import est_autorisee
+from .chemins_absolus import absolutiser
 from .classification import (
     est_catastrophique,
     est_connue_sure,
@@ -18,7 +20,36 @@ from .classification import (
 from .ecriture import analyser_ecriture
 
 _HOME = Path.home()
-_cwd: Path = _HOME  # répertoire de travail courant de la session
+
+
+def _racine_des_projets() -> Path | None:
+    try:
+        from src.utils.paths import get_projects_dir
+
+        racine = get_projects_dir()
+        return racine if racine.is_dir() else None
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _repertoire_de_lancement() -> Path:
+    """Là où AXON a été lancé — comme n'importe quel outil de terminal.
+
+    C'était `$HOME`, en dur. « Ce projet » n'avait donc aucun référent : le
+    modèle partait le chercher, et sur cette machine `shell_cd projets-perso`
+    depuis `$HOME` tombe dans un homonyme qui contient d'autres projets. On a vu
+    l'agent finir dans `auratis-studio` pour une question sur `ai-agent`.
+
+    Lancer depuis un projet, c'est déjà dire lequel : on ne devine plus.
+    """
+    try:
+        depart = Path.cwd()
+    except OSError:
+        return _HOME
+    return depart if depart != Path("/") else _HOME
+
+
+_cwd: Path = _repertoire_de_lancement()  # répertoire de travail de la session
 _bg_procs: dict[str, subprocess.Popen] = {}  # label → processus background actif
 
 _shell_stream_callback = None
@@ -116,7 +147,32 @@ def _commande_introuvable(exit_code: int, sortie: str) -> bool:
     return exit_code != 0 and any(t in bas for t in _TEXTES_INTROUVABLE)
 
 
-@tool("shell_run")
+class ArgsShell(BaseModel):
+    """Le schéma de `shell_run`, tolérant sur le nom du premier argument.
+
+    Les modèles écrivent `cmd` au moins aussi souvent que `command` — c'est le
+    nom qu'emploient la plupart des API shell. L'appel échouait alors sur une
+    erreur de validation, le modèle réessayait avec l'autre nom, et ça marchait :
+    deux appels pour un, à chaque commande, plus une ligne rouge à l'écran.
+    Relevé trois fois sur un seul « supprime tout ce que contient ce dossier ».
+
+    Le schéma annoncé garde `command` — c'est lui qu'on enseigne ; l'alias ne
+    fait que rattraper. Durcir sans lui transformerait une frappe en échec.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    command: str = Field(
+        validation_alias=AliasChoices("command", "cmd"),
+        serialization_alias="command",
+        description="La commande shell à exécuter.",
+    )
+    cwd: Optional[str] = Field(
+        default=None, description="Répertoire d'exécution. Par défaut, le cwd courant.")
+    timeout: int = Field(default=30, description="Délai en secondes, 300 au plus.")
+
+
+@tool("shell_run", args_schema=ArgsShell)
 def shell_run(
     command: str,
     cwd: Optional[str] = None,
@@ -295,11 +351,22 @@ def shell_run(
     # finie par nature (`python -c`, un alias, une fonction shell lui échappent) ;
     # inverser le défaut fait qu'un oubli devient une question posée, et non une
     # exécution silencieuse.
+    # Ce qu'on approuve doit être ce qui s'exécute. « rm -rf ./* » ne dit pas ce
+    # que `./` désigne — même écran pour un dossier d'essai et pour la racine
+    # d'un projet — et le répertoire courant peut encore changer entre la
+    # question et la réponse. On résout AVANT, donc la commande montrée est
+    # littéralement celle qui partira. Ce qui reste relatif (commande enchaînée,
+    # argument qui n'est pas un chemin) n'est pas réécrit, et la confirmation
+    # montre alors le répertoire à côté.
+    base = Path(cwd) if cwd else _cwd
+    command = absolutiser(command, base)
+
     if not est_connue_sure(command) and not autorisee():
         destructive = est_destructive(command)
         return {
             "status": "requires_confirmation",
             "command": command,
+            "cwd": str(base),
             "reason": "destructive" if destructive else "inconnue",
             "message": (
                 ("Commande DESTRUCTIVE. " if destructive else
@@ -624,9 +691,16 @@ def shell_cd(path: str) -> Dict[str, Any]:
     global _cwd
 
     # 1. Essai direct (absolu ou relatif au cwd)
+    #
+    # Sauf pour le nom de la racine des projets, qui DÉSIGNE cette racine. Deux
+    # dossiers peuvent la porter — `~/projets-perso` et `~/Documents/projets-perso`
+    # coexistent ici — et le hasard du répertoire courant choisissait alors
+    # lequel. Ce que l'utilisateur a configuré tranche : c'est sa déclaration.
     p = Path(path)
     if not p.is_absolute():
-        p = (_cwd / path).resolve()
+        racine = _racine_des_projets()
+        p = (racine if racine is not None and path.strip("/") == racine.name
+             else (_cwd / path).resolve())
     if p.exists() and p.is_dir():
         _cwd = p
         # Invalidate the @-mention file cache so completions reflect the new project

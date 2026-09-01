@@ -115,6 +115,11 @@ def apres_les_outils(state: dict) -> str:
     if question_a_creuser(dernier):
         return "approfondir"
 
+    from src.agents.coding.noeud import tache_a_coder
+
+    if tache_a_coder(dernier):
+        return "coder"
+
     return "chatbot"
 
 
@@ -147,3 +152,89 @@ def clarifier(state: dict) -> dict:
         ToolMessage(content=json.dumps({"answers": echange}, ensure_ascii=False),
                     tool_call_id=identifiant, name="ask_clarification"),
     ]}
+
+
+def appel_clarification(message: Any) -> dict | None:
+    """L'appel à `ask_clarification` porté par ce message, s'il y en a un."""
+    if not isinstance(message, AIMessage):
+        return None
+    for appel in getattr(message, "tool_calls", None) or []:
+        if appel.get("name") == "ask_clarification":
+            return appel
+    return None
+
+
+def _questions(appel: dict) -> tuple[Question, ...]:
+    posees: list[Question] = []
+    for brut in (appel.get("args") or {}).get("questions") or []:
+        if isinstance(brut, str):
+            texte, choix = brut.strip(), ()
+        elif isinstance(brut, dict):
+            texte = str(brut.get("question") or "").strip()
+            choix = tuple(str(c) for c in (brut.get("choices") or ()))
+        else:
+            continue
+        if texte:
+            posees.append(Question(texte=texte, choix=choix))
+    return tuple(posees)
+
+
+def clarifier_appel(state: dict) -> dict:
+    """Pose les questions que le modèle a demandées, avant que l'outil ne tourne.
+
+    `ask_clarification` est un outil ordinaire : il rend ses propres questions au
+    modèle en JSON, et rien ne les affiche. Le modèle les recevait comme une
+    donnée, n'avait aucune raison de croire qu'elles avaient été posées, et
+    rappelait l'outil — six fois sur un simple « coucou ». Les deux gardes
+    anti-boucle cherchaient une clé `answers` que ce chemin ne produit jamais.
+    """
+    appel = appel_clarification((state.get("messages") or [])[-1])
+    if appel is None:
+        return {}
+
+    identifiant = appel.get("id", "clarification")
+    posees = _questions(appel)
+
+    # Demander une information, ce n'est pas demander la permission. AXON garde
+    # lui-même ce qui engage : la question en double n'ouvrait aucune porte.
+    # Le statut n'est PAS `error` — le journal peint en rouge tout résultat
+    # d'erreur, et l'utilisateur voyait « Question refusée » deux fois pour un
+    # seul geste. Ce que le modèle ne devrait pas demander se règle dans son
+    # prompt ; ici on laisse simplement passer.
+    from src.agents.clarify.permission import SANS_OBJET, demande_une_permission
+
+    if posees and any(demande_une_permission(q.choix) for q in posees):
+        return {"messages": [ToolMessage(
+            content=json.dumps({"status": "ok", "message": SANS_OBJET},
+                               ensure_ascii=False),
+            tool_call_id=identifiant, name="ask_clarification")]}
+
+    if not posees:
+        return {"messages": [ToolMessage(
+            content=json.dumps({"status": "error",
+                                "error": "Aucune question exploitable — reformule."}),
+            tool_call_id=identifiant, name="ask_clarification")]}
+
+    reponses = demander(Demande(genre=CLARIFICATION, cle=identifiant, questions=posees))
+
+    # ── À partir d'ici : une seule fois ─────────────────────────────────────
+    echange = {q.texte: r for q, r in zip(posees, reponses)}
+    return {"messages": [ToolMessage(
+        content=json.dumps({"answers": echange}, ensure_ascii=False),
+        tool_call_id=identifiant, name="ask_clarification")]}
+
+
+def appels_en_attente(state: dict) -> bool:
+    """Reste-t-il, dans le dernier lot, un appel sans réponse ?
+
+    Le modèle peut demander l'heure ET une clarification d'un même souffle.
+    Router tout le lot vers la question laissait l'autre appel sans résultat, et
+    un fournisseur refuse un tour dont les paires sont déséquilibrées.
+    """
+    messages = state.get("messages") or []
+    porteur = next((m for m in reversed(messages)
+                    if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)), None)
+    if porteur is None:
+        return False
+    repondus = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
+    return any(a["id"] not in repondus for a in porteur.tool_calls)

@@ -160,8 +160,16 @@ def test_study_n_a_pas_bouge():
 
 
 def test_le_reste_du_noyau_est_intact():
-    """STYLE, PLAN et SAFETY n'étaient pas dans le périmètre."""
+    """STYLE et PLAN n'étaient pas dans le périmètre.
+
+    SAFETY, si : elle disait « Confirm before any irreversible action » et le
+    modèle obéissait, en posant un questionnaire oui/non AVANT une suppression
+    qu'AXON allait de toute façon faire confirmer. Deux questions pour un geste,
+    dont la première ne décidait rien. La section reste, sa consigne a changé.
+    """
     for marqueur in ("━━ STYLE ━━", "━━ PLAN ━━", "━━ SAFETY ━━",
                      "no filler openers", "<axon:plan>",
-                     "Confirm before any irreversible action"):
+                     "AXON asks for consent ITSELF"):
         assert marqueur in _CORE
+
+    assert "Confirm before any irreversible action" not in _CORE

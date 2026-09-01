@@ -55,6 +55,36 @@ def menu(exclus: frozenset[str] = frozenset()) -> str:
     )
 
 
+#: Fouiller un projet, par opposition à lire un fichier qu'on te désigne. C'est
+#: exactement ce que l'agent de code fait mieux : il a le graphe de code, qui
+#: répond en un appel là où il faut vingt greps. `local_read_file` n'en est PAS —
+#: « combien de lignes fait ~/rapport.md ? » est une question légitime, sans
+#: projet ni délégation.
+_EXPLORATION = frozenset({"local_grep", "local_find_file", "local_glob",
+                          "local_list_directory"})
+
+#: Vrai quand `run_coding_agent` est dans la sélection du tour. Posé par le nœud
+#: `chatbot` avant l'appel, comme le mode plan pose le sien.
+_delegation_possible = False
+
+
+def signaler_delegation(possible: bool) -> None:
+    global _delegation_possible
+    _delegation_possible = bool(possible)
+
+
+def delegation_possible() -> bool:
+    return _delegation_possible
+
+
+def refus_exploration(nom: str) -> str:
+    return (f"`{nom}` fouille un projet — c'est le travail de l'agent de code, qui "
+            f"a le graphe (graph_explain, graph_path, graph_query) et répond en un "
+            f"appel là où il te faudrait vingt recherches. Tu n'as pas ce graphe. "
+            f"Appelle `run_coding_agent` avec la question telle quelle.")
+
+
+
 @lc_tool("obtenir_outil")
 def obtenir_outil(nom: str) -> str:
     """Rend disponible un outil du CATALOGUE absent de ta sélection.
@@ -74,6 +104,12 @@ def obtenir_outil(nom: str) -> str:
     # les réclamer par leur nom rouvrait la porte que le mode venait de fermer.
     if is_active() and nom in BLOCKED_TOOLS:
         return f"`{nom}` écrit — indisponible en mode plan. Décris l'action dans le plan."
+    # Le prompt le disait déjà, quatre fois ; le modèle ouvrait quand même
+    # `local_find_file` puis `local_grep` pour répondre à « qu'est-ce qui appelle
+    # reviser ? » — 42 s, deux gros fichiers lus, un grep en délai dépassé. Une
+    # consigne se contourne, une porte fermée non.
+    if _delegation_possible and nom in _EXPLORATION:
+        return refus_exploration(nom)
     return f"`{nom}` est disponible. Appelle-le maintenant."
 
 

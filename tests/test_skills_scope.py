@@ -197,11 +197,27 @@ def test_aucune_injection_hors_boucle_doutil():
     assert "━━ SKILL :" not in p
 
 
-def test_la_delegation_coding_est_bornee_au_deliverable():
+def test_la_delegation_coding_reste_bornee():
     """« pas de code » et « je l'exporterai pour le web » ne doivent pas router
-    vers l'agent coding : il n'a pas les tools qui agissent sur la cible."""
+    vers l'agent coding : il n'a pas les tools qui agissent sur la cible.
+
+    Ces deux bornes tiennent toujours. La troisième, elle, est tombée : le
+    déclencheur était « DELIVERABLE is source files », et une question sur un
+    projet n'en livre aucun — l'orchestrateur fouillait donc lui-même, 42 s de
+    grep pour ce que le graphe rend en une seconde. Comprendre du code est
+    devenu, explicitement, le travail du spécialiste."""
     from src.llm.prompts import _CODING
 
-    assert "DELIVERABLE is source files" in _CODING
-    assert "NEVER delegate a task you can perform yourself" in _CODING
     assert '"no code" → never run_coding_agent' in _CODING
+    assert "does not make it a code task" in _CODING
+    assert "UNDERSTANDING it" in _CODING
+
+
+def test_la_delegation_nest_plus_refusee_pour_du_code():
+    """« NEVER delegate a task you can perform yourself with the tools already
+    available » : le catalogue rend TOUT disponible, la règle avalait donc le cas
+    même qu'elle n'aurait jamais dû toucher."""
+    from src.llm.prompts import _CODING
+
+    assert "NEVER delegate a task you can perform yourself" not in _CODING
+    assert "acting on something OTHER than a codebase" in _CODING

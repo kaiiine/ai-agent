@@ -80,13 +80,25 @@ class ArgsClarification(BaseModel):
 
 @tool("ask_clarification", args_schema=ArgsClarification)
 def ask_clarification(questions: list[Question]) -> str:
-    """Ask the user clarifying questions via an interactive questionnaire.
-    Use this ALWAYS when you need more info — never ask in plain text.
+    """Ask the user for MISSING INFORMATION via an interactive questionnaire.
+    Use this whenever a value you need cannot be guessed — never ask in plain text.
+
+    NEVER for permission — no yes/no questions. AXON asks for consent ITSELF, at
+    the moment of the act: a destructive command, an outgoing message, a file
+    write (shown as a diff), a plan. "Shall I delete X?" decides nothing, since
+    the real gate comes right after whatever the user answers. Act.
 
     Provide 3-5 choices when options are clear; omit choices for open-ended
     questions. The UI automatically adds an "Autre (préciser)" option — do NOT
     include it yourself. Max 5 questions.
     """
+    from src.agents.clarify.permission import SANS_OBJET, demande_une_permission
+
+    if any(demande_une_permission(getattr(q, "choices", None)
+                                  or (q.get("choices") if isinstance(q, dict) else None))
+           for q in questions):
+        return json.dumps({"status": "ok", "message": SANS_OBJET}, ensure_ascii=False)
+
     charge = [
         q.model_dump(exclude_defaults=False) if isinstance(q, Question) else dict(q)
         for q in questions
