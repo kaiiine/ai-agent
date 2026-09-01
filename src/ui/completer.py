@@ -36,7 +36,7 @@ _COMMANDS: list[tuple[str, str]] = [
     ("/debug",             "active/désactive le mode debug"),
     ("/dump",              "affiche tous les messages du thread"),
     ("/mcp",               "serveurs MCP — list · add · test · tools · refresh · restart…"),
-    ("/graph",             "génère GRAPH_REPORT.md + graph.json + notes Obsidian via graphify"),
+    ("/graph",             "graphe de code — Tab propose les projets, puis --update"),
     ("/keys",              "état des clés API (multi-comptes) · /keys reset pour tout remettre sain"),
     ("q / exit",           "quitte Axon"),
     ("Ctrl+T",             "bascule le mode plan — l'IA planifie sans écrire"),
@@ -69,6 +69,72 @@ _MCP_SUBCOMMANDS: dict[str, str] = {
 }
 # Sous-commandes attendant un nom de serveur en second argument.
 _MCP_WANTS_SERVER = frozenset(_MCP_SUBCOMMANDS) - {"list", "add"}
+
+# ── /graph : nom de projet, puis `--update` ───────────────────────────────────
+#
+# `--update` réextrait SANS appel de modèle et reste la bonne réponse dans la
+# quasi-totalité des cas — mais rien ne l'annonçait : il fallait connaître le
+# drapeau pour s'en servir, et sans lui le graphe vieillit en silence.
+#
+# Les projets qui ONT déjà un graphe sont proposés en premier, avec sa date : la
+# complétion dit ainsi lequel a besoin d'être rafraîchi, sans avoir à chercher.
+_GRAPH_FLAGS: dict[str, str] = {
+    "--update": "réextrait le code sans appel de modèle (rapide) — sinon extraction complète",
+}
+
+
+def _graph_sous_commandes() -> dict[str, str]:
+    """Ce que Tab propose : lu dans `commands`, jamais recopié, moins ce qui déçoit.
+
+    Le commentaire sur `/backend` le dit déjà pour sa liste de backends : une
+    copie dérive. Celle-là avait perdu `mistral`, puis `nvidia` — deux backends
+    utilisables que la complétion ne proposait pas, donc invisibles à qui
+    découvre l'outil par Tab.
+    """
+    try:
+        from .commands import GRAPH_NON_SUGGEREES, GRAPH_SOUS_COMMANDES
+
+        return {n: d for n, d in GRAPH_SOUS_COMMANDES.items()
+                if n not in GRAPH_NON_SUGGEREES}
+    except Exception:                                        # noqa: BLE001
+        return {}
+
+_graph_cache: list[tuple[str, str]] = []
+_graph_cache_ts: float = 0.0
+_GRAPH_CACHE_TTL = 10.0
+
+
+def _graph_projects() -> list[tuple[str, str]]:
+    """(nom, description) des projets, ceux qui ont un graphe d'abord.
+
+    Mis en cache : la complétion s'exécute à CHAQUE frappe, et parcourir la
+    racine des projets à chacune la rendrait poussive — même règle que pour la
+    liste des serveurs MCP, qu'on lit sans jamais la construire.
+    """
+    global _graph_cache, _graph_cache_ts
+
+    if time.time() - _graph_cache_ts < _GRAPH_CACHE_TTL and _graph_cache:
+        return _graph_cache
+    try:
+        from src.utils.paths import get_projects_dir
+
+        racine = get_projects_dir()
+        avec, sans = [], []
+        for dossier in sorted(racine.iterdir()):
+            if not dossier.is_dir() or dossier.name.startswith("."):
+                continue
+            graphe = dossier / "graphify-out" / "graph.json"
+            if graphe.exists():
+                jour = time.strftime("%d %b", time.localtime(graphe.stat().st_mtime))
+                avec.append((dossier.name, f"graphe du {jour} — --update le rafraîchit"))
+            else:
+                sans.append((dossier.name, "aucun graphe — extraction complète"))
+        _graph_cache = avec + sans
+        _graph_cache_ts = time.time()
+    except Exception:                                        # noqa: BLE001
+        _graph_cache = []
+    return _graph_cache
+
 
 # ── File cache for @ completion (invalidated on cwd change or TTL) ────────────
 _file_cache: list[str] = []
@@ -127,6 +193,9 @@ class SlashCompleter(Completer):
             if cmd == "/mcp":
                 yield from self._mcp_completions(sub)
                 return
+            if cmd == "/graph":
+                yield from self._graph_completions(sub)
+                return
             if cmd == "/backend":
                 options = self._backend_options()
             elif cmd == "/model":
@@ -141,6 +210,35 @@ class SlashCompleter(Completer):
         for full_cmd, desc in _COMMANDS:
             if full_cmd.startswith(cmd):
                 yield Completion(full_cmd, start_position=-len(cmd), display_meta=desc)
+
+    def _graph_completions(self, sub: str):
+        """Le projet, puis ce qu'on veut en faire.
+
+        Tout est proposé aux deux premiers niveaux : sans projet, `/graph`
+        travaille sur le répertoire courant, donc `/graph --update` et
+        `/graph explain reviser` sont valides tels quels.
+
+        Au-delà, les arguments sont libres — un symbole, une question — et
+        proposer quoi que ce soit reviendrait à deviner.
+        """
+        tokens = sub.split(" ")
+        current = tokens[-1]
+        deja = set(tokens[:-1])
+
+        if len(tokens) > 2 or (deja & set(_graph_sous_commandes())):
+            return
+
+        if len(tokens) == 1:
+            for nom, meta in _graph_projects():
+                if nom.startswith(current):
+                    yield Completion(nom, start_position=-len(current), display_meta=meta)
+
+        for nom, meta in _graph_sous_commandes().items():
+            if nom.startswith(current):
+                yield Completion(nom, start_position=-len(current), display_meta=meta)
+        for drapeau, meta in _GRAPH_FLAGS.items():
+            if drapeau.startswith(current) and drapeau not in deja:
+                yield Completion(drapeau, start_position=-len(current), display_meta=meta)
 
     def _mcp_completions(self, sub: str):
         """Trois niveaux : sous-commande, puis nom de serveur, puis `--deep`."""

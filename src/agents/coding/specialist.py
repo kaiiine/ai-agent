@@ -79,11 +79,14 @@ def _get_coding_tools():
         find_git_repos, propose_file_change, propose_file_delete, deleguer, edit_file, load_skill,
         project_graph_query,
     )
-    # Les quatre requêtes du graphe. `project_graph_query` reste en repli : il ne
-    # fait qu'une correspondance de sous-chaîne, mais il n'a besoin d'aucun
-    # sous-processus si graphify venait à manquer.
+    # Les requêtes du graphe, et de quoi le CONSTRUIRE : sans `graph_build`,
+    # `no_graph` renvoyait vers `/graph`, une commande de l'interface que le
+    # modèle ne peut pas taper — une impasse, dont il ressortait en lisant les
+    # fichiers un à un. `project_graph_query` reste en repli : il ne fait qu'une
+    # correspondance de sous-chaîne, mais il n'a besoin d'aucun sous-processus si
+    # graphify venait à manquer.
     from src.agents.coding.graphe import (
-        graph_affected, graph_explain, graph_path, graph_query,
+        graph_affected, graph_build, graph_explain, graph_path, graph_query,
     )
     from src.agents.filesystem.tools import (
         local_find_file, local_read_file, local_list_directory,
@@ -108,7 +111,7 @@ def _get_coding_tools():
         # `deleguer` ouvre un éventail d'explorations en lecture seule : le
         # modèle reçoit un rapport, pas les vingt lectures qui l'ont produit.
         deleguer,
-        graph_affected, graph_explain, graph_path, graph_query,
+        graph_affected, graph_build, graph_explain, graph_path, graph_query,
         project_graph_query,
         local_find_file, local_read_file, local_list_directory,
         local_grep, local_glob,
@@ -388,10 +391,11 @@ def _vram_swap_out() -> None:
 
 
 def run_coding_task(task: str) -> str:
-    """
-    Runs a coding task using the specialized coding LLM.
-    Calls the global progress callback on plan/file events so the UI can update in real time.
-    Returns a summary string.
+    """Un run complet, HORS graphe. `/build` passe par ici, phase par phase.
+
+    Aucune confirmation n'y est possible : rien au-dessus ne sait interrompre.
+    Le chemin normal est le nœud `coder`, qui invoque le même sous-graphe depuis
+    le graphe principal.
     """
     from src.agents.coding.pending import dev_plan
 
@@ -399,7 +403,8 @@ def run_coding_task(task: str) -> str:
     try:
         # Le temps de ce run SEULEMENT, écrire un fichier exige d'avoir planifié.
         with dev_plan.run_specialist():
-            return _run(task)
+            graphe, finaliser = preparer(task)
+            return finaliser(graphe.invoke({"tache": task}))
     finally:
         _vram_swap_out()
 
@@ -473,7 +478,16 @@ def _build_specialist_trace(messages: list) -> str:
 
 
 #: Relances déjà consommées sur un plan inachevé, pour ce run.
-_relances = {"texte": 0, "outils": 0, "skill": False}
+_relances = {"texte": 0, "outils": 0, "skill": False, "produit": False, "vide": 0}
+
+#: Les outils qui PRODUISENT quelque chose. Conclure sans en avoir appelé un
+#: seul, c'est avoir décrit le travail au lieu de le faire — vécu : le modèle
+#: rendait le plan dans `dev_explain` et le fichier en texte, sans jamais
+#: appeler `propose_file_change`.
+_OUTILS_PRODUCTIFS = frozenset({
+    "propose_file_change", "propose_file_delete", "edit_file", "shell_run",
+    "notebook_edit_cell", "notebook_insert_cell", "git_commit",
+})
 
 
 def interpreter_reponse(reponse, messages: list, tool_map: dict, tache: str):
@@ -495,6 +509,8 @@ def interpreter_reponse(reponse, messages: list, tool_map: dict, tache: str):
 
     if appels:
         _relances["outils"] += 1
+        if any(a["name"] in _OUTILS_PRODUCTIFS for a in appels):
+            _relances["produit"] = True
         if (_relances["outils"] == 5 and not _relances["skill"]
                 and any(mot in tache.lower() for mot in _FRONTEND_KW)
                 and not any(a["name"] == "load_skill" for a in appels)):
@@ -506,6 +522,19 @@ def interpreter_reponse(reponse, messages: list, tool_map: dict, tache: str):
         return appels, False, ""
 
     # Pas d'appel : conclure n'est légitime que si le plan est achevé.
+    #
+    # Et à condition d'avoir produit quelque chose. Sans plan, la première
+    # réponse en texte terminait le run — le modèle décrivait son plan dans
+    # `dev_explain`, écrivait le fichier en TEXTE, et personne ne relevait qu'il
+    # n'avait rien proposé.
+    if not _relances["produit"] and _relances["vide"] < 1:
+        _relances["vide"] += 1
+        return [], False, (
+            "[SYSTEME] Tu n'as encore RIEN écrit : aucun fichier proposé, aucune "
+            "commande lancée. Décrire le travail ne le fait pas. Appelle "
+            "`propose_file_change` avec le contenu complet du fichier — c'est le "
+            "seul moyen de le créer, et l'utilisateur le relira avant écriture.")
+
     reste = [e for e in dev_plan.steps if not e.done] if dev_plan.steps else []
     if not reste:
         return [], True, ""
@@ -727,12 +756,16 @@ def executer_un_outil(nom: str, args: dict, tool_map: dict, compteurs: dict) -> 
     return resultat
 
 
-def _run(task: str) -> str:
-    """La boucle est un SOUS-GRAPHE — voir `graphe_agent.py` pour le pourquoi.
+def preparer(task: str):
+    """Le sous-graphe prêt à tourner, et de quoi finaliser sa sortie.
+
+    Construire et invoquer sont séparés : le nœud `coder` du graphe principal
+    invoque LUI-MÊME, sans passer par un outil. Un outil est atomique, et son
+    enveloppe est ré-entrée à chaque reprise.
 
     Ce qui reste ici est la politique : quel client, quels outils, quoi faire
     d'une réponse. La structure — quels pas sont checkpointés, où l'on peut
-    interrompre sans tout rejouer — est dans le graphe.
+    interrompre sans tout rejouer — est dans `graphe_agent.py`.
     """
     from src.agents.coding.graphe_agent import construire
     from src.agents.coding.task_enricher import enrich_task
@@ -741,7 +774,8 @@ def _run(task: str) -> str:
 
     global _phase_abort, _retriever_cache, _retriever_tool_names
     _phase_abort = False
-    _relances.update({"texte": 0, "outils": 0, "skill": False})
+    _relances.update({"texte": 0, "outils": 0, "skill": False,
+                      "produit": False, "vide": 0})
 
     session = SessionModele()
     outils = _get_coding_tools()
@@ -795,8 +829,10 @@ def _run(task: str) -> str:
         notifier=_notifier,
     )
 
-    sortie = sous_graphe.invoke({"tache": task})
-    resultat = _clean_output(str(sortie.get("resultat") or "")) or "Task completed"
-    _persist_session_memory(sortie.get("messages") or [], tache_vue["texte"],
-                            resultat, _settings.llm_backend)
-    return resultat
+    def finaliser(sortie: dict) -> str:
+        resultat = _clean_output(str(sortie.get("resultat") or "")) or "Task completed"
+        _persist_session_memory(sortie.get("messages") or [], tache_vue["texte"],
+                                resultat, _settings.llm_backend)
+        return resultat
+
+    return sous_graphe, finaliser

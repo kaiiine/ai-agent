@@ -84,3 +84,8 @@ langbly
 
 # Cron
 apscheduler>=3.10
+
+# Graphe de code — `/graph` et les outils graph_* de l'agent de code.
+# Le dépôt voisin `~/Documents/projets-perso/graphify` était injecté en
+# PYTHONPATH : AXON tombait si on le déplaçait, et un clone neuf n'avait rien.
+graphifyy==0.9.53

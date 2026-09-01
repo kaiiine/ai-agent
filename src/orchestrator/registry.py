@@ -117,9 +117,15 @@ def run_coding_agent(task: str) -> str:
     # Guard: reject garbage task args (e.g. stringified message lists from weak models)
     stripped = task.strip()
     if len(stripped) < 10 or (stripped.startswith('[') and 'Message(' in stripped[:200]):
-        return "Erreur : le paramètre 'task' doit être une description textuelle de la tâche, pas une liste de messages."
-    from src.agents.coding.specialist import run_coding_task
-    return run_coding_task(task)
+        return json.dumps({"status": "error", "error":
+                           "Le paramètre 'task' doit être une description textuelle "
+                           "de la tâche, pas une liste de messages."})
+    # L'outil ne travaille PAS : il pose un marqueur, et le nœud `coder` prend la
+    # main. Faire tourner l'agent ici l'enfermait dans un outil, atomique pour le
+    # moteur — son enveloppe était ré-entrée à chaque reprise, et rien de ce qui
+    # s'y passait ne pouvait être interrompu. Même motif que `deep_research`.
+    from src.agents.coding.noeud import MARQUEUR
+    return json.dumps({"status": MARQUEUR, "tache": stripped}, ensure_ascii=False)
 
 
 def build_all_tools() -> List[BaseTool]:

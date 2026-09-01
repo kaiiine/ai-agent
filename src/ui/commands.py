@@ -303,6 +303,100 @@ def _handle_history(cfg: SessionConfig, state: dict, console) -> None:
     return command_panel(f"déjà sur ce thread : {chosen[:8]}")
 
 
+#: Les commandes de graphify qui INTERROGENT un graphe existant, par opposition à
+#: `/graph <projet>` qui le construit. Elles ne coûtent aucun token — sous-processus
+#: pur — et l'agent de code les a déjà comme outils ; les exposer ici les met aussi
+#: sous la main de l'utilisateur.
+GRAPH_SOUS_COMMANDES: dict[str, str] = {
+    "query":     "traverse le graphe pour une question — query comment marche la revue",
+    "explain":   "un nœud, sa source et ses voisins — explain reviser",
+    "path":      "chemin le plus court entre deux symboles — path coder reviser",
+    "affected":  "ce qu'un changement de ce symbole toucherait — affected reviser",
+    "god-nodes": "les nœuds les plus connectés — les pivots de l'architecture",
+    "diagnose":  "santé du graphe — diagnose multigraph",
+}
+
+#: Reconnues si on les tape, jamais suggérées. Mesuré sur ce dépôt (13 922 nœuds) :
+#: `query` part de nœuds trouvés par ressemblance de NOM — « Comment » attrape
+#: « Comment une issue se règle, du point de vue du parieur » — et la traversée à
+#: profondeur 2 y atteint tout depuis n'importe où, jusqu'à 649 nœuds pour un
+#: symbole pourtant exact. Suggérer ce qui déçoit n'aide personne ; `explain`,
+#: `path` et `affected` partent d'un point précis et répondent juste.
+GRAPH_NON_SUGGEREES = frozenset({"query"})
+
+
+#: Ce qu'on affiche d'une traversée, faute de mieux. `query` part de nœuds
+#: trouvés par ressemblance de NOM : « Comment » attrape « Comment une issue se
+#: règle, du point de vue du parieur » et la traversée s'en va dans le moteur de
+#: paris. Un symbole exact donne de bons départs, mais 385 nœuds à profondeur 2.
+_BUDGET_QUERY = 700
+
+
+#: Le backend d'extraction, dans l'ordre que TU veux. graphify a le sien —
+#: `gemini → kimi → claude → openai → deepseek`, ollama en dernier — et il est
+#: raisonnable pour un usage général : une clé payante ne doit pas être masquée
+#: par un `OLLAMA_BASE_URL` de passage. Mais le choix t'appartient, et il se lit
+#: ici plutôt que de dépendre de l'ordre d'un tiers.
+#:
+#: `AXON_GRAPHIFY_BACKEND` le surcharge (gemini · ollama · deepseek · openai · kimi).
+_BACKENDS_EXTRACTION: tuple[tuple[str, str], ...] = (
+    ("gemini", "GEMINI_API_KEY"),
+    ("gemini", "GOOGLE_API_KEY"),
+)
+
+
+def _backend_extraction() -> list[str]:
+    """Ce qu'on passe à `graphify extract`, ou rien.
+
+    Rien = graphify décide. On ne nomme que ce dont la clé est présente : nommer
+    un backend sans clé ferait échouer l'extraction en promettant le contraire —
+    la même erreur que `OLLAMA_MODEL=qwen2.5-coder:7b`, déclaré dans `.env` et
+    jamais tiré sur cette machine.
+    """
+    import os
+
+    choisi = os.environ.get("AXON_GRAPHIFY_BACKEND", "").strip()
+    if choisi:
+        return ["--backend", choisi]
+    for backend, cle in _BACKENDS_EXTRACTION:
+        if os.environ.get(cle, "").strip():
+            return ["--backend", backend]
+    return []
+
+
+def _recoller_la_question(mots: list[str]) -> list[str]:
+    """Rend à `query` sa question entière, et laisse passer les drapeaux.
+
+    Une question n'est pas une liste de symboles : « comment fonctionne l'agent
+    code » se tape sans guillemets, et l'apostrophe française y est fatale à
+    `shlex` — qui la prend pour un guillemet ouvrant. On recolle donc les mots
+    jusqu'au premier `--`, et ce qui suit part tel quel à graphify (`--budget`,
+    `--context`, `--dfs`).
+
+    Les autres commandes prennent des symboles, que le découpage sur les espaces
+    sépare déjà correctement ; on leur retire seulement les guillemets qu'on
+    aurait tapés par habitude.
+    """
+    if not mots:
+        return mots
+    nom, reste = mots[0], mots[1:]
+    coupe = next((i for i, m in enumerate(reste) if m.startswith("--")), len(reste))
+    if nom == "query":
+        question = " ".join(reste[:coupe]).strip("\"'")
+        if not question:
+            return mots
+        drapeaux = list(reste[coupe:])
+        # Le plafond de graphify est de 2000 tokens : à l'écran, cela fait une
+        # soixantaine de nœuds bruts qui défilent, et sur un dépôt hétérogène la
+        # plupart n'ont rien à voir — la traversée à profondeur 2 y atteint tout
+        # depuis n'importe où (mesuré : 385 nœuds depuis `run_coding_agent`).
+        # On sert donc une portion lisible par défaut, sans empêcher de l'élargir.
+        if "--budget" not in drapeaux:
+            drapeaux += ["--budget", str(_BUDGET_QUERY)]
+        return [nom, question, *drapeaux]
+    return [nom, *(m.strip("\"'") for m in reste[:coupe]), *reste[coupe:]]
+
+
 def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=None):
     cmd = cmd.strip()
 
@@ -528,7 +622,23 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         from src.utils.paths import get_projects_dir
 
         raw_path = cmd[len("/graph"):].strip()
-        chemin_seul = raw_path.replace("--update", "").strip()
+        # Découpage sur les ESPACES, pas avec `shlex` : une apostrophe française
+        # — « comment fonctionne l'agent » — y passe pour un guillemet ouvrant, et
+        # la commande était refusée pour « guillemet non fermé ». Les guillemets
+        # ne servent qu'à grouper l'argument de `query`, traité à part.
+        mots = raw_path.split()
+        mise_a_jour = "--update" in mots
+        mots = [m for m in mots if m != "--update"]
+
+        # Grammaire : `/graph [projet] [sous-commande args…] [--update]`. La
+        # sous-commande se reconnaît à son nom ; ce qui la précède est le projet.
+        # Sans elle, on retombe sur l'extraction, qui était le seul mode.
+        coupe = next((i for i, m in enumerate(mots) if m in GRAPH_SOUS_COMMANDES),
+                     len(mots))
+        chemin_seul = " ".join(mots[:coupe]).strip()
+        interrogation = mots[coupe:]
+        interrogation = _recoller_la_question(interrogation)
+
         if chemin_seul:
             project_path = Path(chemin_seul).expanduser()
             if not project_path.is_absolute():
@@ -539,8 +649,38 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         if not project_path.is_dir():
             return command_panel(f"dossier introuvable : {project_path}", error=True)
 
-        graphify_repo = Path.home() / "Documents" / "projets-perso" / "graphify"
-        env = {**os.environ, "PYTHONPATH": str(graphify_repo)}
+        # Interroger le graphe ne coûte aucun token : c'est un sous-processus, et
+        # sa sortie est déjà dense et bornée — on la rend telle quelle plutôt que
+        # de la reformater, ce qui ajouterait un endroit où diverger de l'outil.
+        if interrogation:
+            from src.agents.coding.graphe import _lancer
+
+            resultat = _lancer(project_path, *interrogation)
+            statut = resultat.get("status")
+            if statut == "no_graph":
+                return command_panel(
+                    f"pas de graphe pour {project_path.name} — lance `/graph "
+                    f"{project_path.name}` d'abord", error=True)
+            if statut == "error":
+                return command_panel(f"graphify : {resultat['error']}", error=True)
+            if statut == "not_found":
+                return command_panel("aucun résultat")
+            if console:
+                console.print(Rule(f"  {' '.join(interrogation)[:60]}  ",
+                                   characters="·", style="dim color(214)"))
+                console.print(Text(resultat["result"], style="dim"))
+                if "TRUNCATED" in resultat["result"]:
+                    console.print(Text(
+                        "  ↳  la traversée déborde. `explain <symbole>`, "
+                        "`path <a> <b>` et `affected <symbole>` partent d'un point "
+                        "précis et répondent juste ; `--budget N` élargit celle-ci.",
+                        style="dim"))
+                perime = resultat.get("stale")
+                if perime:
+                    console.print(Text(f"  ⚠  {perime}", style="dim red"))
+                console.print(Rule(characters="·", style="dim color(214)"))
+                return None
+            return command_panel(resultat["result"][:2000])
 
         out_dir = project_path / "graphify-out"
 
@@ -549,7 +689,6 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         # graphe vieillissait en silence : celui de ce dépôt annonçait
         # « Built from commit bdeba46c » avec sept commits d'écart, et rendait
         # des chemins de fichiers déplacés depuis.
-        mise_a_jour = "--update" in raw_path
         if mise_a_jour and (out_dir / "graph.json").exists():
             if console:
                 t = Text()
@@ -559,7 +698,7 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
             try:
                 proc_u = subprocess.run(
                     [sys.executable, "-m", "graphify", "update", str(project_path)],
-                    env=env, capture_output=True, text=True, timeout=300,
+                    capture_output=True, text=True, timeout=300,
                 )
             except Exception as e:
                 return command_panel(f"graphify update erreur : {e}", error=True)
@@ -577,8 +716,9 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         # Step 1: extract (AST + semantic)
         try:
             proc = subprocess.run(
-                [sys.executable, "-m", "graphify", "extract", str(project_path)],
-                env=env, capture_output=True, text=True, timeout=300,
+                [sys.executable, "-m", "graphify", "extract", str(project_path),
+                 *_backend_extraction()],
+                capture_output=True, text=True, timeout=300,
             )
         except subprocess.TimeoutExpired:
             return command_panel("graphify extract timeout (5 min) — projet trop volumineux ?", error=True)
@@ -599,7 +739,7 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         try:
             proc2 = subprocess.run(
                 [sys.executable, "-m", "graphify", "cluster-only", str(project_path), "--no-viz"],
-                env=env, capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=120,
             )
         except subprocess.TimeoutExpired:
             return command_panel("graphify cluster timeout — extract OK, relance /graph pour le rapport", error=True)

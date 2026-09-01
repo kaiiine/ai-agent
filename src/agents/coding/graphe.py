@@ -30,10 +30,6 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
-#: Graphify n'est pas installé dans l'environnement d'Axon : on le lance avec
-#: son dépôt en `PYTHONPATH`, exactement comme la commande `/graph`.
-_DEPOT = Path.home() / "Documents" / "projets-perso" / "graphify"
-
 #: Au-delà, la commande est en défaut, pas lente : le graphe se traverse en
 #: mémoire et les mesures tiennent sous deux secondes.
 _DELAI_S = 60
@@ -76,6 +72,51 @@ def _graphe_de(projet: Path) -> Path | None:
     return None
 
 
+#: Construire coûte quelques secondes ; au-delà, le projet est trop gros pour
+#: qu'un outil le fasse en silence au milieu d'une tâche.
+_DELAI_CONSTRUCTION_S = 180
+
+#: Ce qu'on compare au graphe. Les sources suivies par git, pas le disque entier :
+#: `venv/`, `node_modules/` et `graphify-out/` bougent sans que le code change.
+_DELAI_GIT_S = 5
+
+
+def _derive(projet: Path, graphe: Path) -> str:
+    """Ce que le graphe ne sait pas encore, en une phrase — ou rien.
+
+    Le graphe vieillissait EN SILENCE. Vécu : celui de ce dépôt datait de cinq
+    jours et annonçait `revision.py L78` pour une fonction passée ligne 162 ;
+    l'agent citait des positions fausses sans que rien ne le signale, ni à lui ni
+    à personne. Un graphe périmé est pire qu'absent — absent, on le sait.
+
+    On compare la date du graphe à la plus récente des sources SUIVIES, ce qui
+    couvre le cas qui nous a mordus : du travail non commité. Le résultat est
+    consultatif : on ne refuse jamais de répondre, on dit ce qu'on sait.
+    """
+    try:
+        p = subprocess.run(["git", "-C", str(projet), "ls-files"],
+                           capture_output=True, text=True, timeout=_DELAI_GIT_S)
+        if p.returncode != 0:
+            return ""
+        date_graphe = graphe.stat().st_mtime
+        recents = 0
+        for relatif in p.stdout.splitlines():
+            fichier = projet / relatif
+            try:
+                if fichier.stat().st_mtime > date_graphe:
+                    recents += 1
+            except OSError:
+                continue
+    except Exception:                                        # noqa: BLE001
+        return ""
+    if not recents:
+        return ""
+    return (f"GRAPHE PÉRIMÉ : {recents} fichier(s) ont changé depuis sa "
+            f"construction. Les chemins et numéros de ligne qu'il rend peuvent "
+            f"avoir bougé — vérifie-les par une lecture avant de t'y fier, ou "
+            f"demande `/graph {projet.name} --update` (sans appel de modèle).")
+
+
 def _lancer(projet: Path, *args: str) -> Dict[str, Any]:
     """Exécute une commande graphify et rend sa sortie telle quelle.
 
@@ -85,12 +126,18 @@ def _lancer(projet: Path, *args: str) -> Dict[str, Any]:
     graphe = _graphe_de(projet)
     if graphe is None:
         return {"status": "no_graph", "project": str(projet),
-                "hint": f"Lance /graph {projet.name} depuis Axon — sous-processus, zéro token."}
-    env = {**os.environ, "PYTHONPATH": str(_DEPOT)}
+                "hint": f"Appelle graph_build(\"{projet.name}\") si la tâche demande de "
+                        f"comprendre ce projet — 4 s, sans modèle. `/graph` est une "
+                        f"commande de l'interface : tu ne peux pas la taper."}
+    # `graphifyy` est une dépendance déclarée, installée dans le venv : on
+    # l'appelle comme n'importe quel module. Le chemin `~/Documents/projets-perso/
+    # graphify` était injecté en `PYTHONPATH` ici — un dossier voisin en dur, qui
+    # marchait tant qu'il existait et qui masquait qu'une installation ordinaire
+    # suffisait.
     try:
         p = subprocess.run(
             [sys.executable, "-m", "graphify", *args, "--graph", str(graphe)],
-            env=env, capture_output=True, text=True, timeout=_DELAI_S,
+            capture_output=True, text=True, timeout=_DELAI_S,
         )
     except subprocess.TimeoutExpired:
         return {"status": "error", "error": f"graphify {args[0]} : délai dépassé ({_DELAI_S}s)"}
@@ -102,7 +149,11 @@ def _lancer(projet: Path, *args: str) -> Dict[str, Any]:
     sortie = (p.stdout or "").strip()
     if not sortie:
         return {"status": "not_found", "query": " ".join(args)}
-    return {"status": "ok", "result": sortie}
+    resultat: Dict[str, Any] = {"status": "ok", "result": sortie}
+    perime = _derive(projet, graphe)
+    if perime:
+        resultat["stale"] = perime
+    return resultat
 
 
 # ── Les quatre outils ─────────────────────────────────────────────────────────
@@ -218,4 +269,59 @@ def graph_query(project_path: str, question: str, budget: int = _BUDGET_DEFAUT) 
     return _lancer(_projet(project_path), "query", question, "--budget", str(budget))
 
 
-EXPORT_TOOLS = [graph_affected, graph_explain, graph_path, graph_query]
+@tool("graph_build")
+def graph_build(project_path: str) -> Dict[str, Any]:
+    """
+    Construit le graphe de code d'un projet qui n'en a pas — 4 s, sans modèle.
+
+    À faire quand `no_graph` te répond et que la tâche demande de COMPRENDRE le
+    projet : ce qui appelle quoi, ce qu'un changement casserait, comment deux
+    morceaux se relient. Mesuré sur 33 fichiers : 4 secondes, et « qui casse si
+    je touche X » devient une réponse au lieu de quatre fichiers à lire.
+
+    Inutile pour éditer un fichier qu'on te désigne : construire un graphe pour
+    corriger une faute de frappe dépose un artefact que personne n'a demandé.
+
+    Args:
+        project_path: nom du projet, ou chemin
+    """
+    projet = _projet(project_path)
+    if not projet.is_dir():
+        return {"status": "error", "error": f"dossier introuvable : {projet}"}
+    if _graphe_de(projet) is not None:
+        # Déjà là : le rafraîchir est l'affaire de `update`, pas d'une
+        # reconstruction — et surtout pas d'un silence qui laisserait croire
+        # qu'on vient de bâtir ce qui existait déjà.
+        return {"status": "ok", "message": "Le graphe existe déjà — interroge-le.",
+                "project": str(projet)}
+
+    # `--code-only` et `--no-label` DÉLIBÉRÉMENT : l'extraction sémantique de la
+    # documentation et le nommage des communautés appellent un modèle, donc une
+    # clé et un coût. Un outil que l'agent déclenche seul ne doit engager ni l'un
+    # ni l'autre ; `/graph <projet>`, que l'utilisateur tape, le fait s'il le veut.
+    for etapes in (("extract", str(projet), "--code-only"),
+                   ("cluster-only", str(projet), "--no-viz", "--no-label")):
+        try:
+            p = subprocess.run([sys.executable, "-m", "graphify", *etapes],
+                               capture_output=True, text=True, timeout=_DELAI_CONSTRUCTION_S)
+        except subprocess.TimeoutExpired:
+            return {"status": "error",
+                    "error": f"graphify {etapes[0]} : délai dépassé "
+                             f"({_DELAI_CONSTRUCTION_S}s) — projet trop gros, "
+                             f"demande à l'utilisateur de lancer /graph."}
+        except Exception as exc:                             # noqa: BLE001
+            return {"status": "error", "error": str(exc)}
+        if p.returncode != 0:
+            return {"status": "error",
+                    "error": (p.stderr or p.stdout or "")[-400:].strip()
+                             or f"graphify {etapes[0]} : exit {p.returncode}"}
+
+    if _graphe_de(projet) is None:
+        return {"status": "error",
+                "error": "graphify n'a rien écrit — poursuis sans le graphe."}
+    return {"status": "ok", "project": str(projet),
+            "message": "Graphe construit. Interroge-le : graph_explain, "
+                       "graph_affected, graph_path."}
+
+
+EXPORT_TOOLS = [graph_affected, graph_build, graph_explain, graph_path, graph_query]
