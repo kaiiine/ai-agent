@@ -208,6 +208,12 @@ def reviser(state: dict) -> dict:
         fichiers_ecrits, echecs = appliquer(pending_changes.pop_all())
         cellules_ecrites, echecs_cellules = appliquer_cellules(_prendre_cellules())
         ecrits = fichiers_ecrits + cellules_ecrites
+        # Une revue acceptée = un lot. `/undo` défait celui-là, pas la session
+        # entière : deux demandes sans rapport, un `/undo`, et un travail de vingt
+        # minutes revenait avec la coquille qu'on voulait annuler.
+        from src.agents.coding.pending import snapshots as _snapshots
+
+        _snapshots.clore_le_lot()
 
         rendu = _compte_rendu(ecrits, echecs + echecs_cellules)
 

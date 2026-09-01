@@ -317,9 +317,16 @@ class SlashCompleter(Completer):
         return _file_cache
 
     def _backend_options(self) -> list[str]:
-        """La liste qui fait foi, lue chez `commands` — jamais recopiée."""
+        """La liste qui fait foi, lue au REGISTRE — jamais recopiée.
+
+        Elle passait par `commands._BACKENDS`, devenu une fonction le jour où le
+        registre a pris la main. Le `try` avalait l'`ImportError` et rendait une
+        liste VIDE : `/backend` ne proposait plus rien, sans un mot.
+        """
         try:
-            from src.ui.commands import _BACKENDS
+            from src.llm.backends import noms as _BACKENDS_source
+
+            _BACKENDS = _BACKENDS_source()
             return list(_BACKENDS)
         except Exception:
             return []

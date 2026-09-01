@@ -281,10 +281,26 @@ class SnapshotStore:
 
     def __init__(self) -> None:
         self._data: dict[str, str | None] = {}  # path → contenu d'avant, ou None
+        self._lots: list[list[str]] = []        # les chemins, par revue acceptée
 
     def save(self, path: str, content: str | None) -> None:
         if path not in self._data:  # keep the oldest snapshot (true original)
             self._data[path] = content
+        if not self._lots:
+            self._lots.append([])
+        if path not in self._lots[-1]:
+            self._lots[-1].append(path)
+
+    def clore_le_lot(self) -> None:
+        """Ferme la revue en cours : la suivante formera son propre lot.
+
+        Sans lots, `/undo` restaurait TOUT ce que la session avait touché. Vécu :
+        deux demandes sans rapport, un `/undo`, et un travail de vingt minutes
+        revenait avec la coquille qu'on voulait annuler. Les chemins sont visibles
+        avant restauration, mais rien ne dit qu'ils viennent de tours différents.
+        """
+        if self._lots and self._lots[-1]:
+            self._lots.append([])
 
     def _rendre(self, path: str, content: str | None) -> None:
         from pathlib import Path
@@ -302,6 +318,23 @@ class SnapshotStore:
         self._rendre(path, self._data.pop(path))
         return True
 
+    def restore_last(self) -> list[str]:
+        """Défait la DERNIÈRE revue acceptée, et elle seule."""
+        while self._lots and not self._lots[-1]:
+            self._lots.pop()
+        if not self._lots:
+            return []
+        rendus = []
+        for path in self._lots.pop():
+            if path not in self._data:
+                continue
+            try:
+                self._rendre(path, self._data.pop(path))
+                rendus.append(path)
+            except Exception:                                # noqa: BLE001
+                pass
+        return rendus
+
     def restore_all(self) -> list[str]:
         restored = []
         for path, content in list(self._data.items()):
@@ -311,10 +344,12 @@ class SnapshotStore:
             except Exception:
                 pass
         self._data.clear()
+        self._lots.clear()
         return restored
 
     def clear(self) -> None:
         self._data.clear()
+        self._lots.clear()
 
     def __bool__(self) -> bool:
         return bool(self._data)
@@ -322,6 +357,14 @@ class SnapshotStore:
     @property
     def paths(self) -> list[str]:
         return list(self._data.keys())
+
+    @property
+    def dernier_lot(self) -> list[str]:
+        """Les chemins que `/undo` défera. Vide si tout a déjà été annulé."""
+        for lot in reversed(self._lots):
+            if lot:
+                return [p for p in lot if p in self._data]
+        return []
 
 
 snapshots = SnapshotStore()

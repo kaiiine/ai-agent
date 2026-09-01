@@ -61,7 +61,12 @@ _COMMANDS = [
     ("@fichier",           "injecte un fichier dans ton message — autocomplété par Tab"),
 ]
 
-_BACKENDS = ["groq", "ollama", "ollama_cloud", "gemini", "mistral", "nvidia"]
+def _backends() -> list[str]:
+    """Les backends déclarés au registre. Recopier la liste la faisait dériver :
+    elle avait déjà perdu `mistral`, puis `nvidia`."""
+    from src.llm.backends import noms
+
+    return noms()
 
 
 _OLLAMA_FALLBACK = ["qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b"]
@@ -125,28 +130,32 @@ def _get_ollama_local_models() -> list[str]:
 #: au modèle utilisé, et écrasait au passage le réglage Ollama local.
 #:
 #: Une table ne peut pas être à moitié mise à jour : ajouter un backend sans son
-#: champ le fait tomber sur le défaut, et le test qui parcourt `_BACKENDS` le dit.
-_MODELES_PAR_BACKEND: dict[str, tuple[list[str] | None, str]] = {
-    "groq":         (_GROQ_MODELS,    "groq_model"),
-    "ollama_cloud": (_CLOUD_MODELS,   "ollama_cloud_model"),
-    "gemini":       (_GEMINI_MODELS,  "gemini_model"),
-    "mistral":      (_MISTRAL_MODELS, "mistral_model"),
-    "nvidia":       (_NVIDIA_MODELS,  "nvidia_model"),
-    # Local : la liste est découverte à l'exécution, pas déclarée.
-    "ollama":       (None,            "ollama_model"),
-}
+#: champ le fait tomber sur le défaut, et le test qui parcourt `_backends()` le dit.
+def _modeles_par_backend() -> dict[str, tuple[list[str] | None, str]]:
+    """Lue au REGISTRE, où un backend se déclare une fois.
+
+    Les listes vivaient ici en dur, et les fabriques dans cinq autres fichiers :
+    ajouter un fournisseur demandait six touches, et quatre étaient déjà oubliées.
+
+    Ollama local garde sa valeur `None` : ses modèles se découvrent à l'exécution
+    plutôt que de se déclarer.
+    """
+    from src.llm.backends import BACKENDS
+
+    return {nom: (list(b.modeles) or None, b.champ_modele)
+            for nom, b in BACKENDS.items()}
 
 #: Backend inconnu : on vise le local, qui est le seul à ne rien coûter.
 _CHAMP_DEFAUT = "ollama_model"
 
 
 def _champ_modele(backend: str) -> str:
-    entree = _MODELES_PAR_BACKEND.get(backend)
+    entree = _modeles_par_backend().get(backend)
     return entree[1] if entree else _CHAMP_DEFAUT
 
 
 def _get_model_options(backend: str) -> list[str]:
-    entree = _MODELES_PAR_BACKEND.get(backend)
+    entree = _modeles_par_backend().get(backend)
     if entree and entree[0] is not None:
         return entree[0]
     return _get_ollama_local_models()
@@ -486,13 +495,13 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         parts = cmd.split(maxsplit=1)
         if len(parts) == 1:
             # Arrow-key picker
-            chosen = pick(_BACKENDS, title="backend LLM", current=settings.llm_backend)
+            chosen = pick(_backends(), title="backend LLM", current=settings.llm_backend)
             if chosen is None:
                 return command_panel("annulé")
             settings.llm_backend = chosen
             return command_panel(f"backend : {chosen}")
         b = parts[1].strip().lower()
-        if b not in _BACKENDS:
+        if b not in _backends():
             return command_panel("backend invalide. options : groq · ollama · ollama_cloud · gemini · mistral", error=True)
         settings.llm_backend = b
         return command_panel(f"backend : {b}")
@@ -584,12 +593,19 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
         save_thread_cwd(new_thread, str(get_cwd()))
         return command_panel(f"branche créée : {old_thread[:8]} → {new_thread}")
 
-    if cmd == "/undo":
+    if cmd.startswith("/undo"):
         from src.agents.coding.pending import snapshots
         from .panels import ACCENT
         if not snapshots:
             return command_panel("rien à annuler — aucune modification récente")
-        paths = snapshots.paths
+        # `/undo` défait la DERNIÈRE revue acceptée. Il défaisait tout ce que la
+        # session avait touché : les chemins s'affichaient bien, mais rien ne
+        # disait qu'ils venaient de tours différents, et on récupérait un travail
+        # de vingt minutes en voulant annuler une coquille.
+        tout = "all" in cmd or "tout" in cmd
+        paths = snapshots.paths if tout else snapshots.dernier_lot
+        if not paths:
+            return command_panel("rien à annuler — aucune modification récente")
         if console:
             console.print(Rule(characters="·", style=f"dim {ACCENT}"))
             for p in paths:
@@ -597,9 +613,12 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
                 t.append("  ↩  ", style=f"bold {ACCENT}")
                 t.append(p, style="dim")
                 console.print(t)
-        restored = snapshots.restore_all()
+        restored = snapshots.restore_all() if tout else snapshots.restore_last()
         n = len(restored)
-        return command_panel(f"{n} fichier{'s' if n > 1 else ''} restauré{'s' if n > 1 else ''}")
+        reste = len(snapshots.paths)
+        suite = f"  ·  {reste} plus ancien(s) — /undo all pour tout" if reste else ""
+        return command_panel(
+            f"{n} fichier{'s' if n > 1 else ''} restauré{'s' if n > 1 else ''}{suite}")
 
     if cmd == "/debug":
         debug_state["enabled"] = not debug_state["enabled"]
@@ -764,13 +783,9 @@ def handle_slash(cmd: str, state: dict, cfg: SessionConfig, graph=None, console=
             from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini, make_llm_mistral
             from langchain_core.messages import RemoveMessage
 
-            _factories = {
-                "groq":         make_llm_groq,
-                "ollama_cloud": make_llm_ollama_cloud,
-                "ollama":       make_llm,
-                "gemini":       make_llm_gemini,
-                "mistral":      make_llm_mistral,
-            }
+            from src.llm.backends import fabriques as _fabriques
+
+            _factories = _fabriques()
             backend = settings.llm_backend
             factory = _factories.get(backend, make_llm_ollama_cloud)
 

@@ -269,3 +269,88 @@ def test_undo_distingue_un_fichier_vide_dun_fichier_absent(tmp_path, accepte):
     snapshots.restore_all()
 
     assert cible.exists() and cible.read_text(encoding="utf-8") == ""
+
+
+# ── /undo défait la dernière revue, pas la session ────────────────────────────
+# Il restaurait TOUT ce que la session avait touché. Vécu en mesure : deux
+# demandes sans rapport, un `/undo`, et un travail de vingt minutes revenait avec
+# la coquille qu'on voulait annuler. Les chemins s'affichaient bien avant
+# restauration, mais rien ne disait qu'ils venaient de tours différents.
+def _revue(chemin, contenu, accepte_fixture=None):
+    from src.agents.coding.pending import FileChange, pending_changes
+
+    pending_changes.add(FileChange(path=str(chemin), original=chemin.read_text(),
+                                   proposed=contenu, description=""))
+    revision.reviser({"messages": []})
+
+
+def test_undo_ne_defait_que_la_derniere_revue(tmp_path, accepte):
+    from src.agents.coding.pending import snapshots
+
+    snapshots.clear()
+    vieux, recent = tmp_path / "vieux.py", tmp_path / "recent.py"
+    vieux.write_text("travail de 20 minutes\n", encoding="utf-8")
+    recent.write_text("coquille\n", encoding="utf-8")
+
+    _revue(vieux, "vieux modifié\n")          # tour 1
+    _revue(recent, "recent modifié\n")        # tour 2
+    snapshots.restore_last()
+
+    assert vieux.read_text(encoding="utf-8") == "vieux modifié\n", "le tour 1 a été défait"
+    assert recent.read_text(encoding="utf-8") == "coquille\n"
+
+
+def test_ce_que_undo_va_defaire_est_annoncable(tmp_path, accepte):
+    from src.agents.coding.pending import snapshots
+
+    snapshots.clear()
+    a, b = tmp_path / "a.py", tmp_path / "b.py"
+    a.write_text("a\n", encoding="utf-8")
+    b.write_text("b\n", encoding="utf-8")
+    _revue(a, "a2\n")
+    _revue(b, "b2\n")
+
+    assert [Path(p).name for p in snapshots.dernier_lot] == ["b.py"]
+
+
+def test_undo_all_defait_encore_tout(tmp_path, accepte):
+    from src.agents.coding.pending import snapshots
+
+    snapshots.clear()
+    a, b = tmp_path / "a.py", tmp_path / "b.py"
+    a.write_text("a\n", encoding="utf-8")
+    b.write_text("b\n", encoding="utf-8")
+    _revue(a, "a2\n")
+    _revue(b, "b2\n")
+    snapshots.restore_all()
+
+    assert a.read_text(encoding="utf-8") == "a\n"
+    assert b.read_text(encoding="utf-8") == "b\n"
+
+
+def test_deux_undo_de_suite_remontent_le_temps(tmp_path, accepte):
+    from src.agents.coding.pending import snapshots
+
+    snapshots.clear()
+    a, b = tmp_path / "a.py", tmp_path / "b.py"
+    a.write_text("a\n", encoding="utf-8")
+    b.write_text("b\n", encoding="utf-8")
+    _revue(a, "a2\n")
+    _revue(b, "b2\n")
+    snapshots.restore_last()
+    snapshots.restore_last()
+
+    assert a.read_text(encoding="utf-8") == "a\n"
+
+
+def test_plus_rien_a_defaire_rend_une_liste_vide(tmp_path, accepte):
+    from src.agents.coding.pending import snapshots
+
+    snapshots.clear()
+    a = tmp_path / "a.py"
+    a.write_text("a\n", encoding="utf-8")
+    _revue(a, "a2\n")
+    snapshots.restore_last()
+
+    assert snapshots.restore_last() == []
+    assert snapshots.dernier_lot == []
