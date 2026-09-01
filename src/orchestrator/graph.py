@@ -219,15 +219,39 @@ def _panneau_debug(selected_tools: list, working: list) -> None:
                         border_style="dim", title="prompt"))
 
 
+def _restreindre_les_skills(outils: list, requete: str, portee: str) -> list:
+    """Remplace `load_skill` par une version qui ne montre que ce qui concerne
+    la requête.
+
+    Son catalogue est DANS sa description : 49 skills, 2 241 tokens, à chaque
+    tour où l'outil est lié. C'est l'inverse de ce que fait le routage pour les
+    outils — et devant une liste pareille, le modèle n'en choisissait aucune.
+
+    Mesuré sur « fais-moi un site vitrine en Next.js » : 2 241 → 488 tokens, et
+    `nextjs` entre dans les cinq montrées, là où le classement dense seul le
+    plaçait cinquième derrière `fiche`, `exo` et `browser-driving`.
+
+    Un échec de restriction rend la liste entière : perdre des tokens vaut mieux
+    que cacher la skill qu'il fallait.
+    """
+    if not requete.strip() or not any(o.name == "load_skill" for o in outils):
+        return outils
+    try:
+        from src.skills.tools import make_load_skill
+
+        etroit = make_load_skill(portee, requete)
+    except Exception:                                        # noqa: BLE001
+        return outils
+    return [etroit if o.name == "load_skill" else o for o in outils]
+
+
 def _chat_node_factory():
-    _factories = {
-        "groq": make_llm_groq,
-        "ollama_cloud": make_llm_ollama_cloud,
-        "ollama": make_llm,
-        "gemini": make_llm_gemini,
-        "mistral": make_llm_mistral,
-        "nvidia": make_llm_nvidia,
-    }
+    # Lues au REGISTRE : cette table était recopiée dans six fichiers, et quatre
+    # d'entre eux avaient déjà perdu un backend en route. Un fournisseur ajouté
+    # ici seulement restait invisible ailleurs, sans que rien ne lève.
+    from src.llm.backends import fabriques as _fabriques
+
+    _factories = _fabriques()
     tools = build_all_tools()
     retriever = ToolRetriever(tools)
 
@@ -295,6 +319,7 @@ def _chat_node_factory():
             )
         selected_tools = retriever.get(query) + _mcp.select(
             query, actifs=_serveurs_actifs(state["messages"]))
+        selected_tools = _restreindre_les_skills(selected_tools, query, "orchestrator")
 
         global _last_selected_tools
         _last_selected_tools = [t.name for t in selected_tools]

@@ -16,6 +16,7 @@ BUDGET_PAR_BACKEND: dict[str, str] = {
     "ollama_cloud": "Backend cloud — phases standard, max 20 tool calls. 4-5 phases.",
     "ollama":       "Backend local — phases TRÈS petites, max 10 tool calls. 6 phases.",
     "nvidia":       "Backend NVIDIA — phases standard, max 20 tool calls. 4-5 phases.",
+    "openrouter":   "Backend OpenRouter — phases standard, max 20 tool calls. 4-5 phases.",
 }
 
 BUDGET_DEFAUT = "ollama_cloud"

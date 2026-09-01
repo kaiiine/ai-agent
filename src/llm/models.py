@@ -147,6 +147,8 @@ def make_coding_llm_with_key(provider: str, key: str):
             max_tokens=8192,
             streaming=True,
         )
+    elif provider == "openrouter":
+        return _openrouter(settings.openrouter_coding_model, key)
     else:
         return make_coding_llm()
 
@@ -205,6 +207,9 @@ def make_coding_llm():
             timeout=_REQUEST_TIMEOUT,
             max_retries=_CLIENT_MAX_RETRIES,
         )
+    elif settings.llm_backend == "openrouter":
+        return _openrouter(settings.openrouter_coding_model,
+                           settings.openrouter_api_key or "")
     elif settings.llm_backend == "nvidia":
         from langchain_nvidia_ai_endpoints import ChatNVIDIA
         return ChatNVIDIA(
@@ -273,6 +278,8 @@ def make_orchestrator_llm_with_key(provider: str, key: str):
             api_key=key, model=settings.groq_model,
             temperature=settings.temperature, max_tokens=8192, streaming=True,
         )
+    elif provider == "openrouter":
+        return _openrouter(settings.openrouter_model, key)
     else:
         return make_llm_ollama_cloud()
 
@@ -355,3 +362,42 @@ def make_llm_nvidia():
         temperature=settings.temperature,
         max_completion_tokens=8192,
     )
+
+
+def _openrouter(modele: str, cle: str):
+    """Client OpenRouter — compatible OpenAI, donc `ChatOpenAI` avec sa base.
+
+    Les en-têtes `HTTP-Referer` et `X-Title` sont ce qu'OpenRouter attend pour
+    attribuer l'usage : facultatifs, mais les omettre range les requêtes parmi
+    les anonymes.
+    """
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(
+        model=modele,
+        api_key=cle,
+        base_url=settings.openrouter_base_url,
+        temperature=settings.temperature,
+        streaming=True,
+        timeout=_REQUEST_TIMEOUT,
+        max_retries=_CLIENT_MAX_RETRIES,
+        default_headers={"HTTP-Referer": "https://github.com/kaine/axon",
+                         "X-Title": "AXON"},
+    )
+
+
+def make_llm_openrouter():
+    """OpenRouter — pool de clés d'abord, clé unique ensuite.
+
+    Même contrat que les autres fournisseurs : un quota `:free` saturé sur une
+    clé n'immobilise pas les suivantes.
+    """
+    try:
+        from src.llm.key_pool import get_pool
+
+        cle = get_pool().next_healthy("openrouter")
+        if cle:
+            return _openrouter(settings.openrouter_model, cle)
+    except Exception:                                        # noqa: BLE001
+        pass
+    return _openrouter(settings.openrouter_model, settings.openrouter_api_key or "")

@@ -15,12 +15,9 @@ def _modele():
         make_llm_ollama_cloud,
     )
 
-    fabriques = {
-        "gemini": make_llm_gemini,
-        "mistral": make_llm_mistral,
-        "ollama_cloud": make_llm_ollama_cloud,
-        "nvidia": make_llm_nvidia,
-    }
+    from src.llm.backends import fabriques as _registre
+
+    fabriques = _registre()
     return fabriques.get(settings.llm_backend, make_llm_ollama_cloud)()
 
 

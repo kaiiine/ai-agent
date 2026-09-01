@@ -89,3 +89,6 @@ apscheduler>=3.10
 # Le dépôt voisin `~/Documents/projets-perso/graphify` était injecté en
 # PYTHONPATH : AXON tombait si on le déplaçait, et un clone neuf n'avait rien.
 graphifyy==0.9.53
+
+# Client compatible OpenAI — OpenRouter passe par lui (base_url personnalisée).
+langchain-openai>=1.6

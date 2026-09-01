@@ -126,9 +126,15 @@ def test_le_noeud_pose_le_catalogue_puis_lie_loutil_reclame(monkeypatch):
         def invoke(self, messages, *a, **k):
             return _Lie([]).invoke(messages)
 
-    for fabrique in ("make_llm", "make_llm_groq", "make_llm_ollama_cloud",
-                     "make_llm_gemini", "make_llm_mistral", "make_llm_nvidia"):
-        monkeypatch.setattr(graphe, fabrique, lambda *a, **k: _LLM())
+    # Remplacé à la SOURCE, dans `models`, et non sur le nom réimporté par
+    # `graph`. Les fabriques sont désormais lues au registre, qui les résout
+    # depuis `models` : patcher la copie locale n'interceptait plus rien, et le
+    # test tombait sur un `KeyError` plutôt que sur une assertion parlante.
+    from src.llm import backends, models
+
+    for backend in backends.BACKENDS.values():
+        monkeypatch.setattr(models, backend.fabrique, lambda *a, **k: _LLM(),
+                            raising=False)
 
     chatbot, _ = graphe._chat_node_factory()
     meteo = [HumanMessage("il va pleuvoir demain à Suresnes ?")]

@@ -77,7 +77,9 @@ def test_la_completion_propose_tous_les_backends_utilisables():
     from prompt_toolkit.document import Document
 
     import src.ui.completer as completer_mod
-    from src.ui.commands import _BACKENDS
+    from src.ui.commands import _backends
+
+    _BACKENDS = _backends()
 
     classe = next(o for o in vars(completer_mod).values()
                   if isinstance(o, type) and issubclass(o, Completer) and o is not Completer)

@@ -13,14 +13,19 @@ Ollama Cloud, et toute mesure portait sur un autre modèle que celui testé. Le
 specialist de code n'aurait JAMAIS utilisé NVIDIA, et la rotation aurait basculé
 sur Ollama au premier 429 — rendant `NVIDIA_API_KEYS` multi-clés inopérant.
 
-Ces tests parcourent `_BACKENDS`, la liste qui fait foi : ils couvriront donc
+Ces tests parcourent le REGISTRE, qui fait foi : ils couvriront donc
 d'eux-mêmes le prochain backend ajouté.
 """
 from __future__ import annotations
 
 import pytest
 
-from src.ui.commands import _BACKENDS
+from src.llm import backends
+from src.llm.backends import noms as _noms_backends
+
+#: La liste vivait dans `commands._BACKENDS`, recopiée d'un fichier à l'autre
+#: — et elle avait dérivé. Elle est désormais au registre, en un seul endroit.
+_BACKENDS = _noms_backends()
 
 #: Backends servis par une API distante — ceux dont une branche manquante se
 #: traduit par un repli silencieux vers un AUTRE fournisseur. `ollama` local
@@ -36,6 +41,8 @@ _CLASSE_ATTENDUE = {
     "mistral": "ChatMistralAI",
     "nvidia": "ChatNVIDIA",
     "ollama_cloud": "ChatOllama",
+    # Compatible OpenAI : c'est `base_url` qui fait la différence, pas la classe.
+    "openrouter": "ChatOpenAI",
 }
 
 
@@ -131,6 +138,7 @@ _CHAMP_ATTENDU = {
     "gemini":       "gemini_model",
     "mistral":      "mistral_model",
     "nvidia":       "nvidia_model",
+    "openrouter":   "openrouter_model",
 }
 
 
@@ -161,8 +169,10 @@ def test_choisir_un_modele_ecrit_dans_le_champ_du_backend(backend):
 
     s = reglages.settings
     precedent_backend = s.llm_backend
-    champs = ("groq_model", "ollama_model", "ollama_cloud_model",
-              "gemini_model", "mistral_model", "nvidia_model")
+    # Lus au registre : cette liste était en dur, et un backend ajouté n'y entrait
+    # pas — le test le déclarait alors innocent parce qu'il ne regardait pas son
+    # champ. Un filet qui ne s'étend pas avec ce qu'il protège finit par mentir.
+    champs = tuple(b.champ_modele for b in backends.BACKENDS.values())
     avant = {c: getattr(s, c) for c in champs}
     try:
         s.llm_backend = backend

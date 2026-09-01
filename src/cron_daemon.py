@@ -96,12 +96,9 @@ def _refus_d_outil(messages: list) -> list[str]:
 
 
 def _make_llm():
-    factories = {
-        "gemini": make_llm_gemini,
-        "mistral": make_llm_mistral,
-        "ollama_cloud": make_llm_ollama_cloud,
-        "nvidia": make_llm_nvidia,
-    }
+    from src.llm.backends import fabriques as _registre
+
+    factories = _registre()
     return factories.get(settings.llm_backend, make_llm_ollama_cloud)()
 
 

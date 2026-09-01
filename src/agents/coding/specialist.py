@@ -260,6 +260,7 @@ _CONTEXT_CHAR_BUDGET: dict[str, int] = {
     "gemini":       400_000,   
     "mistral":      60_000,
     "nvidia":       60_000,   # aligné sur la fenêtre prudente de context.py
+    "openrouter":  120_000,   # quatre modèles à ≥ 262 k, budget de cloud ordinaire
 }
 _CONTEXT_CHAR_BUDGET_DEFAULT = 180_000  # fallback
 
@@ -803,7 +804,10 @@ def preparer(task: str):
         return tache_vue["texte"]
 
     def _selectionner(messages: list, tache: str) -> list:
-        return retriever.get(retrieval_query(messages, tache or tache_vue["texte"]))
+        from src.orchestrator.graph import _restreindre_les_skills
+
+        requete = retrieval_query(messages, tache or tache_vue["texte"])
+        return _restreindre_les_skills(retriever.get(requete), requete, "coding")
 
     def _appeler(messages: list, actifs: list, _fournisseur: str):
         if _phase_abort:

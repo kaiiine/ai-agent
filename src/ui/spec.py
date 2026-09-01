@@ -61,12 +61,9 @@ _FALLBACK_QUESTION = {
 def _make_llm():
     from src.infra.settings import settings
     from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini, make_llm_mistral
-    factories = {
-        "groq": make_llm_groq,
-        "ollama_cloud": make_llm_ollama_cloud,
-        "gemini": make_llm_gemini,
-        "mistral": make_llm_mistral,
-    }
+    from src.llm.backends import fabriques as _registre
+
+    factories = _registre()
     return factories.get(settings.llm_backend, make_llm_ollama_cloud)()
 
 

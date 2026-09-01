@@ -20,6 +20,10 @@ _CONTEXT_LIMITS: dict[str, int] = {
     "gemini": 1_048_576,       
     "mistral": 128_000,
     "nvidia": 128_000,
+    # Le défaut d'OpenRouter est `minimax-m3:free`, annoncé à 1 M. On reste
+    # prudent : le modèle se change par `/model`, et un plafond trop haut fait
+    # dépasser sans prévenir, là qu'un plafond trop bas ne coûte qu'une compaction.
+    "openrouter": 262_144,
 }
 
 _CONTEXT_LIMIT_DEFAUT = 128_000
@@ -37,6 +41,7 @@ _BACKEND_POLICY = {
     "mistral": {"ratio": 0.60, "keep_recent": 8},
     "groq": {"ratio": 0.65, "keep_recent": 12},
     "nvidia": {"ratio": 0.60, "keep_recent": 8},
+    "openrouter": {"ratio": 0.70, "keep_recent": 12},
 }
 
 _SUMMARY_MARKER = "[COMPRESSED SESSION MEMORY]"

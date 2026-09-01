@@ -382,10 +382,9 @@ def _do_persist(messages: list, enriched_task: str, result_text: str, backend: s
         # Appel LLM de synthèse (decisions, learnings, blockers, evals)
         from src.infra.settings import settings
         from src.llm.models import make_llm, make_llm_ollama_cloud, make_llm_groq, make_llm_gemini, make_llm_mistral
-        _factories = {
-            "groq": make_llm_groq, "ollama_cloud": make_llm_ollama_cloud,
-            "gemini": make_llm_gemini, "mistral": make_llm_mistral,
-        }
+        from src.llm.backends import fabriques as _registre
+
+        _factories = _registre()
         llm = _factories.get(backend, make_llm_ollama_cloud)()
         from langchain_core.messages import SystemMessage, HumanMessage
         summary = _build_session_summary(messages, enriched_task, result_text)

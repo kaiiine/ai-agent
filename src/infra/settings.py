@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     nvidia_coding_model: str = ""
     nvidia_api_keys: str = ""
 
+    # OpenRouter — compatible OpenAI, 21 modèles à 0 € au relevé du catalogue.
+    # Les `:free` ont un quota partagé et peuvent renvoyer 429 : le pool de clés
+    # et l'ordre de repli servent ici comme ailleurs.
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "minimax/minimax-m3:free"
+    openrouter_coding_model: str = "minimax/minimax-m3:free"
+    openrouter_api_keys: str = ""     # OPENROUTER_API_KEYS=key1,key2,...
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
 
 
     # Ordre de fallback inter-providers : FALLBACK_ORDER=ollama_cloud,gemini,mistral
