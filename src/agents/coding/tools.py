@@ -18,12 +18,17 @@ from src.utils.paths import get_projects_dir
 @tool("dev_plan_create")
 def dev_plan_create(steps: List[str]) -> Dict[str, Any]:
     """
-    Creates and displays a visible plan (todo list) before starting a coding task.
-    ALWAYS call this first, before reading files or proposing any changes.
-    Steps should be concrete actions (ex: "Lire src/app.py", "Ajouter route /health").
+    Creates and displays a visible plan (todo list) for a coding task that has
+    several distinct actions. A task that is a single action needs no plan — call
+    the tool that does it instead.
+
+    One step = one action on the PROJECT ("Lire src/app.py", "Ajouter route
+    /health"). Never a step about the plan itself: "marquer le fichier comme
+    écrit", "valider le fichier créé", "vérifier que l'étape est faite" are
+    bookkeeping, not work — they can never be completed and stall the run.
 
     Args:
-        steps: ordered list of steps to accomplish (3–8 items)
+        steps: ordered list of steps — as many as there are real actions, no more
     Returns:
         {"status": "ok", "count": N}
     """
@@ -47,14 +52,17 @@ def dev_plan_create(steps: List[str]) -> Dict[str, Any]:
 @tool("dev_plan_update")
 def dev_plan_update(steps: List[str], reason: str) -> Dict[str, Any]:
     """
-    Replaces the remaining steps of the current plan when what you learned makes it wrong.
-    Steps already ticked stay ticked and must be repeated verbatim at the head of `steps`;
-    everything after them is rewritten. Use it when analysis reveals the plan missed a file,
-    or when a step turned out to be unnecessary — a plan you cannot revise makes you either
-    lie about a step or abandon the task.
+    Replaces the current plan when what you learned makes it wrong. Use it when
+    analysis reveals the plan missed a file, or when a step turned out to be
+    unnecessary — a plan you cannot revise makes you either lie about a step or
+    abandon the task.
+
+    Steps already ticked must still appear, spelled identically, but ANYWHERE in
+    the list: you do not finish in order, and requiring them at the head made
+    every revision fail once you had ticked a step out of sequence.
 
     Args:
-        steps: the FULL new list — completed steps first, unchanged, then the revised rest
+        steps: the FULL new list, ticked steps included, in whatever order fits
         reason: one line saying what you learned that made the old plan wrong
     Returns:
         {"status": "ok", "count": N, "kept_done": M}
@@ -65,15 +73,16 @@ def dev_plan_update(steps: List[str], reason: str) -> Dict[str, Any]:
         return {"status": "error",
                 "error": "reason est obligatoire : dis ce que tu as appris qui invalide le plan."}
 
-    faits = [s.label for s in dev_plan.steps if s.done]
-    if steps[:len(faits)] != faits:
+    faits = {s.label for s in dev_plan.steps if s.done}
+    oubliees = sorted(faits - set(steps))
+    if oubliees:
         return {
             "status": "error",
-            "error": ("Les étapes déjà cochées doivent être reprises telles quelles, en tête et "
-                      f"dans l'ordre. Attendu au début : {faits}. Réécris seulement la suite."),
+            "error": ("Ces étapes sont déjà faites et doivent rester dans le plan, à "
+                      f"l'identique : {oubliees}. Leur place, elle, est libre."),
         }
 
-    dev_plan.replace(steps, done_count=len(faits))
+    dev_plan.replace(steps, faits)
     return {"status": "ok", "count": len(steps), "kept_done": len(faits), "reason": reason}
 
 
@@ -202,7 +211,9 @@ def dev_plan_step_done(
     elif proof_type == "file_written":
         if not proof_path:
             return {"status": "error", "error": "proof_path est requis pour proof_type='file_written'"}
-        if not recent_tools.file_was_written(proof_path):
+        if recent_tools.file_was_deleted(proof_path):
+            ok, err = True, ""      # effacé : son absence EST la preuve
+        elif not recent_tools.file_was_written(proof_path):
             ok, err = False, (
                 f"'{proof_path}' n'a pas été écrit (propose_file_change non accepté). "
                 "Appelle propose_file_change et assure-toi que l'utilisateur accepte."
@@ -344,6 +355,10 @@ def ask_clarification(questions: List[Question]) -> Dict[str, Any]:
     Use it when a design choice, a naming or an approach is genuinely undecidable
     from the task and the files. Never ask in plain text: a plain-text question ends
     the run, and everything done so far has to be redone from scratch.
+
+    NEVER for permission — no yes/no questions. AXON asks for consent ITSELF, at
+    the moment of the act: a destructive command, a file write (shown as a diff),
+    a plan. Act; the user is consulted at the right time, with the action in view.
 
     Args:
         questions: list of {"question": "...", "choices": ["A", "B", "C"]}.
@@ -559,6 +574,17 @@ def _contenu_invalide(p: Path, content: str) -> str:
     """
     suffixe = p.suffix.lower()
 
+    # Vider un fichier qui existe n'est jamais ce qu'on voulait dire. Vécu : pour
+    # effacer `fragments-???.txt`, le modèle a proposé le MÊME chemin avec un
+    # contenu vide — accepté, la revue l'affichait « + nouveau » sans une ligne de
+    # diff, le fichier restait là à 0 octet, le modèle le revoyait, reproposait, et
+    # le tour recommençait. Créer un fichier vide reste permis : `__init__.py` et
+    # `.gitkeep` en vivent.
+    if not content and p.is_file():
+        return (f"Contenu refusé : {p.name} existe déjà et le contenu proposé est "
+                "vide — cela le viderait sans l'effacer. Si tu veux le supprimer, "
+                "appelle `propose_file_delete`. Rien n'a été écrit.")
+
     if suffixe == ".json":
         try:
             _json_module.loads(content)
@@ -659,10 +685,17 @@ def propose_file_change(path: str, content: str, description: str = "") -> Dict[
     # outil et n'a pas de `dev_plan_create` : lui opposer cette erreur fermait le
     # seul chemin de création de fichier qui lui restait — `shell_run` refuse
     # `>` en renvoyant ici, `edit_file` refuse un fichier absent en renvoyant ici.
-    if dev_plan.exige_un_plan and not dev_plan.steps:
+    #
+    # Et elle ne vaut qu'à partir du DEUXIÈME fichier. « écris un script qui trie
+    # une liste » produisait un plan de quatre étapes, sa validation, puis une
+    # explication — trois cérémonies avant la première ligne écrite, pour quinze
+    # lignes de Python. Un plan sert à tenir un travail qui se déroule ; un seul
+    # fichier ne se déroule pas.
+    if dev_plan.exige_un_plan and not dev_plan.steps and pending_changes.items:
         return {
             "status": "error",
-            "error": "Tu dois d'abord appeler dev_plan_create() pour créer un plan avant de proposer des fichiers.",
+            "error": ("Tu as déjà proposé un fichier. Au-delà du premier, appelle "
+                      "dev_plan_create() pour annoncer ce que tu comptes toucher."),
         }
 
     p = Path(path)
@@ -675,6 +708,18 @@ def propose_file_change(path: str, content: str, description: str = "") -> Dict[
     refus = _contenu_invalide(p, content)
     if refus:
         return {"status": "error", "error": refus}
+
+    # Reproposer ce qui est déjà sur le disque n'a aucun effet, et ouvre un
+    # panneau de revue au diff VIDE. Vécu : deux à la suite, à la fin d'une
+    # boucle où le modèle ne savait plus si son fichier avait été écrit.
+    if p.is_file():
+        try:
+            if p.read_text(encoding="utf-8", errors="replace") == content:
+                return {"status": "unchanged", "path": str(p),
+                        "message": (f"{p.name} a déjà exactement ce contenu. "
+                                    "Rien à proposer — passe à la suite.")}
+        except Exception:
+            pass
 
     original = ""
     if p.exists() and p.is_file():

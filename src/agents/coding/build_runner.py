@@ -569,7 +569,8 @@ def _make_build_callback(console, accent: str = "color(214)"):
 
         # Le contenu vient de la pile, jamais des arguments : `edit_file` ne passe
         # qu'un fragment, et c'est l'outil qui a calculé le fichier complet.
-        from src.agents.coding.pending import pending_changes as _pending, snapshots as _snaps
+        from src.agents.coding.pending import (pending_changes as _pending,
+                                               appliquer as _ecrire)
         change = _pending.pop_latest()
         if change is None:
             return None
@@ -578,9 +579,10 @@ def _make_build_callback(console, accent: str = "color(214)"):
         try:
             from pathlib import Path as _Path
             p = _Path(path)
-            p.parent.mkdir(parents=True, exist_ok=True)
-            _snaps.save(path, change.original)
-            p.write_text(change.proposed, encoding="utf-8")
+            # `appliquer` sait effacer, garde de quoi défaire, et note le fait
+            # pour les preuves du plan ; ce bloc ne savait qu'écrire — une
+            # suppression y rendait le fichier vide au lieu de l'effacer.
+            _ecrire(change)
             _files_written.append(path)
             _recent_tools.clear()  # reset loop counter après un vrai fichier
             t = Text()

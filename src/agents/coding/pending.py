@@ -25,8 +25,23 @@ class RecentToolsStore:
     def __init__(self) -> None:
         self._called: set[str] = set()
         self._written_paths: set[str] = set()           # files written to disk
+        self._deleted_paths: set[str] = set()           # files removed from disk
         self._edited_cells: set[tuple[str, int]] = set() # (path, cell_index) notebook edits
         self._shell_ok: bool = False                     # any shell_run with exit_code 0
+
+    def note_ecriture(self, path: str, supprime: bool = False) -> None:
+        """Appelé par `appliquer`, seul endroit du projet qui touche le disque.
+
+        `record` déduisait l'écriture du statut rendu par l'outil, et attendait
+        « accepted » — que `propose_file_change` ne rend JAMAIS en mode `ask` : il
+        rend « proposed », la revue vient après. `file_was_written` était donc
+        toujours faux, `dev_plan_step_done(proof_type="file_written")` toujours
+        refusé, et le modèle, incapable de cocher l'étape qu'il venait pourtant
+        d'accomplir, fabriquait une preuve recevable : `echo done`, `true`,
+        `echo step1done` — vu en session. Le fait est constaté là où il a lieu.
+        """
+        self._written_paths.add(path)
+        (self._deleted_paths.add if supprime else self._deleted_paths.discard)(path)
 
     def record(self, tool_name: str, args: dict, result: object) -> None:
         self._called.add(tool_name)
@@ -56,6 +71,17 @@ class RecentToolsStore:
     def file_was_written(self, path: str) -> bool:
         return path in self._written_paths
 
+    def file_was_deleted(self, path: str) -> bool:
+        return path in self._deleted_paths
+
+    def note_cellule(self, path: str, cell_index: int) -> None:
+        """Même correction que `note_ecriture`, pour les notebooks : en mode `ask`,
+        `notebook_edit_cell` rend « proposed » et la revue vient après, si bien que
+        `cell_was_edited` restait faux et l'étape incochable."""
+        self._written_paths.add(path)
+        if cell_index >= 0:
+            self._edited_cells.add((path, cell_index))
+
     def cell_was_edited(self, path: str, cell_index: int) -> bool:
         return (path, cell_index) in self._edited_cells
 
@@ -65,6 +91,7 @@ class RecentToolsStore:
     def clear(self) -> None:
         self._called.clear()
         self._written_paths.clear()
+        self._deleted_paths.clear()
         self._edited_cells.clear()
         self._shell_ok = False
 
@@ -95,12 +122,15 @@ def appliquer(change: FileChange) -> None:
     from pathlib import Path as _Path
 
     cible = _Path(change.path)
-    snapshots.save(change.path, change.original)
+    # L'état d'avant se lit sur le DISQUE, pas dans `change.original` : celui-ci
+    # vaut "" aussi bien pour un fichier neuf que pour un fichier vide.
+    snapshots.save(change.path, change.original if cible.exists() else None)
     if change.supprime:
         cible.unlink(missing_ok=True)
-        return
-    cible.parent.mkdir(parents=True, exist_ok=True)
-    cible.write_text(change.proposed, encoding="utf-8")
+    else:
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        cible.write_text(change.proposed, encoding="utf-8")
+    recent_tools.note_ecriture(change.path, supprime=change.supprime)
 
 
 class PendingStore:
@@ -164,13 +194,21 @@ class DevPlanStore:
     def __init__(self) -> None:
         self._steps: List[PlanStep] = []
         self.exige_un_plan = False
+        self._tache = ""       # la demande en cours, pour ne repartir qu'une fois
 
     def create(self, steps: List[str]) -> None:
         self._steps = [PlanStep(label=s) for s in steps]
 
-    def replace(self, steps: List[str], done_count: int) -> None:
-        """Réécrit le plan en gardant cochées les `done_count` premières étapes."""
-        self._steps = [PlanStep(label=s, done=i < done_count) for i, s in enumerate(steps)]
+    def replace(self, steps: List[str], faits: set[str]) -> None:
+        """Réécrit le plan en gardant cochées les étapes de `faits`, où qu'elles soient.
+
+        C'était `done_count` : les cochées devaient être les N PREMIÈRES. Or rien
+        n'oblige à finir dans l'ordre — cocher l'étape 2 avant la 1 est courant, et
+        rendait alors toute révision impossible. Vécu : « plan révisé » affiché
+        deux fois de suite sur un plan qui ne changeait pas, parce que l'appel
+        était refusé à chaque tour.
+        """
+        self._steps = [PlanStep(label=s, done=s in faits) for s in steps]
 
     def check(self, index: int) -> bool:
         """Mark step at index as done. Returns False if already done or out of range."""
@@ -185,10 +223,28 @@ class DevPlanStore:
         self._steps.clear()
 
     @contextmanager
-    def run_specialist(self):
-        """Le temps d'un run du specialist, écrire exige d'avoir planifié."""
+    def run_specialist(self, tache: str = ""):
+        """Le temps d'un run du specialist, écrire exige d'avoir planifié.
+
+        Le plan repart à zéro à chaque DEMANDE — pas à chaque entrée. C'est un
+        singleton de module, que seul `/build` réinitialisait : une deuxième
+        demande dans la même session héritait du plan de la première, et
+        `dev_plan_create` répondait « already_exists, continue avec les étapes
+        existantes ».
+
+        Mais le nœud `coder` ré-entre ici après CHAQUE interruption — un plan
+        soumis, un diff relu — et effacer à l'entrée vidait le plan en plein
+        milieu du travail. Le modèle le retrouvait disparu, le recréait
+        (« Recréation du plan après écriture du fichier », vu en session), et le
+        plan neuf rouvrait le questionnaire de validation. Mesuré : trois
+        validations pour une seule demande.
+        """
         precedent = self.exige_un_plan
         self.exige_un_plan = True
+        if tache != self._tache:
+            self._tache = tache
+            self.clear()
+            recent_tools.clear()
         try:
             yield
         finally:
@@ -215,26 +271,42 @@ dev_plan = DevPlanStore()
 # ── Snapshot store (undo support) ─────────────────────────────────────────────
 
 class SnapshotStore:
-    def __init__(self) -> None:
-        self._data: dict[str, str] = {}  # path → content before last write
+    """L'état d'avant, pour `/undo`.
 
-    def save(self, path: str, content: str) -> None:
+    `None` veut dire « le fichier n'existait pas » — et une chaîne vide, « il
+    existait, vide ». Les deux étaient stockés pareil : annuler une CRÉATION
+    réécrivait donc le fichier à vide au lieu de l'effacer, et `/undo` laissait
+    derrière lui exactement ce qu'il prétendait retirer.
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[str, str | None] = {}  # path → contenu d'avant, ou None
+
+    def save(self, path: str, content: str | None) -> None:
         if path not in self._data:  # keep the oldest snapshot (true original)
             self._data[path] = content
+
+    def _rendre(self, path: str, content: str | None) -> None:
+        from pathlib import Path
+
+        cible = Path(path)
+        if content is None:
+            cible.unlink(missing_ok=True)
+            return
+        cible.parent.mkdir(parents=True, exist_ok=True)
+        cible.write_text(content, encoding="utf-8")
 
     def restore(self, path: str) -> bool:
         if path not in self._data:
             return False
-        from pathlib import Path
-        Path(path).write_text(self._data.pop(path), encoding="utf-8")
+        self._rendre(path, self._data.pop(path))
         return True
 
     def restore_all(self) -> list[str]:
         restored = []
         for path, content in list(self._data.items()):
             try:
-                from pathlib import Path
-                Path(path).write_text(content, encoding="utf-8")
+                self._rendre(path, content)
                 restored.append(path)
             except Exception:
                 pass
