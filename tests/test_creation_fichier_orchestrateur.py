@@ -14,7 +14,7 @@ une porte qui n'existait pas pour lui » — une couche plus bas.
 from __future__ import annotations
 
 from src.agents.coding.pending import dev_plan, pending_changes
-from src.agents.coding.tools import propose_file_change
+from src.agents.coding.tools import propose_file_change, propose_file_delete
 from src.agents.shell.classification import est_connue_sure, est_destructive
 
 
@@ -32,12 +32,37 @@ def test_lorchestrateur_peut_proposer_un_fichier(tmp_path):
     assert _proposer(str(tmp_path / "x.py"))["status"] == "proposed"
 
 
-def test_le_specialist_exige_toujours_son_plan(tmp_path):
+def test_le_specialist_exige_un_plan_a_partir_du_DEUXIEME_fichier(tmp_path):
+    """« écris un script qui trie une liste » produisait un plan de quatre étapes,
+    sa validation, puis une explication — trois cérémonies avant la première ligne
+    écrite, pour quinze lignes de Python. Un plan sert à tenir un travail qui se
+    déroule ; un seul fichier ne se déroule pas."""
     dev_plan.clear()
+    pending_changes.clear()
     with dev_plan.run_specialist():
-        reponse = _proposer(str(tmp_path / "x.py"))
-    assert reponse["status"] == "error"
-    assert "dev_plan_create" in reponse["error"]
+        premier = propose_file_change.invoke(
+            {"path": str(tmp_path / "a.py"), "content": "print(1)\n"})
+        second = propose_file_change.invoke(
+            {"path": str(tmp_path / "b.py"), "content": "print(2)\n"})
+    pending_changes.clear()
+
+    assert premier["status"] == "proposed"
+    assert second["status"] == "error"
+    assert "dev_plan_create" in second["error"]
+
+
+def test_un_plan_declare_rouvre_les_fichiers_suivants(tmp_path):
+    dev_plan.clear()
+    pending_changes.clear()
+    with dev_plan.run_specialist():
+        propose_file_change.invoke({"path": str(tmp_path / "a.py"), "content": "x"})
+        dev_plan.create(["écrire a", "écrire b"])
+        second = propose_file_change.invoke(
+            {"path": str(tmp_path / "b.py"), "content": "y"})
+    pending_changes.clear()
+    dev_plan.clear()
+
+    assert second["status"] == "proposed"
 
 
 def test_le_marqueur_est_rendu_meme_en_cas_derreur():

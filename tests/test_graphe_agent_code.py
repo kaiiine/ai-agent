@@ -24,6 +24,7 @@ from src.agents.coding.graphe_agent import (
     MARQUEUR_DELEGATION, construire, consignes_en_attente, rediriger,
 )
 from src.agents.coding.pending import dev_plan
+from src.orchestrator.plan import EXECUTER
 
 
 @lc_tool("lire")
@@ -202,8 +203,46 @@ def test_le_plan_est_soumis_avant_detre_suivi():
     assert "1. lire" in str(valeur.get("apercu"))
     assert "2. écrire" in str(valeur.get("apercu"))
 
-    parent.invoke(Command(resume=["Exécuter", ""]), cfg)
+    parent.invoke(Command(resume=[EXECUTER, ""]), cfg)
     assert not _interruptions(parent, cfg), "un plan validé ne se redemande pas"
+
+
+def test_un_plan_revise_en_cours_de_route_nest_pas_revalide():
+    """Le modèle révise son plan dès qu'il apprend quelque chose — un répertoire
+    absent, une dépendance manquante. Rouvrir la question à chaque version
+    transformait une simple précision en nouveau questionnaire : vécu, après
+    « ajoute des commentaires » il replanifiait et redemandait de valider."""
+    tours = {"n": 0}
+
+    def _appeler(messages, actifs, fournisseur):
+        tours["n"] += 1
+        if tours["n"] == 1:
+            return AIMessage("", tool_calls=[{"name": "dev_plan_create", "id": "p1",
+                                              "args": {"steps": ["écrire"]}}]), None, messages
+        if tours["n"] == 2:
+            return AIMessage("", tool_calls=[{"name": "dev_plan_update", "id": "p2",
+                                              "args": {"steps": ["créer", "écrire"]}}]), None, messages
+        return AIMessage("fini"), None, messages
+
+    def _executer(nom, args):
+        if nom in ("dev_plan_create", "dev_plan_update"):
+            dev_plan.create(args["steps"])
+            return {"status": "ok"}
+        return "fait"
+
+    parent = _sous_un_outil(construire(
+        outils=[lire], selectionner=lambda m, t: [lire], appeler_modele=_appeler,
+        enrichir=lambda t: t, prompt_systeme="", executer=_executer, tracer=lambda m: ""))
+
+    cfg = {"configurable": {"thread_id": "t-replan"}}
+    parent.invoke({"messages": [HumanMessage("vas-y")]}, cfg)
+
+    validations = 0
+    while _interruptions(parent, cfg) and validations < 4:
+        validations += 1
+        parent.invoke(Command(resume=[EXECUTER, ""]), cfg)
+
+    assert validations == 1, f"une seule validation par run, pas {validations}"
 
 
 def test_un_plan_inchange_nest_pas_redemande_a_chaque_pas():
@@ -222,7 +261,7 @@ def test_un_plan_inchange_nest_pas_redemande_a_chaque_pas():
     parent = _sous_un_outil(_graphe_avec_plan(_appeler))
     cfg = {"configurable": {"thread_id": "t-plan2"}}
     parent.invoke({"messages": [HumanMessage("vas-y")]}, cfg)
-    parent.invoke(Command(resume=["Exécuter", ""]), cfg)
+    parent.invoke(Command(resume=[EXECUTER, ""]), cfg)
 
     assert not _interruptions(parent, cfg)
     assert tours["n"] >= 4, "le travail doit se poursuivre après validation"
@@ -342,3 +381,108 @@ def test_un_accord_est_bien_lu_comme_un_accord():
     assert hitl.accorde("Oui, exécuter", question)
     assert not hitl.accorde("Non, annuler", question)
     assert not hitl.accorde("Oui, exécuter"), "sans la Question, rien ne vaut accord"
+
+
+def test_les_libelles_du_plan_sont_ceux_que_le_client_rend():
+    """Le client a son propre vocabulaire et rend ses chaînes à lui, pas celles
+    qu'un nœud déclare dans `Question.choix`.
+
+    Vécu : le nœud comparait à « Exécuter », le client renvoyait « Exécuter le
+    plan ». L'accord tombait dans la branche d'abandon — dont la consigne est
+    « n'exécute rien de plus et explique ce que tu comptais faire ». L'agent
+    obéissait : il affichait le code au lieu de l'écrire.
+    """
+    import inspect
+
+    from src.orchestrator.plan import ABANDONNER, EXECUTER, PRECISER
+    from src.ui.review import _servir_plan
+
+    rendu = inspect.getsource(_servir_plan)
+    for libelle in (EXECUTER, PRECISER, ABANDONNER):
+        assert libelle in rendu, libelle
+
+
+def test_un_plan_accepte_laisse_le_travail_continuer():
+    """Le contraire du bug : accepter ne doit pas terminer le run."""
+    tours = {"n": 0}
+
+    def _appeler(messages, actifs, fournisseur):
+        tours["n"] += 1
+        if tours["n"] == 1:
+            return AIMessage("", tool_calls=[{"name": "dev_plan_create", "id": "p1",
+                                              "args": {"steps": ["écrire"]}}]), None, messages
+        if tours["n"] == 2:
+            return AIMessage("", tool_calls=[{"name": "lire", "id": "t1",
+                                              "args": {"quoi": "x"}}]), None, messages
+        return AIMessage("terminé"), None, messages
+
+    def _executer(nom, args):
+        if nom == "dev_plan_create":
+            dev_plan.create(args["steps"])
+            return {"status": "ok"}
+        return "fait"
+
+    parent = _sous_un_outil(construire(
+        outils=[lire], selectionner=lambda m, t: [lire], appeler_modele=_appeler,
+        enrichir=lambda t: t, prompt_systeme="", executer=_executer, tracer=lambda m: ""))
+
+    cfg = {"configurable": {"thread_id": "t-plan-accepte"}}
+    parent.invoke({"messages": [HumanMessage("vas-y")]}, cfg)
+    assert _interruptions(parent, cfg)
+    parent.invoke(Command(resume=[EXECUTER, ""]), cfg)
+
+    assert tours["n"] >= 3, f"le travail doit se poursuivre après accord : {tours['n']}"
+
+
+def test_preciser_revient_dans_lagent_de_code():
+    """La revue faite APRÈS l'agent rendait sa décision au modèle principal : sur
+    « Préciser », la consigne « propose une nouvelle version » partait à
+    l'orchestrateur, qui n'a plus le contexte de code — il rendait le script
+    révisé en TEXTE au lieu de le reproposer. Vécu sur « utilise un tri par
+    insertion »."""
+    from src.agents.coding.pending import FileChange, pending_changes
+
+    vus: list[str] = []
+    tours = {"n": 0}
+
+    def _appeler(messages, actifs, fournisseur):
+        tours["n"] += 1
+        vus.extend(str(getattr(m, "content", "")) for m in messages)
+        if tours["n"] <= 2:
+            return AIMessage("", tool_calls=[{"name": "lire", "id": f"p{tours['n']}",
+                                              "args": {"quoi": "x"}}]), None, messages
+        return AIMessage("version révisée"), None, messages
+
+    def _executer(nom, args):
+        pending_changes.add(FileChange(path="/tmp/axon-sonde/tri.py", original="",
+                                       proposed="print(1)\n", description="création"))
+        return {"status": "proposed", "awaiting_confirmation": True}
+
+    pending_changes.clear()
+    parent = _sous_un_outil(construire(
+        outils=[lire], selectionner=lambda m, t: [lire], appeler_modele=_appeler,
+        enrichir=lambda t: t, prompt_systeme="", executer=_executer, tracer=lambda m: ""))
+
+    cfg = {"configurable": {"thread_id": "t-preciser"}}
+    parent.invoke({"messages": [HumanMessage("écris tri.py")]}, cfg)
+
+    demandes = _interruptions(parent, cfg)
+    assert demandes, "la revue doit être posée depuis l'agent"
+    assert demandes[0].value.get("genre") == "diff"
+
+    parent.invoke(Command(resume=["Préciser", "utilise un tri par insertion"]), cfg)
+    pending_changes.clear()
+
+    assert any("tri par insertion" in v for v in vus), \
+        "la précision doit revenir au modèle de code, pas à l'orchestrateur"
+
+
+def test_la_revue_a_lieu_dans_le_sous_graphe():
+    """Une seule implémentation de revue sert les deux graphes."""
+    import inspect
+
+    from src.agents.coding import graphe_agent
+
+    source = inspect.getsource(graphe_agent.construire)
+    assert "reviser_les_fichiers" in source
+    assert "from src.orchestrator.revision import reviser" in source

@@ -109,7 +109,7 @@ def test_une_edition_ne_reclame_pas_de_plan(fichier):
     assert _editer(fichier, "return 1", "return 3", replace_all=True)["status"] == "proposed"
 
 
-def test_creer_un_fichier_reclame_toujours_un_plan(tmp_path):
+def test_creer_plusieurs_fichiers_reclame_un_plan(tmp_path):
     """Le garde de propose_file_change reste : c'est lui qui a évité qu'une pile
     vide soit lue comme un refus utilisateur.
 
@@ -118,10 +118,16 @@ def test_creer_un_fichier_reclame_toujours_un_plan(tmp_path):
     chemin de création de fichier — `shell_run` refuse `>` en renvoyant ici,
     `edit_file` refuse un fichier absent en renvoyant ici."""
     dev_plan.clear()
+    pending_changes.clear()
 
     with dev_plan.run_specialist():
+        # Le PREMIER fichier ne demande rien : un plan sert à tenir un travail
+        # qui se déroule, et un seul fichier ne se déroule pas.
+        propose_file_change.invoke(
+            {"path": str(tmp_path / "un.py"), "content": "x", "description": "d"})
         resultat = propose_file_change.invoke(
             {"path": str(tmp_path / "neuf.py"), "content": "x", "description": "d"})
+    pending_changes.clear()
 
     assert resultat["status"] == "error"
 

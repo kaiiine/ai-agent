@@ -67,7 +67,9 @@ def _show_resume(thread_id: str) -> None:
     if not messages:
         return
 
-    visible = [m for m in messages if m["role"] in ("human", "ai", "coding_agent") and m["content"].strip()]
+    visible = [m for m in messages
+               if m["role"] in ("human", "ai", "coding_agent")
+               and m["content"].strip() and not m.get("interne")]
     if not visible:
         return
 

@@ -32,6 +32,7 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES, add_messages
 from typing_extensions import TypedDict
 
 from src.orchestrator import hitl
+from src.orchestrator.plan import ABANDONNER, EXECUTER, PRECISER
 
 #: Au-delà, on rend la main plutôt que de tourner. Repris de la boucle d'origine.
 TOURS_MAX = 80
@@ -60,6 +61,7 @@ class EtatCode(TypedDict, total=False):
     """
     tache: str
     tache_enrichie: str
+    pieces: str
     messages: Annotated[list, add_messages]
     fournisseur: str
     tours: int
@@ -154,9 +156,14 @@ def construire(
     def preparer(etat: EtatCode) -> dict:
         """L'enrichissement est un appel modèle : il doit être checkpointé."""
         enrichie = enrichir(etat["tache"])
+        # Les pièces jointes passent À CÔTÉ de l'enrichissement, pas dedans :
+        # `enrich_task` moissonne les noms de fichiers qu'il croise, et le texte
+        # d'un PDF en contient assez pour faire pré-lire tout un projet.
+        ouverture = [HumanMessage(etat["pieces"])] if etat.get("pieces") else []
         return {
             "tache_enrichie": enrichie,
-            "messages": [SystemMessage(prompt_systeme), HumanMessage(enrichie)],
+            "messages": [SystemMessage(prompt_systeme), *ouverture,
+                         HumanMessage(enrichie)],
             "tours": 0,
             "appels_outils": 0,
         }
@@ -263,6 +270,22 @@ def construire(
                 "appel_delegue": appel_delegue,
                 "appels_outils": etat.get("appels_outils", 0) + len(rendus)}
 
+    def reviser_les_fichiers(etat: EtatCode) -> dict:
+        """La revue a lieu DANS l'agent, pas après lui.
+
+        Faite en dehors, elle rendait sa décision au modèle principal : sur
+        « Préciser », la consigne « propose une nouvelle version » partait à
+        l'orchestrateur, qui n'a plus le contexte de code — il rendait le script
+        révisé en TEXTE au lieu de le reproposer. Vécu sur « utilise un tri par
+        insertion ».
+
+        Même implémentation que le nœud de l'orchestrateur : une seule revue
+        existe, elle sert les deux graphes.
+        """
+        from src.orchestrator.revision import reviser
+
+        return reviser(etat)
+
     def confirmer(etat: EtatCode) -> dict:
         """Rien d'autre que la question. Ce nœud peut être rejoué sans dommage."""
         demande = etat.get("en_attente") or {}
@@ -354,25 +377,27 @@ def construire(
         signature = " | ".join(etapes)
         apercu = "\n".join(f"{i}. {label}" for i, label in enumerate(etapes, 1))
 
+        # Les MÊMES libellés que le nœud `valider_plan` de l'orchestrateur : le
+        # client a son propre vocabulaire et rend ses chaînes à lui, pas celles
+        # qu'on déclare. Comparer à « Exécuter » quand il renvoie « Exécuter le
+        # plan » faisait tomber l'accord dans la branche d'abandon — dont la
+        # consigne est « n'exécute rien de plus et explique ce que tu comptais
+        # faire ». L'agent obéissait : il affichait le code au lieu de l'écrire.
+        question = hitl.Question(
+            texte="Ce plan te convient ?",
+            choix=(ABANDONNER, PRECISER, EXECUTER), affirmatif=EXECUTER)
         reponses = hitl.demander(hitl.Demande(
-            genre=hitl.PLAN,
-            cle=signature[:80],
-            apercu=apercu,
-            questions=(
-                hitl.Question(texte="Ce plan te convient ?",
-                              choix=("Abandonner", "Préciser", "Exécuter"),
-                              affirmatif="Exécuter"),
-                hitl.Question(texte="Que faut-il changer ?"),
-            ),
+            genre=hitl.PLAN, cle=signature[:80], apercu=apercu,
+            questions=(question, hitl.Question(texte="Que faut-il changer ?")),
         ))
 
         # ── après l'interruption : exécuté une seule fois ────────────────────
         decision = (reponses[0] or "").strip()
         precision = (reponses[1] or "").strip() if len(reponses) > 1 else ""
 
-        if decision == "Exécuter" or not decision:
+        if hitl.accorde(decision, question) or not decision:
             return {"plan_vu": signature}
-        if decision == "Préciser" and precision:
+        if decision == PRECISER and precision:
             return {"plan_vu": signature, "messages": [HumanMessage(
                 f"[UTILISATEUR] Le plan n'est pas validé. {precision}. Appelle "
                 f"`dev_plan_update` avec un plan révisé qui en tient compte, "
@@ -396,12 +421,20 @@ def construire(
 
         if etat.get("en_attente"):
             return "confirmer"
+        from src.orchestrator.revision import revision_attendue
+
+        if revision_attendue(etat):
+            return "reviser_les_fichiers"
         if etat.get("a_deleguer"):
             return [Send("explorer", {"sujet": sujet}) for sujet in etat["a_deleguer"]]
         if not dev_plan.steps:
             return "modele"
-        signature = " | ".join(e.label for e in dev_plan.steps)
-        return "modele" if signature == etat.get("plan_vu") else "valider_le_plan"
+        # UNE validation par run, pas une par version du plan. Le modèle révise
+        # son plan dès qu'il apprend quelque chose — un répertoire absent, une
+        # dépendance manquante — et rouvrir la question à chaque fois transformait
+        # une précision en nouveau questionnaire. L'utilisateur a validé une
+        # intention, pas une liste d'étapes.
+        return "modele" if etat.get("plan_vu") else "valider_le_plan"
 
     def apres_le_modele(etat: EtatCode) -> str:
         if etat.get("abandon"):
@@ -420,6 +453,7 @@ def construire(
     g.add_node("preparer", preparer)
     g.add_node("modele", modele)
     g.add_node("outils", noeud_outils)
+    g.add_node("reviser_les_fichiers", reviser_les_fichiers)
     g.add_node("confirmer", confirmer)
     g.add_node("explorer", explorer)
     g.add_node("rassembler", rassembler)
@@ -432,7 +466,10 @@ def construire(
                             {"outils": "outils", "finir": "finir", "modele": "modele"})
     g.add_conditional_edges("outils", apres_les_outils,
                             {"modele": "modele", "valider_le_plan": "valider_le_plan",
-                             "explorer": "explorer", "confirmer": "confirmer"})
+                             "explorer": "explorer", "confirmer": "confirmer",
+                             "reviser_les_fichiers": "reviser_les_fichiers"})
+    # La décision revient au modèle : appliqué, refusé, ou à reprendre.
+    g.add_edge("reviser_les_fichiers", "modele")
     # Retour aux outils : l'appel accordé n'a pas de réponse, il sera repris ;
     # l'appel refusé en a une, et la boucle passe au tour suivant.
     g.add_edge("confirmer", "outils")

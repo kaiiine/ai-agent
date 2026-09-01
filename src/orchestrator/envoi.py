@@ -20,7 +20,9 @@ ENVOYER, ANNULER, MODIFIER = "Envoyer", "Annuler", "Modifier"
 #: elle arrive au modèle comme telle, jamais comme un `AIMessage` — que le TUI
 #: afficherait et que le modèle relirait comme son propre tour.
 def note_pour_le_modele(texte: str) -> HumanMessage:
-    return HumanMessage(content=texte)
+    from src.orchestrator.note_interne import note
+
+    return note(texte)
 
 
 #: L'outil qui prépare le brouillon. Nommé ici pour qu'un renommage côté Gmail

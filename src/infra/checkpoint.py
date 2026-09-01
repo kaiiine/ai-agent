@@ -194,12 +194,20 @@ def get_recent_messages(thread_id: str, n: int | None = None) -> list[dict]:
     if n is not None:
         msgs = msgs[-n:] if len(msgs) > n else msgs
 
+    from src.orchestrator.note_interne import est_interne
+
     result = []
     for m in msgs:
         role    = _role_of(m)
         content = _text_of(m)
         if content:
-            result.append({"role": role, "content": content})
+            # `interne` : AXON se l'est écrit à lui-même (compte rendu de revue,
+            # rapport d'un sous-agent, décision sur un plan). Le rôle reste
+            # `human` — c'est bien une entrée pour le modèle — mais ce n'est pas
+            # un tour de l'utilisateur, et le rejouer comme tel affichait la
+            # plomberie à l'écran.
+            result.append({"role": role, "content": content,
+                           "interne": est_interne(m)})
     return result
 
 

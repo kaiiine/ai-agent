@@ -28,6 +28,15 @@ def test_elle_passe_par_le_graphe_et_non_par_un_runner():
     assert "run_deep" not in bloc
 
 
+def test_elle_est_traitee_avant_la_porte_des_slashs():
+    """La porte sort INCONDITIONNELLEMENT après `handle_slash`. Une réécriture
+    placée plus bas n'était jamais atteinte : `/deep` ne produisait rien du tout,
+    pas même « commande inconnue »."""
+    src = Path("src/ui/streaming.py").read_text(encoding="utf-8")
+    assert (src.index('user_message.startswith("/deep ")')
+            < src.index('    if user_message.startswith("/"):'))
+
+
 def test_loutil_et_le_noeud_existent_bien():
     from src.orchestrator.registry import build_all_tools
 

@@ -163,6 +163,26 @@ def test_une_sortie_sans_interruption_ne_rend_aucune_demande():
     assert demande_en_attente({"__interrupt__": []}) is None
 
 
+def test_un_appel_direct_de_clarification_est_converti_en_demande(monkeypatch):
+    from langchain_core.messages import AIMessage
+    import src.orchestrator.clarification as clarification
+
+    monkeypatch.setattr(clarification, "demander", lambda demande: ["choix"])
+    appel = {"name": "ask_clarification",
+             "args": {"questions": [{"question": "Quelle option ?",
+                                        "choices": ["A", "B"]}]},
+             "id": "clarif-1"}
+
+    resultat = clarification.clarifier_appel({
+        "messages": [AIMessage(content="", tool_calls=[appel])],
+    })
+
+    message = resultat["messages"][0]
+    assert message.name == "ask_clarification"
+    assert message.tool_call_id == "clarif-1"
+    assert '"Quelle option ?": "choix"' in message.content
+
+
 # ── Normalisation ────────────────────────────────────────────────────────────
 @pytest.mark.parametrize("brut, attendu", [
     ("oui", ["oui"]),
@@ -308,3 +328,65 @@ def test_aucun_outil_n_interrompt_le_graphe():
     assert not fautifs, (
         "des modules exposant des outils interrompent le graphe — leur travail "
         f"sera rejoué à chaque reprise : {fautifs}")
+
+
+# ── L'appel direct à ask_clarification ────────────────────────────────────────
+class TestAppelDeClarification:
+    """`ask_clarification` est un outil ordinaire : il rend ses propres questions
+    au modèle en JSON, et rien ne les affiche. Le modèle les recevait comme une
+    donnée, n'avait aucune raison de croire qu'elles avaient été posées, et
+    rappelait l'outil — six fois sur un simple « coucou ».
+
+    Les deux gardes anti-boucle cherchaient une clé `answers` que ce chemin ne
+    produit jamais : `is_duplicate` valait toujours faux.
+    """
+
+    def _lot(self, appels):
+        from langchain_core.messages import AIMessage
+        return AIMessage("", tool_calls=appels)
+
+    def test_lappel_est_reconnu(self):
+        from src.orchestrator.clarification import appel_clarification
+
+        appel = {"name": "ask_clarification", "id": "c1",
+                 "args": {"questions": [{"question": "Quoi ?"}]}}
+        trouve = appel_clarification(self._lot([appel]))
+        assert trouve is not None and trouve["id"] == "c1"
+
+    def test_un_autre_outil_nest_pas_confondu(self):
+        from src.orchestrator.clarification import appel_clarification
+
+        assert appel_clarification(
+            self._lot([{"name": "get_current_time", "id": "t1", "args": {}}])) is None
+
+    def test_le_reste_du_lot_reste_a_servir(self):
+        """Router tout le lot vers la question laissait l'autre appel sans
+        résultat, et un fournisseur refuse un tour aux paires déséquilibrées."""
+        from langchain_core.messages import ToolMessage
+
+        from src.orchestrator.clarification import appels_en_attente
+
+        lot = self._lot([{"name": "get_current_time", "id": "t1", "args": {}},
+                         {"name": "ask_clarification", "id": "c1", "args": {}}])
+        repondu = ToolMessage(content="{}", tool_call_id="c1", name="ask_clarification")
+        assert appels_en_attente({"messages": [lot, repondu]})
+        tout = ToolMessage(content="{}", tool_call_id="t1", name="get_current_time")
+        assert not appels_en_attente({"messages": [lot, repondu, tout]})
+
+    def test_une_question_vide_ne_bloque_pas_le_tour(self):
+        from src.orchestrator.clarification import clarifier_appel
+
+        sortie = clarifier_appel({"messages": [self._lot(
+            [{"name": "ask_clarification", "id": "c1", "args": {"questions": []}}])]})
+        assert sortie["messages"][0].tool_call_id == "c1"
+
+    def test_loutil_deja_servi_nest_pas_rejoue(self):
+        """`clarifier_appel` a posé la question ; l'exécuter reposerait la même."""
+        from langchain_core.messages import ToolMessage
+
+        from src.orchestrator.tool_node import CachedToolNode
+
+        lot = self._lot([{"name": "ask_clarification", "id": "c1", "args": {}}])
+        repondu = ToolMessage(content='{"answers": {}}', tool_call_id="c1",
+                              name="ask_clarification")
+        assert CachedToolNode([])({"messages": [lot, repondu]}) == {"messages": []}

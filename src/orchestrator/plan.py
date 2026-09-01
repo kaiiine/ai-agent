@@ -17,7 +17,9 @@ EXECUTER, PRECISER, ABANDONNER = "Exécuter le plan", "Préciser", "Abandonner"
 
 
 def note_pour_le_modele(texte: str) -> HumanMessage:
-    return HumanMessage(content=texte)
+    from src.orchestrator.note_interne import note
+
+    return note(texte)
 
 
 def _plan_du_message(message: Any) -> str | None:
