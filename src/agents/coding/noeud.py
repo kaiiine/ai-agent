@@ -103,9 +103,11 @@ def _pieces_jointes() -> str:
     phrase. Le contenu était pourtant lu — il restait dans l'historique de
     l'orchestrateur, de l'autre côté de la frontière.
 
-    Les IMAGES ne traversent pas : aucun backend ne déclare ici s'il sait les
-    lire, et envoyer du base64 à un modèle qui ne le sait pas casse l'appel. On
-    dit qu'elles existent, sans les joindre.
+    Les IMAGES traversent quand le backend actif déclare savoir les lire, et
+    seulement là : envoyer du base64 à un modèle qui l'ignore casse l'appel,
+    alors que ne pas l'envoyer coûte au pire une question. Sinon on dit qu'elles
+    existent — l'agent peut demander ce qu'elles montrent, au lieu de deviner
+    sans savoir qu'il devine.
     """
     try:
         from src.ui.attachments import attachments
@@ -118,9 +120,13 @@ def _pieces_jointes() -> str:
     if not jointes:
         return ""
 
+    voit = _le_modele_voit()
     blocs: list[str] = []
     for piece in jointes:
-        if piece.is_image:
+        if piece.is_image and voit:
+            blocs.append(f"[Image jointe : {piece.name} — décris-la si l'utilisateur "
+                         f"s'y réfère ; elle accompagne ce message.]")
+        elif piece.is_image:
             blocs.append(f"[Image jointe : {piece.name} — tu ne peux pas la voir ; "
                          f"demande ce qu'elle montre si tu en as besoin.]")
         elif len(piece.content) > _PIECES_MAX and piece.source_path:
@@ -197,6 +203,17 @@ def _afficher(rapport: str) -> None:
     from src.agents.coding.specialist import _notifier
 
     _notifier(RAPPORT, {"texte": rapport})
+
+
+def _le_modele_voit() -> bool:
+    """Le backend du specialist sait-il lire une image ?"""
+    try:
+        from src.infra.settings import settings
+        from src.llm.backends import sait_lire_une_image
+
+        return sait_lire_une_image(settings.llm_backend)
+    except Exception:                                        # noqa: BLE001
+        return False
 
 
 def _consigne(tache: str, rapport: str, fichiers: list[str]) -> str:
