@@ -22,18 +22,19 @@ from prompt_toolkit.key_binding import KeyBindings
 from .config import fmt_ms, SessionConfig
 from .language import detect_lang, enforce_lang_output
 from .panels import live_panel_initial, tool_call_panel, command_panel, plan_panel, compile_panel, ACCENT, _BOX
+from src.agents.coding.noeud import RAPPORT
 from .render import update_live_markdown, finalize_live
 from .journal import (
     Journal, SortieDirecte, bilan, cible_de_l_appel, compte_rendu_de_secours,
     inscrire_resultat, verbe,
 )
 from .commands import debug_state
-from .attachments import AttachmentStore, open_file_picker, get_clipboard_image, build_message_with_attachments
+from .attachments import (attachments as _attachments, open_file_picker,
+                          get_clipboard_image, build_message_with_attachments)
 from .completer import SlashCompleter
 from .suggest import HistorySuggest
 
 console = Console()
-_attachments = AttachmentStore()
 _BORDER = f"dim {ACCENT}"
 
 _DEBOUNCE = 0.03
@@ -1140,6 +1141,24 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     if user_message.lower() in {"quit", "exit", "q"}:
         raise KeyboardInterrupt
 
+    # AVANT la porte des slashs : elle sort inconditionnellement (`return` après
+    # `handle_slash`), et une réécriture placée plus bas n'était jamais atteinte
+    # — `/deep` ne produisait alors rien du tout, pas même « commande inconnue ».
+    #
+    # Réécrire plutôt qu'ouvrir un chemin parallèle : `/build` appelle son runner
+    # parce qu'il pilote des phases, mais `/deep` a un nœud dans le graphe, et le
+    # court-circuiter lui ferait perdre confirmation, révision et compression.
+    if user_message.strip() == "/deep" or user_message.startswith("/deep "):
+        sujet = user_message[len("/deep"):].strip()
+        if not sujet:
+            console.print(command_panel("usage : /deep <ce que tu veux creuser>", error=True))
+            return
+        user_message = (
+            f"{sujet}\n\n[SYSTEME] Recherche APPROFONDIE demandée : appelle "
+            f"`deep_research` sur ce sujet. N'y réponds pas de mémoire et ne te "
+            f"contente pas d'une recherche simple."
+        )
+
     if user_message.startswith("/"):
         # Commandes pièces jointes gérées ici (accès à _attachments et console)
         if user_message == "/attach":
@@ -1361,22 +1380,6 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
     cfg.debug = debug_state["enabled"]
     user_lang = cfg.lang_pref if cfg.lang_pref in {"fr", "en"} else detect_lang(user_message)
 
-    # `/deep` réécrit le message, il n'ouvre pas un chemin parallèle. L'outil
-    # `deep_research` et le nœud `approfondir` existent depuis d43876a ; seule la
-    # commande manquait — « /deep » restait « non reconnu » alors que la même
-    # demande en langage naturel fonctionnait. Passer par le graphe garde tout ce
-    # qui s'y applique : confirmation, révision, compression, trace.
-    if user_message.strip() == "/deep" or user_message.startswith("/deep "):
-        sujet = user_message[len("/deep"):].strip()
-        if not sujet:
-            console.print(command_panel("usage : /deep <ce que tu veux creuser>", error=True))
-            return
-        user_message = (
-            f"{sujet}\n\n[SYSTEME] Recherche APPROFONDIE demandée : appelle "
-            f"`deep_research` sur ce sujet. N'y réponds pas de mémoire et ne te "
-            f"contente pas d'une recherche simple."
-        )
-
     # Injecter les pièces jointes dans le message
     attachments = _attachments.pop_all()
     message_dict = build_message_with_attachments(user_message, attachments)
@@ -1579,13 +1582,23 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             from src.agents.coding.pending import render_plan
             render_plan(console)
 
+        # ── Le rapport final de l'agent de code, tel qu'il l'a écrit ─────────
+        # Il ne repasse plus par l'orchestrateur : un texte qui existe n'a rien à
+        # gagner à être re-raconté par un second modèle.
+        elif tool_name == RAPPORT:
+            texte = (args or {}).get("texte", "")
+            if texte:
+                console.print(final_panel(texte))
+
         # ── Explain / analyse ─────────────────────────────────────────────────
         elif tool_name == "dev_explain":
             message = args.get("message", "") if args else ""
             if message:
                 from rich.markdown import Markdown
+
+                from .code_non_barre import barrer_le_code
                 console.print(Panel(
-                    Markdown(message),
+                    Markdown(barrer_le_code(message)),
                     border_style=f"dim {ACCENT}",
                     title="[dim]analyse[/dim]",
                     title_align="left",
@@ -1643,25 +1656,27 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
             _is_internal = ".axon/" in _file_path or _file_path.endswith("AXON.md")
 
             if get_mode() == "auto" or _is_internal:
-                from src.agents.coding.pending import pending_changes as _pending, snapshots
+                from src.agents.coding.pending import (pending_changes as _pending,
+                                                       appliquer as _ecrire)
                 from src.infra.tools_cache import session_cache
                 change = _pending.pop_latest()
                 if change:
                     try:
-                        p = Path(change.path)
-                        p.parent.mkdir(parents=True, exist_ok=True)
-                        snapshots.save(change.path, change.original)
-                        p.write_text(change.proposed, encoding="utf-8")
+                        # `appliquer` sait effacer ; le `write_text` qu'il y avait
+                        # ici ne savait qu'écrire, et rendait vide le fichier qu'on
+                        # lui demandait de supprimer.
+                        _ecrire(change)
                         session_cache.invalidate_filesystem()
                         t = Text()
                         t.append("  ✓  ", style="bold green")
-                        t.append(str(p), style="dim")
+                        t.append(change.path, style="dim")
                         console.print(t)
                         override = {
                             "status": "accepted",
                             "path": change.path,
                             "awaiting_confirmation": False,
-                            "message": "Fichier écrit avec succès.",
+                            "message": ("Fichier supprimé." if change.supprime
+                                        else "Fichier écrit avec succès."),
                         }
                     except Exception as e:
                         console.print(Text(f"  ✗  {change.path}: {e}", style="red"))

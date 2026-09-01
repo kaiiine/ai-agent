@@ -58,6 +58,7 @@ class Attachment:
 class AttachmentStore:
     def __init__(self):
         self._items: List[Attachment] = []
+        self._derniers: List[Attachment] = []
 
     def add_file(self, path_str: str) -> Optional[Attachment]:
         path = Path(path_str)
@@ -112,7 +113,18 @@ class AttachmentStore:
     def pop_all(self) -> List[Attachment]:
         items = list(self._items)
         self._items.clear()
+        # Retenues pour le tour : l'agent de code s'exécute APRÈS que l'UI ait
+        # vidé la pile pour bâtir le message de l'orchestrateur, et il ne reçoit
+        # qu'une chaîne de tâche. Sans ça, joindre un PDF puis demander « code ce
+        # qui est décrit dedans » n'envoyait au sous-graphe que la phrase.
+        if items:
+            self._derniers = items
         return items
+
+    @property
+    def derniers(self) -> List[Attachment]:
+        """Les pièces jointes du dernier tour, texte compris."""
+        return list(self._derniers)
 
     def remove(self, name: str) -> bool:
         before = len(self._items)
@@ -250,3 +262,10 @@ def build_message_with_attachments(text: str, attachments: List[Attachment]) -> 
             "image_url": {"url": f"data:{img.mime};base64,{img.b64}"},
         })
     return {"role": "user", "content": content}
+
+
+#: La pile du tour. Elle vivait dans `streaming`, qui est le seul à la remplir —
+#: mais plus le seul à la lire : le nœud `coder` y prend les pièces à transmettre
+#: au sous-graphe, et importer un nom privé de `streaming` depuis l'orchestrateur
+#: aurait bouclé.
+attachments = AttachmentStore()

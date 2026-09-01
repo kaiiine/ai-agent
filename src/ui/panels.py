@@ -79,8 +79,10 @@ def tool_call_panel(tool_name: str):
 
 
 def final_panel(md_text: str):
+    from .code_non_barre import barrer_le_code
+
     return Panel(
-        Markdown(md_text),
+        Markdown(barrer_le_code(md_text)),
         box=_BOX,
         border_style=_BORDER,
         padding=(1, 2),
