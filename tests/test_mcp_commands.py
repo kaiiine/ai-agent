@@ -474,6 +474,10 @@ def test_bout_en_bout_list_tools_et_test_deep(tmp_path):
         shallow = handle_mcp(["test", "alpha"], runtime)
         assert "⚠ backend health" in shallow
 
+        # L'indexation attend que le serveur soit élu — elle coûtait 2,2 s à
+        # chaque démarrage. Le PREMIER refresh la fait donc réellement ; le
+        # second, lui, n'a plus rien à resynchroniser.
+        assert "index resynchronisé" in handle_mcp(["refresh", "alpha"], runtime)
         assert "index déjà à jour" in handle_mcp(["refresh", "alpha"], runtime)
 
         assert "désactivé" in handle_mcp(["disable", "alpha"], runtime)

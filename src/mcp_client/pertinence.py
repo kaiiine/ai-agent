@@ -40,14 +40,23 @@ def jetons(texte: str) -> set[str]:
     return set(re.findall(rf"[a-z0-9]{{{_LONGUEUR_MIN},}}", _plier(texte)))
 
 
+#: Calculé une fois : `build_all_tools()` coûte ~0,9 s, et la réponse ne change
+#: pas dans un processus.
+_vocabulaire: set[str] | None = None
+
+
 def _vocabulaire_natif() -> set[str]:
     """Import tardif : `registry` tire tous les agents, dont certains touchent MCP."""
+    global _vocabulaire
+    if _vocabulaire is not None:
+        return _vocabulaire
     try:
         from src.orchestrator.registry import build_all_tools
     except Exception:
         return set()
-    return set().union(*(jetons(f"{o.name} {o.description or ''}")
-                         for o in build_all_tools())) or set()
+    _vocabulaire = set().union(*(jetons(f"{o.name} {o.description or ''}")
+                                 for o in build_all_tools())) or set()
+    return _vocabulaire
 
 
 def signatures(hints: dict[str, str]) -> dict[str, set[str]]:

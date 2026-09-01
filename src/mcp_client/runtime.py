@@ -66,6 +66,10 @@ class MCPRuntime:
         self._index = index
         self._index_provided = index is not None
         self._indexed: dict[str, list[MCPToolRef]] = {}          # ce qui est DANS l'index
+        # Ce que chaque serveur EXPOSE. Distinct de l'index : les enveloppes
+        # doivent exister dès le démarrage — sinon un outil n'est pas exécutable —
+        # alors que l'indexation peut attendre que le serveur soit élu.
+        self._connus: dict[str, list[MCPToolRef]] = {}
         self._signatures_cache: dict[str, set[str]] | None = None
         self._index_state: dict[str, str] = {}                   # serveur -> raison de l'échec
         self._collisions: dict[str, list[tuple[MCPToolRef, str]]] = {}
@@ -116,7 +120,7 @@ class MCPRuntime:
             if not (conn.config.enabled and conn.is_healthy):
                 continue
             try:
-                self._apply(name, conn.tools)
+                self._apply(name, conn.tools, indexer=False)
             except Exception as exc:
                 # Filet : un serveur ne peut pas empêcher les autres de s'indexer.
                 logger.warning("mcp_server_index_failed",
@@ -124,7 +128,8 @@ class MCPRuntime:
 
     # ---------- synchronisation d'index (toujours par delta) ----------
 
-    def _apply(self, server: str, new_refs: list[MCPToolRef]) -> ToolDiff:
+    def _apply(self, server: str, new_refs: list[MCPToolRef],
+               *, indexer: bool = True) -> ToolDiff:
         """Applique le DELTA entre l'état indexé et `new_refs`. Seules les entrées
         qui changent sont touchées — l'index n'est jamais reconstruit.
 
@@ -133,8 +138,24 @@ class MCPRuntime:
         construites quoi qu'il arrive, seul le routing du serveur concerné est
         dégradé. Laisser l'exception remonter la rendait à la fois avalée plus haut
         et fatale — Axon démarrait alors sans aucun tool MCP, en silence."""
+        # Les enveloppes d'abord, et toujours : un outil non enveloppé n'est pas
+        # exécutable, quel que soit l'état de l'index.
+        if new_refs:
+            self._connus[server] = list(new_refs)
+        else:
+            self._connus.pop(server, None)
+
         previous = self._indexed.get(server, [])
         diff = diff_server_tools(previous, list(new_refs))
+        if not indexer:
+            # Indexation DIFFÉRÉE. Elle coûtait 2,2 s à chaque démarrage pour 52
+            # outils, et la collection est éphémère : le delta partait toujours
+            # d'un état vide. L'étage 1 du routage lit le `capabilities_hint` de la
+            # config, pas l'index — un serveur peut donc être élu sans être indexé,
+            # et ne l'être qu'à ce moment-là.
+            self._rebuild_wrappers()
+            return diff
+
         index = self._ensure_index()
         if index is not None:
             try:
@@ -157,11 +178,23 @@ class MCPRuntime:
         self._rebuild_wrappers()
         return diff
 
+    def _indexer_si_besoin(self, serveurs: set[str]) -> None:
+        """Indexe à la demande les serveurs élus qui ne le sont pas encore."""
+        for nom in serveurs:
+            if nom in self._indexed or nom not in self._connus:
+                continue
+            try:
+                self._apply(nom, self._connus[nom])
+            except Exception as exc:
+                self._index_state[nom] = str(exc)
+                logger.warning("mcp_index_lazy_failed",
+                               extra={"server": nom, "error": str(exc)})
+
     def _rebuild_wrappers(self) -> None:
         """Reconstruit les enveloppes LangChain (objets mémoire, pas l'index).
         La partition est GLOBALE : une collision entre deux serveurs doit être vue,
         pas masquée par un traitement serveur par serveur."""
-        all_refs = [ref for refs in self._indexed.values() for ref in refs]
+        all_refs = [ref for refs in self._connus.values() for ref in refs]
         kept, ignored = partition_by_runtime_name(all_refs)
         self._tools = build_mcp_tools(kept, self.manager, submit=self.submit)
         self._collisions = {}
@@ -232,15 +265,27 @@ class MCPRuntime:
         """
         if not self._tools:
             return []
-        # Sans index, on est en mode dégradé : la porte suppose un routage derrière
-        # elle pour trier ce qu'elle laisse passer. L'appliquer ici ne filtrerait
-        # pas, ça tairait — et une capacité muette est pire qu'une capacité large.
-        if self._index is None:
+        # Index DÉFINITIVEMENT indisponible (Ollama absent) : la porte suppose un
+        # routage derrière elle pour trier ce qu'elle laisse passer. L'appliquer
+        # seule ne filtrerait pas, ça tairait — et une capacité muette est pire
+        # qu'une capacité large. À distinguer de « pas encore indexé ».
+        if self._index is None and self._index_provided:
             return self.tools[:_MAX_UNROUTED_TOOLS]
+
+        # La PORTE d'abord : elle lit le `capabilities_hint` de la config, pas
+        # l'index. Aucune requête sans rapport ne doit payer une indexation.
         retenus = set(serveurs_pertinents(query, self._signatures(), actifs))
         retenus |= set(self._index_state)      # jamais indexés : joignables ou muets
         if not retenus:
             return []
+
+        # L'index n'existe qu'à partir d'ici, et seulement pour les serveurs élus.
+        self._indexer_si_besoin(retenus)
+
+        # L'indexation a échoué à l'instant : on rend les outils des serveurs élus.
+        if self._index is None:
+            return [t for t in self.tools
+                    if t.name.split("__")[0] in retenus][:_MAX_UNROUTED_TOOLS]
         try:
             names = route(query, self._index, servers=tuple(retenus),
                           unrouted_servers=tuple(self._index_state))
@@ -266,7 +311,7 @@ class MCPRuntime:
     def exposed(self, server: str) -> list[MCPToolRef]:
         """Ce qui est réellement atteignable par le modèle : les découverts moins
         ceux qu'une collision de nom runtime a rendus invisibles."""
-        return [ref for ref in self._indexed.get(server, []) if ref.public_name in self._tools]
+        return [ref for ref in self._connus.get(server, []) if ref.public_name in self._tools]
 
     def collisions(self, server: str) -> list[tuple[MCPToolRef, str]]:
         return list(self._collisions.get(server, []))
@@ -327,6 +372,7 @@ class MCPRuntime:
             self._loop.call_soon_threadsafe(self._loop.stop)
         self._tools.clear()
         self._indexed.clear()
+        self._connus.clear()
         self._index_state.clear()
         self._signatures_cache = None
         self._collisions.clear()

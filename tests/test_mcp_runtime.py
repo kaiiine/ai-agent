@@ -151,13 +151,16 @@ def test_bout_en_bout_un_tool_mcp_sexecute_depuis_un_appel_synchrone(tmp_path):
     try:
         runtime.start()
 
-        # découverte -> indexation -> enveloppes LangChain
+        # découverte -> enveloppes LangChain. L'INDEXATION, elle, attend que le
+        # serveur soit élu : elle coûtait 2,2 s à chaque démarrage pour 52 outils,
+        # sur une collection éphémère dont le delta partait toujours de zéro.
         assert {t.name for t in runtime.tools} == {"alpha__get_status", "alpha__execute_snippet"}
+        assert "alpha.execute_snippet" not in index.docs, "pas indexé avant élection"
+
+        # routing à deux étages -> sélection, et l'indexation a lieu ici
+        selected = runtime.select("exécute ce bout de code")
         assert index.docs["alpha.execute_snippet"][1]["source"] == MCP_SOURCE
         assert "server:alpha" in index.docs
-
-        # routing à deux étages -> sélection
-        selected = runtime.select("exécute ce bout de code")
         assert [t.name for t in selected] == ["alpha__execute_snippet"]
 
         # exécution SYNCHRONE, comme le ferait le ToolNode

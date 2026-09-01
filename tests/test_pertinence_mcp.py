@@ -101,3 +101,32 @@ def test_un_serveur_sans_hint_reste_joignable():
     le rendrait injoignable pour toujours."""
     sigs = signatures({"muet": ""})
     assert serveurs_pertinents("n'importe quoi", sigs) == ["muet"]
+
+
+def test_lindexation_attend_que_le_serveur_soit_elu(tmp_path, monkeypatch):
+    """Elle coûtait 2,2 s à CHAQUE démarrage — 80 % du temps de lancement — pour
+    52 outils, sur une collection éphémère dont le delta partait toujours d'un
+    état vide. L'étage 1 lit le `capabilities_hint` de la config, pas l'index :
+    un serveur peut donc être élu sans être indexé, et ne l'être qu'alors."""
+    import inspect
+
+    from src.mcp_client.runtime import MCPRuntime
+
+    demarrage = inspect.getsource(MCPRuntime.start)
+    assert "indexer=False" in demarrage, "le démarrage ne doit pas indexer"
+
+    choix = inspect.getsource(MCPRuntime.select)
+    assert choix.index("serveurs_pertinents") < choix.index("_indexer_si_besoin"), \
+        "la porte décide AVANT qu'on paie une indexation"
+
+
+def test_les_enveloppes_ne_dependent_pas_de_lindex():
+    """Un outil non enveloppé n'est pas exécutable, quel que soit l'état de
+    l'index — les deux structures sont donc distinctes."""
+    import inspect
+
+    from src.mcp_client.runtime import MCPRuntime
+
+    source = inspect.getsource(MCPRuntime._rebuild_wrappers)
+    assert "_connus" in source
+    assert "_indexed" not in source
