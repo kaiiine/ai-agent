@@ -4,7 +4,7 @@ ollama:
 
 llm_backend: "ollama_cloud"   # "groq" | "ollama" | "ollama_cloud" | "gemini"
 
-coding_model: "minimax-m3:cloud"
+coding_model: "gpt-oss:120b-cloud"
 
 gemini:
   model: "gemini-2.5-flash"

@@ -80,9 +80,12 @@ def tool_call_panel(tool_name: str):
 
 def final_panel(md_text: str):
     from .code_non_barre import barrer_le_code
+    from .formules import rendre_les_formules
 
+    # Les formules d'abord : elles se barrent elles-mêmes, et `barrer_le_code`
+    # laisse alors leur bloc tranquille.
     return Panel(
-        Markdown(barrer_le_code(md_text)),
+        Markdown(barrer_le_code(rendre_les_formules(md_text))),
         box=_BOX,
         border_style=_BORDER,
         padding=(1, 2),

@@ -1597,8 +1597,9 @@ def stream_once(graph, state: dict, cfg: SessionConfig) -> None:
                 from rich.markdown import Markdown
 
                 from .code_non_barre import barrer_le_code
+                from .formules import rendre_les_formules
                 console.print(Panel(
-                    Markdown(barrer_le_code(message)),
+                    Markdown(barrer_le_code(rendre_les_formules(message))),
                     border_style=f"dim {ACCENT}",
                     title="[dim]analyse[/dim]",
                     title_align="left",
