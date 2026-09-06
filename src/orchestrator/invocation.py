@@ -29,6 +29,7 @@ from src.orchestrator.context import (
     _estimate_tokens,
 )
 from src.orchestrator.resilience import _log_failure
+from src.infra import trace
 
 RATE_LIMIT_MARKERS = (
     "429",
@@ -202,6 +203,8 @@ def invoke_with_recovery(
         except Exception:
             return False
 
+    depart = time.monotonic()
+
     while True:
         try:
             response = llm.invoke(working)
@@ -209,6 +212,27 @@ def invoke_with_recovery(
             if usage:
                 from src.ui.token_gauge import update_usage
                 update_usage(usage)
+            # Les tokens passaient déjà ICI, et n'allaient qu'à une jauge
+            # d'écran : mesurés à chaque tour, puis morts avec l'affichage. Le
+            # plancher de schémas qui dépassait Groq — 30 outils, 12 731 tokens —
+            # était donc mesurable en continu depuis le début, et a pourtant
+            # demandé une mesure manuelle.
+            trace.inscrire(trace.Action(
+                genre=trace.APPEL_LLM,
+                resultat=trace.OK,
+                backend=backend,
+                modele=str(getattr(llm, "model", "") or getattr(llm, "model_name", "")),
+                tokens_entree=int((usage or {}).get("input_tokens") or 0),
+                tokens_sortie=int((usage or {}).get("output_tokens") or 0),
+                latence_ms=int((time.monotonic() - depart) * 1000),
+                # Ce que l'appel a coûté en stratégies. Une réponse obtenue au
+                # quatrième essai n'est pas la même qu'une réponse du premier, et
+                # `failure_log` compte les échecs sans dire comment ça a fini.
+                extra={k: v for k, v in (
+                    ("retries", transient_retries), ("capped", capped),
+                    ("compressed", compressed), ("degraded", degraded),
+                    ("sans_outils", stripped_tools)) if v},
+            ))
             return Outcome(response=response, working=working,
                            removals=removals, summary=summary)
 

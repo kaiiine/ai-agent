@@ -932,6 +932,11 @@ class ToolRetriever:
     def get(self, query: str) -> list:
         ranked, rangs = self._rank_groups_detaille(query)
         groups = ranked + [g for g in _PINNED_GROUPS if g not in ranked]
+        # Ce que la trace de décision relira. Le classement se perdait avec le
+        # tour : mesurer « quel groupe a gagné sur quelle requête » supposait de
+        # relancer AXON et de lire `/debug`, ce qui a été refait quatre fois à la
+        # main. Un attribut plutôt qu'un second retour : `get()` a des appelants.
+        self.derniere_route: list[tuple[str, int]] = []
 
         # Les trois portes déterministes, au même endroit et au même titre :
         # `quant`, `coding`, `cron`. Chacune rattrape ce que le sémantique rate
@@ -964,6 +969,10 @@ class ToolRetriever:
             seuil = TOOL_GROUPS[group].requires_top_rank
             if seuil is not None and rangs.get(group, position) > seuil:
                 continue
+            # Les groupes RETENUS, avec le rang qui les a fait retenir. Ceux que
+            # le seuil vient d'écarter n'y sont pas : ce qui n'a pas contribué à
+            # la sélection n'a rien à dire sur elle.
+            self.derniere_route.append((group, rangs.get(group, position)))
             files.append(self._tools_of(group, query))
 
         # Le BUDGET, et non l'union. Unir les groupes entiers liait 26,6 outils en

@@ -57,6 +57,11 @@ logger = logging.getLogger(__name__)
 
 app = Server("axon")
 
+# Idem côté MCP : ces tours viennent d'un IDE, pas du terminal.
+from src.infra import trace as _trace
+
+_trace.declarer_source("mcp")
+
 _tools_cache: list | None = None
 
 

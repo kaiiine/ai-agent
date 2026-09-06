@@ -21,6 +21,17 @@ from pathlib import Path
 _CONTROLES = (".py", ".json")
 
 
+def sait_verifier(chemin: str) -> bool:
+    """Ce fichier fait-il partie de ce qu'on sait contrôler ?
+
+    Public parce que la trace de décision doit distinguer « vérifié, il tient »
+    de « personne ne sait vérifier ça ». Confondre les deux ferait passer la
+    couverture actuelle — deux extensions — pour une garantie générale, et le
+    trou ne se compterait jamais.
+    """
+    return Path(chemin).suffix in _CONTROLES
+
+
 def _erreur_python(source: str) -> str:
     try:
         ast.parse(source)

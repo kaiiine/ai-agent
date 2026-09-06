@@ -6,10 +6,91 @@ sans qu'une exception coûte le tour entier ?
 """
 from __future__ import annotations
 
+import json
+import time
+
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt import ToolNode
 
+from src.infra import trace
 from src.orchestrator.resilience import tool_error_to_message
+
+#: Statut rendu par un outil → (verdict de policy, ce qu'il est advenu).
+#:
+#: Un refus REND un statut, il ne lève pas. C'est ce qui a permis à une tâche cron
+#: de loguer « ok » alors que toutes ses commandes avaient été bloquées : le
+#: statut était là, personne ne le lisait. Ici on le lit une fois, au seul
+#: endroit où tous les résultats d'outils passent.
+_VERDICTS: dict[str, tuple[str, str]] = {
+    "blocked": (trace.REFUSE, trace.BLOQUE),
+    "requires_confirmation": (trace.A_CONFIRMER, trace.BLOQUE),
+    "error": (trace.AUTORISE, trace.ERREUR),
+}
+
+
+def _verdict(message: ToolMessage) -> tuple[str, str, str]:
+    """(policy, résultat, code d'erreur) d'un résultat d'outil.
+
+    Le code d'erreur est COURT et stable — ce qui se compte doit se grouper. Un
+    message complet ne se regroupe pas : deux fois la même panne donne deux
+    lignes distinctes, et le total se perd.
+    """
+    if getattr(message, "status", "") == "error":
+        return trace.AUTORISE, trace.ERREUR, "tool_error"
+    contenu = message.content
+    if not isinstance(contenu, str) or not contenu.strip().startswith("{"):
+        return trace.AUTORISE, trace.OK, ""
+    try:
+        charge = json.loads(contenu)
+    except (ValueError, TypeError):
+        return trace.AUTORISE, trace.OK, ""
+    if not isinstance(charge, dict):
+        return trace.AUTORISE, trace.OK, ""
+    statut = str(charge.get("status") or "")
+    policy, resultat = _VERDICTS.get(statut, (trace.AUTORISE, trace.OK))
+    code = statut if resultat != trace.OK else ""
+    return policy, resultat, code
+
+
+def _inscrire_les_appels(messages: list, tc_by_id: dict, *,
+                         latence_ms: int, lot: int, cache: bool = False) -> None:
+    """Une ligne de trace par outil exécuté. Ne juge rien, lit ce qui est rendu.
+
+    Enveloppée comme `trace.inscrire` l'est : ce chemin passe par `src.ui.journal`
+    pour nommer la cible, et un journal qui casse le tour qu'il observe serait
+    précisément le défaut que la trace existe pour montrer. Ici la conséquence
+    serait pire qu'une ligne perdue — le lot d'outils entier échouerait.
+    """
+    try:
+        _inscrire(messages, tc_by_id, latence_ms=latence_ms, lot=lot, cache=cache)
+    except Exception:                                            # noqa: BLE001
+        pass
+
+
+def _inscrire(messages: list, tc_by_id: dict, *,
+              latence_ms: int, lot: int, cache: bool) -> None:
+    from src.ui.journal import cible_de_l_appel
+
+    for msg in messages:
+        if not isinstance(msg, ToolMessage):
+            continue
+        appel = tc_by_id.get(msg.tool_call_id) or {}
+        policy, resultat, code = _verdict(msg)
+        trace.inscrire(trace.Action(
+            genre=trace.OUTIL,
+            outil=str(appel.get("name") or getattr(msg, "name", "") or ""),
+            cible=cible_de_l_appel(appel.get("args") or {})[:200],
+            policy=policy,
+            resultat=trace.CACHE if cache else resultat,
+            erreur=code,
+            # La latence est celle du LOT : `ToolNode` exécute le lot entier en
+            # un appel, et découper ce temps entre les appels serait inventé.
+            # Au-delà d'un appel, on ne l'attribue à aucun.
+            latence_ms=latence_ms if lot == 1 else 0,
+            verification=trace.NON_VERIFIE,
+            extra={"lot": lot} if lot > 1 else {},
+        ))
+
 
 def _refus_mode_plan(tool_calls: list) -> list[ToolMessage]:
     """Le mode plan retirait les outils d'écriture de la LIAISON seulement.
@@ -64,6 +145,11 @@ class CachedToolNode:
         # laisserait des `tool_call` sans réponse, ce que les providers rejettent.
         refus = _refus_mode_plan(tool_calls)
         if refus:
+            for _msg in refus:
+                trace.inscrire(trace.Action(
+                    genre=trace.OUTIL, outil=str(getattr(_msg, "name", "") or ""),
+                    policy=trace.REFUSE, resultat=trace.BLOQUE, erreur="plan_mode",
+                    verification=trace.NON_VERIFIE))
             bloques = {m.tool_call_id for m in refus}
             tool_calls = [tc for tc in tool_calls if tc["id"] not in bloques]
             if not tool_calls:
@@ -93,11 +179,17 @@ class CachedToolNode:
             )
 
         if cached_msgs:
+            _inscrire_les_appels(cached_msgs, {tc["id"]: tc for tc in tool_calls},
+                                 latence_ms=0, lot=len(cached_msgs), cache=True)
             return {"messages": refus + cached_msgs}
 
         # Execute and cache eligible results
+        _depart = time.monotonic()
         result = self._inner.invoke(state, config or {})
+        _latence = int((time.monotonic() - _depart) * 1000)
         tc_by_id = {tc["id"]: tc for tc in tool_calls}
+        _inscrire_les_appels(result.get("messages", []), tc_by_id,
+                             latence_ms=_latence, lot=len(tool_calls))
 
         for msg in result.get("messages", []):
             if not isinstance(msg, ToolMessage):

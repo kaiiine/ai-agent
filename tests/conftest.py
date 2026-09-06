@@ -27,6 +27,29 @@ def load_fixture(name: str) -> dict:
         return json.load(f)
 
 
+@pytest.fixture(autouse=True)
+def trace_hors_du_home(tmp_path, monkeypatch):
+    """La trace de décision écrit dans un répertoire temporaire, jamais sous `~/`.
+
+    `trace.inscrire` n'a aucune I/O à l'import (cf. docs/dette.md), mais il écrit
+    à l'APPEL — et c'est correct : c'est ce que prescrit DETTE-001 pour
+    `checkpoint.py`. Reste que tout test qui fait tourner le vrai graphe déposait
+    alors ses lignes dans le `~/.axon/decisions.jsonl` de la machine. Mesuré :
+    `tests/test_catalogue.py` y a écrit 26 lignes, dont un rattrapage
+    `jira_create_issue` sur une requête météo — de quoi fausser la première vraie
+    mesure de `axon trace --route`.
+
+    Le correctif est local aux tests, pas au module, exactement comme le dit
+    docs/dette.md du cas `test_us_leagues_live`. Posé une fois ici plutôt que
+    dans chaque fichier : un test ajouté demain hérite de la protection sans
+    savoir qu'elle existe.
+    """
+    from src.infra import langfuse_export, trace
+
+    monkeypatch.setattr(trace, "FICHIER", tmp_path / "decisions.jsonl")
+    monkeypatch.setattr(langfuse_export, "REPERE", tmp_path / "langfuse.json")
+
+
 @pytest.fixture
 def offline_gateway(tmp_path, monkeypatch):
     """Gateway déterministe et sans réseau.

@@ -48,6 +48,12 @@ import uvicorn
 from src.api.models import ChatRequest
 from src.api.streaming import stream_orchestrator, text_lines_to_sse, sse_chunk
 from src.api.commands import dispatch, is_command, parse
+from src.infra import trace
+
+# Le graphe est le même pour le terminal et pour ce serveur : sans cette
+# déclaration, les tours servis à Zed ou Cursor s'étiquetteraient `tui` dans la
+# trace, et `axon trace --source` mélangerait deux chemins.
+trace.declarer_source("api")
 
 app = FastAPI(title="Axon", version="1.0.0", docs_url=None, redoc_url=None)
 

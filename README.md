@@ -351,6 +351,47 @@ A web search names the sites it actually visited. Parallel calls to the same
 tool are paired by call id, so two simultaneous reads never collapse into one
 line. A step that fails says so and the run continues.
 
+### Decision trace — what the screen forgets
+
+The journal above scrolls away with the session. The **decision trace** keeps it:
+one JSONL line per action in `~/.axon/decisions.jsonl`, grouped by `run_id`, with
+no dependency and no I/O at import. It never raises — a journal that breaks the
+turn it observes is the very defect it exists to reveal.
+
+What it records is what a generic tracer cannot see. LangSmith and Langfuse
+observe LLM calls and `tool_call`s; Axon's decisions are taken **between** those
+calls — which groups stage 1 elected and at what rank, which tool had to be
+claimed from the catalogue because it wasn't bound, which policy verdict refused
+a command, what `verifier()` said about the file just written.
+
+```bash
+axon trace                     # the last turns, action by action
+axon trace <run_id>            # one turn in full
+axon trace --route             # which group wins, at what rank, and the catalogue net
+axon trace --outils            # per tool: ok / error / blocked / median latency
+axon trace --llm               # tokens and latency per backend
+axon trace --source cron       # any view, restricted to the unattended path
+```
+
+`--route` finally produces the number the routing rework asked for in a comment:
+**the catalogue fallback rate**. It says how far tool selection can be tightened —
+a net used often means the budget is too low, a net never used means it can drop
+further.
+
+Where nothing can be verified, the trace writes `none` explicitly rather than
+leaving a blank that would later read as success — `verifier()` covers `.py` and
+`.json`, and that gap has to be countable.
+
+Scheduled tasks get an **alert** on top: the cron daemon is the only path nobody
+watches, and it is where a task once logged `ok` while every one of its commands
+had been blocked. Thresholds are deterministic, never a model's judgement.
+
+Optional export to a **self-hosted Langfuse** (`axon trace --export-langfuse`) —
+batched, from disk, replayable, adding no dependency. `AXON_TRACE=0` turns
+everything off. See [`docs/monitoring.md`](docs/monitoring.md), which also records
+why Prometheus and Grafana are *not* here, and the exact condition that would
+bring them in.
+
 ### ASCII previews & animations
 
 The browser-driving tools render their page as an ASCII frame anchored to the

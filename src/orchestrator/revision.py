@@ -13,8 +13,10 @@ import json
 
 from langchain_core.messages import HumanMessage, ToolMessage
 
+from src.infra import trace
+from src.orchestrator import hitl
 from src.orchestrator.hitl import DIFF, Demande, Question, demander
-from src.orchestrator.verification import consigne, verifier
+from src.orchestrator.verification import consigne, sait_verifier, verifier
 
 APPLIQUER, REFUSER, PRECISER = "Appliquer", "Refuser", "Préciser"
 
@@ -222,6 +224,20 @@ def reviser(state: dict) -> dict:
         # source dont tout le corps tenait sur une ligne avec des `\n` littéraux ;
         # le diff s'affichait, le script était mort.
         fautifs = verifier(ecrits)
+        # LA colonne qui distingue « écrit » de « debout ». `verifier()` ne sait
+        # contrôler que `.py` et `.json` : pour tout le reste on écrit
+        # explicitement `none`, plutôt que de laisser un vide qu'on relirait plus
+        # tard comme un succès. Le trou doit se compter, c'est ce qui dira quand
+        # VERIFY mérite d'être étendu, et à quoi.
+        _casses = {f.split(" — ", 1)[0] for f in fautifs}
+        for _chemin in ecrits:
+            _nom = Path(_chemin).name
+            _connu = sait_verifier(_chemin)
+            trace.inscrire(trace.Action(
+                genre=trace.VERIFICATION, outil="revision", cible=_chemin[:200],
+                confirmation=hitl.ACCORD, resultat=trace.OK,
+                verification=("casse" if _nom in _casses
+                              else trace.OK if _connu else trace.NON_VERIFIE)))
         if fautifs:
             return {"messages": _corriger_les_resultats(messages, "applied")
                     + [note_pour_le_modele(f"{rendu} {consigne(fautifs)}")]}
@@ -236,6 +252,16 @@ def reviser(state: dict) -> dict:
                     f"{rendu} Ils sont sur le disque : relis-les plutôt que de les "
                     f"réécrire de mémoire, et poursuis la tâche."
                     + rappel_du_plan(ecrits))]}
+
+    # Un refus est une décision, pas une absence de décision : sans cette ligne,
+    # la trace ne montrerait que les revues acceptées, et le taux de refus — le
+    # signal qui dit qu'une proposition part de travers — serait invisible.
+    for _change in changements:
+        trace.inscrire(trace.Action(
+            genre=trace.VERIFICATION, outil="revision", cible=_change.path[:200],
+            confirmation=hitl.REFUS, resultat=trace.BLOQUE,
+            erreur="preciser" if decision == PRECISER else "refuser",
+            verification=trace.NON_VERIFIE))
 
     pending_changes.clear()
     _prendre_cellules()

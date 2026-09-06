@@ -211,7 +211,7 @@ d'évaluateurs par outil ». Deux appelants aujourd'hui : shell et mail.
 
 ---
 
-## 5. Trace de décision
+## 5. ~~Trace de décision~~ FAIT — branche `feat/monitoring`
 
 Le meilleur rapport effort/gain pour la suite, parce qu'elle compose : elle
 n'améliore pas AXON, elle améliore la capacité à l'améliorer. Quatre fois cette
@@ -221,16 +221,35 @@ semaine, des mesures de routage ont été refaites à la main.
 appels d'outils dans une boucle ; un enregistrement plat par tour perdrait
 l'information utile — lequel des N a fait quoi.
 
+Livré dans `src/infra/trace.py`, relu par `axon trace`, documenté dans
+[`docs/monitoring.md`](docs/monitoring.md). Le schéma retenu :
+
 ```
-run_id · intent · context_used · decision · policy · confirmation
-       · action · result · verification · learnable_signal
+run_id · seq · at · source · axon_sha
+genre · intent · groupes · outils_lies · outil · cible
+policy · confirmation · resultat · verification · erreur
+tokens_entree · tokens_sortie · latence_ms · backend · modele · extra
 ```
 
-`learnable_signal` alimente directement la liste blanche apprenante : « tu as
-autorisé `docker compose up` cinq fois, je l'ajoute ? »
+Trois écarts avec le schéma esquissé ici, chacun pour une raison :
 
-**À corriger au passage** : `/debug` affiche `tools sélectionnés : —` parce
-qu'il lit l'état du tour **précédent**.
+- `context_used` est remplacé par `tokens_entree`. « Ce qui a servi de contexte »
+  n'a pas de définition stable ; sa TAILLE en a une, et c'est elle qui a manqué
+  le jour où le plancher de schémas a dépassé Groq.
+- `source` s'ajoute (`tui`/`cron`/`api`/`mcp`). Sans elle, les lignes du démon et
+  celles de la conversation se mélangent — et c'est le démon, celui que personne
+  ne regarde, qu'on veut isoler d'un coup.
+- `learnable_signal` n'est pas écrit. Il n'a pas encore de consommateur : la
+  liste blanche apprenante se déduira de `policy` + `confirmation`, déjà là. Une
+  colonne sans lecteur diverge en silence.
+
+**Ce que ça débloque tout de suite** : `axon trace --route` donne le taux de
+rattrapage au catalogue, que `graph.py` réclamait en commentaire — c'est lui qui
+dira jusqu'où la sélection peut être resserrée. Et `--outils` compte la
+couverture réelle de VERIFY (§3) au lieu de la supposer.
+
+**Reste ouvert** : `/debug` affiche toujours `tools sélectionnés : —` parce qu'il
+lit l'état du tour **précédent**. La trace, elle, écrit le tour courant.
 
 ---
 
@@ -264,6 +283,25 @@ pondérations ont déjà été rejetées faute de preuve.
 **Routeur automatique entre backends.** Le bug NVIDIA était « je crois tourner
 sur X, je tourne sur Y ». Automatiser ce choix reprend la seule chose qui a
 permis de le voir.
+
+**Prometheus et Grafana — pas maintenant, et on sait à quelle condition.**
+Prometheus TIRE sur un endpoint HTTP ; le processus où se prennent presque toutes
+nos décisions est le TUI, interactif et sans serveur. Et ses labels doivent
+rester à basse cardinalité quand toutes nos questions sont à haute cardinalité :
+il sait dire « 4 % de refus », jamais lequel — or le diagnostic est toujours dans
+le lequel. Déclencheur pour reprendre : un processus long à trafic continu
+(`api_server` à plusieurs clients, ou le démon à haute fréquence). Argumentaire
+complet dans [`docs/monitoring.md`](docs/monitoring.md).
+
+**Sentry.** Même raison, moins tranchée : `failure_log.py` couvre déjà les pannes
+de backend avec leur stratégie de récupération, et sur une application locale une
+exception se voit tout de suite. Le seul vrai trou était le démon — l'alerting de
+`feat/monitoring` le couvre sans service tiers.
+
+**Un juge de qualité DANS le graphe.** Inchangé. En revanche un juge **hors
+ligne**, en batch, sur un échantillon de traces, n'est pas la même chose : il ne
+bloque aucun tour et n'ajoute aucun appel au chemin critique. Pas écrit, mais la
+trace lui donne déjà son entrée.
 
 **~~Migrer le specialist en sous-graphe — pas maintenant.~~ FAIT.** Le signal
 qu'on attendait est arrivé : le specialist a écrit « à toi de valider la commande

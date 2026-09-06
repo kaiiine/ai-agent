@@ -19,6 +19,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.date import DateTrigger
 from src.agents.cron.store import get_tasks, update_task, deactivate_task, append_log
 from src.agents.slack.tools import _client, _resolve_channel
+from src.infra import alerte, trace
 from src.infra.settings import settings
 from src.llm.models import make_llm_gemini, make_llm_mistral, make_llm_ollama_cloud, make_llm_nvidia
 
@@ -126,6 +127,11 @@ def _run_task(task_id: str, *, essai: bool = False) -> dict | None:
     if not task.get("active") and not essai:
         return None
 
+    # Un run par exécution de tâche. La source `cron` sépare ces lignes de celles
+    # de la conversation : c'est le chemin sans témoin, celui qu'on veut pouvoir
+    # isoler d'un coup dans `axon trace`.
+    run_id = trace.nouveau_run("cron")
+
     start = time.perf_counter()
     log_entry: dict = {
         "essai": essai,
@@ -211,6 +217,15 @@ def _run_task(task_id: str, *, essai: bool = False) -> dict | None:
         # Un refus d'outil doit écraser le statut optimiste : sinon une tâche
         # entièrement bloquée passe pour un succès.
         refus = _refus_d_outil(result_state.get("messages") or [])
+        for commande in refus:
+            # Le démon n'utilise pas `CachedToolNode` — il a son propre graphe
+            # (`create_react_agent`), donc rien n'a inscrit ces refus. Tant que
+            # les deux graphes n'en font qu'un, la trace doit être alimentée des
+            # deux côtés, sinon le chemin non surveillé est aussi le moins vu.
+            trace.inscrire(trace.Action(
+                genre=trace.OUTIL, outil="shell_run", cible=str(commande)[:200],
+                policy=trace.REFUSE, resultat=trace.BLOQUE, erreur="blocked",
+                verification=trace.NON_VERIFIE))
         if refus:
             log_entry["status"] = "error"
             log_entry["error"] = (
@@ -235,6 +250,30 @@ def _run_task(task_id: str, *, essai: bool = False) -> dict | None:
         retirer(source_autorisation)
 
     log_entry["duration_ms"] = int((time.perf_counter() - start) * 1000)
+
+    trace.inscrire(trace.Action(
+        genre=trace.TACHE,
+        outil=task["id"],
+        cible=str(task.get("description") or "")[:200],
+        resultat=(trace.ERREUR if log_entry["status"] == "error" else trace.OK),
+        erreur=str(log_entry.get("error") or "")[:80],
+        latence_ms=log_entry["duration_ms"],
+        verification=trace.NON_VERIFIE,
+        extra={"notifie": bool(log_entry.get("notified")), "essai": essai},
+    ))
+
+    # L'alerting, sur le seul chemin que personne ne regarde. En essai on ne
+    # notifie pas — même règle que le reste de `cron-test` : l'exécution est
+    # réelle, les effets sont suspendus, et on DIT ce qui aurait été envoyé.
+    raisons = alerte.du_run(run_id)
+    if raisons:
+        if essai:
+            log_entry["aurait_alerte"] = raisons
+        else:
+            _send_notification(task.get("notify_channels") or ["desktop"],
+                               f"{task.get('description', task['id'])} — anomalie",
+                               "\n".join(f"• {r}" for r in raisons))
+
     if not essai:
         append_log(task["id"], log_entry)
     return log_entry

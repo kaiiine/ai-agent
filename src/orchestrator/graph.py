@@ -40,6 +40,7 @@ from src.agents.deep.noeud import approfondir
 from src.orchestrator.plan import plan_a_valider, valider
 from src.orchestrator.revision import reviser, revision_attendue
 from src.orchestrator.tool_node import CachedToolNode
+from src.infra import trace
 
 console = RichConsole()
 
@@ -272,6 +273,10 @@ def _chat_node_factory():
         last = state["messages"][-1] if state["messages"] else None
         if isinstance(last, HumanMessage):
             _compressed_this_turn = False
+            # Un run = un TOUR d'utilisateur, pas un passage dans ce nœud : la
+            # boucle d'outils y revient N fois, et ces N passages racontent la
+            # même demande. C'est le regroupement qui rend la trace lisible.
+            trace.nouveau_run()
 
         # Une bascule automatique (rate-limit) est TEMPORAIRE : si le provider préféré
         # a de nouveau une clé saine, on y revient avant de choisir le backend du tour.
@@ -360,6 +365,11 @@ def _chat_node_factory():
                 # Visible : c'est ce taux qui dira jusqu'où la sélection peut
                 # être resserrée. Sans trace, l'arbitrage se referait au doigt.
                 console.print(f"[dim]  +  catalogue → {_nom}[/dim]")
+                # Et écrit, maintenant : à l'écran le taux défile et disparaît
+                # avec la session. C'est pourtant LA mesure qui dit si le filet
+                # tient — le n° 19 des scénarios, validé sur trois cas.
+                trace.inscrire(trace.Action(
+                    genre=trace.RATTRAPAGE, intent=query[:200], outil=_nom))
         selected_tools.append(obtenir_outil)
         catalogue = _menu(_interdits)
 
@@ -373,6 +383,18 @@ def _chat_node_factory():
             catalogue = ""
         else:
             llm_with_tools = factory().bind_tools(selected_tools)
+
+        # APRÈS la liaison, pas avant : sous synthèse forcée, aucun outil n'est
+        # lié. Inscrire la sélection plus haut aurait écrit une liste que le
+        # modèle n'a jamais reçue — peindre en vert ce qui n'a pas eu lieu.
+        trace.inscrire(trace.Action(
+            genre=trace.ROUTE,
+            intent=query[:200],
+            groupes=tuple(getattr(retriever, "derniere_route", ()) or ()),
+            outils_lies=() if force_text else tuple(t.name for t in selected_tools),
+            backend=backend,
+            extra={"synthese_forcee": True} if force_text else {},
+        ))
 
         messages = state["messages"]
         today = datetime.now().strftime("%Y-%m-%d")

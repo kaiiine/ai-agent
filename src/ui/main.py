@@ -82,6 +82,15 @@ if len(sys.argv) > 1 and sys.argv[1] == "cron-test":
     print("\n  axon cron-test <id>  pour en essayer une")
     sys.exit(0)
 
+# ── 0quinquies-ter. `axon trace` — relire la trace de décision ────────────────
+# Avant le boot loader et le graphe : relire un journal n'a besoin ni de l'un ni
+# de l'autre, et les charger coûterait quelques secondes pour lire un fichier.
+if len(sys.argv) > 1 and sys.argv[1] == "trace":
+    from dotenv import load_dotenv
+    load_dotenv()
+    from src.infra.trace_cli import main as _trace
+    sys.exit(_trace(sys.argv[2:]))
+
 # ── 0sexies. `axon providers-discover` — découverte de sources (Tavily), hors money-path (§25) ─
 if len(sys.argv) > 1 and sys.argv[1] == "providers-discover":
     from dotenv import load_dotenv
