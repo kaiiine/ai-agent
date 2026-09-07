@@ -91,6 +91,16 @@ if len(sys.argv) > 1 and sys.argv[1] == "trace":
     from src.infra.trace_cli import main as _trace
     sys.exit(_trace(sys.argv[2:]))
 
+# ── 0quinquies-quater. `axon incidents` — les erreurs constatées ──────────────
+# Même place et même raison que `axon trace` : déduire des incidents d'un journal
+# ne demande ni le graphe ni le boot loader, et les charger coûterait quelques
+# secondes pour relire un fichier.
+if len(sys.argv) > 1 and sys.argv[1] == "incidents":
+    from dotenv import load_dotenv
+    load_dotenv()
+    from src.infra.incident_cli import main as _incidents
+    sys.exit(_incidents(sys.argv[2:]))
+
 # ── 0sexies. `axon providers-discover` — découverte de sources (Tavily), hors money-path (§25) ─
 if len(sys.argv) > 1 and sys.argv[1] == "providers-discover":
     from dotenv import load_dotenv

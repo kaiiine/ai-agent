@@ -8,6 +8,7 @@ trois questions qui ont été reposées à la main cette semaine.
     axon trace <run_id>            un tour en entier
     axon trace --route             quel groupe gagne, et à quel rang
     axon trace --outils            ce que chaque outil rend, et en combien de temps
+    axon trace --erreurs           ce qui a raté, compté par outil et par cible
     axon trace --export-langfuse   pousser vers un Langfuse auto-hébergé
 
 `--route` porte la mesure que `graph.py` réclamait en commentaire : le taux de
@@ -158,6 +159,50 @@ def _rendre_route(lignes: list[dict]) -> None:
             f"{nom}×{n}" for nom, n in top) + "[/]")
 
 
+# ── Vue « erreurs » ──────────────────────────────────────────────────────────
+def _rendre_erreurs(lignes: list[dict]) -> None:
+    """Les deux signaux d'erreur que la trace écrit déjà, comptés.
+
+    Des COMPTES, pas des taux : à volume mono-utilisateur un ratio ne veut rien
+    dire — « trois rattrapages sur gmail_send_email ce mois-ci » se lit, « 4,2 % »
+    ne se lit pas. C'est le même arbitrage qui a fait reporter Prometheus.
+    """
+    from src.infra import erreurs
+
+    vue = erreurs.couverture(lignes)
+    console.print(f"\n  [{SOURD}]{vue['runs']} tour(s) observé(s)  ·  "
+                  f"{vue['avec_signal']} portant un signal  ·  "
+                  f"projets : {', '.join(vue['projets']) or '—'}[/]")
+
+    rattrapes = erreurs.rattrapages(lignes)
+    if rattrapes:
+        table = _table("outil réclamé", "projet", "n", "exemple")
+        for compte in rattrapes:
+            table.add_row(compte.quoi, compte.projet, str(compte.n),
+                          (compte.exemples[0][:52] if compte.exemples else "—"))
+        console.print()
+        console.print(table)
+        # Écrit à chaque affichage, et pas seulement dans la doc : c'est au
+        # moment de lire le chiffre qu'on est tenté d'en tirer une règle.
+        console.print(f"  [{SOURD}]un rattrapage dit que la sélection n'a pas lié[/]")
+        console.print(f"  [{SOURD}]l'outil réclamé — pas qu'il était le bon.[/]")
+        console.print(f"  [{SOURD}]relire un échantillon avant d'en durcir une porte.[/]")
+    else:
+        console.print(f"  [{SOURD}]aucun rattrapage au catalogue[/]")
+
+    refuses = erreurs.refus(lignes)
+    if refuses:
+        table = _table("cible refusée", "projet", "motif", "n", "consigne donnée")
+        for compte in refuses:
+            table.add_row(compte.quoi[-46:], compte.projet,
+                          compte.motif, str(compte.n),
+                          (compte.exemples[0][:40] if compte.exemples else "—"))
+        console.print()
+        console.print(table)
+    else:
+        console.print(f"  [{SOURD}]aucun refus à la demande[/]")
+
+
 # ── Vue « outils » ───────────────────────────────────────────────────────────
 def _rendre_outils(lignes: list[dict]) -> None:
     # Les tâches planifiées sont comptées à part : leur identifiant n'est pas un
@@ -239,6 +284,8 @@ def main(argv: list[str]) -> int:
                          help="agrégat du routage et du filet de catalogue")
     parseur.add_argument("--outils", action="store_true",
                          help="agrégat par outil, et couverture de VERIFY")
+    parseur.add_argument("--erreurs", action="store_true",
+                         help="ce qui a raté : rattrapages au catalogue, refus")
     parseur.add_argument("--llm", action="store_true",
                          help="agrégat des appels au modèle : tokens, latence")
     parseur.add_argument("--export-langfuse", action="store_true",
@@ -265,6 +312,8 @@ def main(argv: list[str]) -> int:
         _rendre_route(lignes)
     elif args.outils:
         _rendre_outils(lignes)
+    elif args.erreurs:
+        _rendre_erreurs(lignes)
     elif args.llm:
         _rendre_llm(lignes)
     elif args.run_id:

@@ -44,10 +44,15 @@ def trace_hors_du_home(tmp_path, monkeypatch):
     dans chaque fichier : un test ajouté demain hérite de la protection sans
     savoir qu'elle existe.
     """
-    from src.infra import langfuse_export, trace
+    from src.infra import incident, langfuse_export, trace
 
     monkeypatch.setattr(trace, "FICHIER", tmp_path / "decisions.jsonl")
     monkeypatch.setattr(langfuse_export, "REPERE", tmp_path / "langfuse.json")
+    # Même raison pour le journal d'incidents : `capturer()` écrit à l'appel, et
+    # un test qui le déclenche déposerait ses lignes dans le `~/.axon/` de la
+    # machine. Le trou s'ajoute ici et pas dans chaque fichier, pour qu'un test
+    # écrit demain hérite de la protection sans savoir qu'elle existe.
+    monkeypatch.setattr(incident, "FICHIER", tmp_path / "incidents.jsonl")
 
 
 @pytest.fixture

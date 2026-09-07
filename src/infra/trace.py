@@ -96,6 +96,10 @@ CACHE = "cache"
 #: aujourd'hui à `.py` et `.json`, et c'est un trou qu'il faut voir, pas maquiller.
 NON_VERIFIE = "none"
 
+#: Le projet quand il n'y en a pas. Un vide se confondrait à la relecture avec
+#: « colonne pas encore écrite », et la portée d'une leçon ne se devine pas.
+HORS_REPO = "—"
+
 
 @dataclass(frozen=True)
 class Action:
@@ -136,6 +140,7 @@ class Action:
 _verrou = threading.Lock()
 _run: str = ""
 _source: str = ""
+_projet: str = ""
 _seq: int = 0
 
 
@@ -171,12 +176,45 @@ def nouveau_run(source: str = "") -> str:
     — celui que personne ne regarde — qu'on veut pouvoir isoler. Omise, elle vaut
     ce que le point d'entrée a déclaré.
     """
-    global _run, _source, _seq
+    global _run, _source, _projet, _seq
+    projet = _projet_courant()
     with _verrou:
         _run = uuid4().hex[:12]
         _source = source or _source_par_defaut
+        _projet = projet
         _seq = 0
         return _run
+
+
+def _projet_courant() -> str:
+    """Le dépôt d'où part ce run, ou `HORS_REPO`.
+
+    Résolu à CHAQUE run, pas une fois par processus : l'agent shell déplace le
+    `cwd` en cours de session, et une valeur figée à l'import étiquetterait tous
+    les tours suivants du nom du premier projet ouvert.
+
+    Il faut cette colonne ici parce qu'elle ne se reconstitue pas après coup. Le
+    fichier est global (`~/.axon/`) pour servir d'un projet à l'autre — or une
+    règle de routage apprise sur le catalogue d'un projet peut ne rien vouloir
+    dire dans un autre, voire nuire. Sans provenance, la relecture mélange des
+    leçons qui ne se transposent pas, et rien ne permet de les redémêler ensuite.
+    """
+    try:
+        try:
+            from src.agents.shell.tools import get_cwd
+
+            depart = Path(get_cwd())
+        except Exception:                                        # noqa: BLE001
+            # `Path.cwd()` lève si le répertoire courant a été supprimé sous les
+            # pieds du processus. Le repli est DANS le garde extérieur pour ça :
+            # un `cwd` disparu ne doit pas emporter le tour qu'on observe.
+            depart = Path.cwd()
+        for repertoire in (depart, *depart.parents):
+            if (repertoire / ".git").exists():
+                return repertoire.name
+    except Exception:                                            # noqa: BLE001
+        pass
+    return HORS_REPO
 
 
 def run_courant() -> str:
@@ -202,6 +240,7 @@ def inscrire(action: Action, *, fichier: Path | None = None) -> None:
                 "seq": _seq,
                 "at": datetime.now(timezone.utc).isoformat(),
                 "source": _source,
+                "projet": _projet,
                 "axon_sha": _sha(),
                 **asdict(action),
             }

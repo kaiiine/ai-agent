@@ -135,6 +135,50 @@ def test_preciser_n_ecrit_rien_et_transmet_la_demande(cible, monkeypatch):
         "sans la précision, le modèle referait exactement la même proposition")
 
 
+def test_la_precision_atteint_la_trace_et_pas_seulement_le_modele(
+        cible, monkeypatch):
+    """« Que faut-il ajuster ? » est la seule fois où l'utilisateur DIT ce qu'il
+    aurait fallu faire.
+
+    Elle partait au modèle et nulle part ailleurs : le refus se comptait, sa
+    raison mourait avec la session. C'est pourtant elle qui remplit le champ
+    `correction` d'un incident — sans quoi la boucle d'apprentissage n'archive
+    que des rejets sans jamais savoir vers quoi corriger.
+    """
+    import src.ui.edit_mode as mode
+    from src.infra import trace
+
+    monkeypatch.setattr(mode, "get_mode", lambda: "ask")
+
+    app = _graphe()
+    cfg = {"configurable": {"thread_id": "precision-tracee"}}
+    app.invoke({"messages": []}, cfg)
+    app.invoke(reponse([PRECISER, "utilise print(2) plutôt"]), cfg)
+
+    refus = [l for l in trace.lire()
+             if l.get("confirmation") == "refus" and l.get("erreur") == "preciser"]
+    assert refus, "un refus avec consigne doit laisser une ligne"
+    assert refus[0]["extra"]["precision"] == "utilise print(2) plutôt"
+
+
+def test_un_refus_net_ne_fabrique_pas_de_precision(cible, monkeypatch):
+    """Rien à consigner n'est pas la même chose qu'une consigne vide : un
+    incident sans correction doit rester sans correction."""
+    import src.ui.edit_mode as mode
+    from src.infra import trace
+
+    monkeypatch.setattr(mode, "get_mode", lambda: "ask")
+
+    app = _graphe()
+    cfg = {"configurable": {"thread_id": "refus-net-trace"}}
+    app.invoke({"messages": []}, cfg)
+    app.invoke(reponse([REFUSER, ""]), cfg)
+
+    refus = [l for l in trace.lire() if l.get("erreur") == "refuser"]
+    assert refus
+    assert refus[0]["extra"] == {}
+
+
 @pytest.mark.parametrize("decision", ["", "n'importe quoi", "APPLIQUER "])
 def test_une_reponse_qui_n_est_pas_APPLIQUER_n_ecrit_rien(cible, decision, monkeypatch):
     """Un client en panne, une fenêtre fermée ou une réponse mal orthographiée

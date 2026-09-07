@@ -253,9 +253,47 @@ lit l'état du tour **précédent**. La trace, elle, écrit le tour courant.
 
 ---
 
-## 6. Plus petit, plus tard
+## 6. Boucle d'apprentissage — rangs 1 et 2 FAITS, branche `feat/memory`
 
-- **Liste blanche apprenante** — dépend de la trace (§5).
+`détecter → attribuer → mémoriser → généraliser → contraindre`. Les deux
+premiers rangs sont livrés — ceux qui MESURENT. Documenté dans
+[`docs/apprentissage.md`](docs/apprentissage.md).
+
+**Livré.** `src/infra/erreurs.py` compte les deux signaux que la trace écrivait
+déjà sans que personne ne les lise comme des erreurs (`rattrapage`,
+`confirmation=refus`), relu par `axon trace --erreurs`.
+`src/infra/incident.py` en déduit un journal d'incidents global, relu par
+`axon incidents`. Trois écarts avec le PRD, chacun pour une raison :
+
+- **`projet` est ajouté à la TRACE**, pas seulement au schéma d'incident. Le PRD
+  disait « pas de nouvelle colonne dans la trace » ; c'était intenable, parce
+  qu'un incident est déduit après coup et que la provenance ne se reconstitue
+  pas. Résolue une fois par run, comme `source`.
+- **`origine` s'ajoute au schéma d'incident** (`<run_id>:<seq>`). Sans clé de la
+  ligne source, une seconde passe de capture réécrirait tout et le compte des
+  récidives compterait des passes.
+- **`extra.precision` s'ajoute au refus** dans `revision.py`. « Que faut-il
+  ajuster ? » partait au modèle et nulle part ailleurs : le refus se comptait, sa
+  raison mourait avec la session. C'est le champ `correction` d'un incident.
+
+**Reste ouvert — rang 3, la consolidation.** Deux critères déjà connus : relire
+un échantillon de `rattrapage` avant de croire un compte (le signal atteste que
+la sélection n'a pas lié l'outil réclamé, pas que l'outil réclamé était le bon),
+et ne jamais promouvoir vers une règle globale un motif vu dans un seul `projet`.
+Elle rendra un **diff à valider**, jamais un commit : une porte ajoutée sans le
+bug vécu qui la justifie est indéboulonnable.
+
+**Hors périmètre.** Les corrections dites en conversation libre — le signal
+structuré ne voit que ce qui passe par un interrupt. Les erreurs de plan : la
+catégorie existe et reste vide, y mettre un classifieur LLM réintroduirait un
+cran plus loin le juge écarté à la détection.
+
+---
+
+## 7. Plus petit, plus tard
+
+- **Liste blanche apprenante** — dépend maintenant de la consolidation (§6),
+  pas de la trace : les deux signaux qu'elle demandait sont comptés.
 - **`/undo` élargi** : les écritures sont centralisées dans
   `revision.appliquer`, un journal des applications le rendrait trivial et il
   couvrirait tout, pas seulement le coding agent.

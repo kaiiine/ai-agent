@@ -261,7 +261,12 @@ def reviser(state: dict) -> dict:
             genre=trace.VERIFICATION, outil="revision", cible=_change.path[:200],
             confirmation=hitl.REFUS, resultat=trace.BLOQUE,
             erreur="preciser" if decision == PRECISER else "refuser",
-            verification=trace.NON_VERIFIE))
+            verification=trace.NON_VERIFIE,
+            # « Que faut-il ajuster ? » : la seule fois où l'utilisateur DIT ce
+            # qu'il aurait fallu faire. Elle partait au modèle et nulle part
+            # ailleurs — un refus se comptait, la raison du refus se perdait avec
+            # la session, et c'est elle qui vaut quelque chose plus tard.
+            extra={"precision": precision[:500]} if precision else {}))
 
     pending_changes.clear()
     _prendre_cellules()

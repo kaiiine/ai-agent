@@ -392,6 +392,36 @@ everything off. See [`docs/monitoring.md`](docs/monitoring.md), which also recor
 why Prometheus and Grafana are *not* here, and the exact condition that would
 bring them in.
 
+### Learning from mistakes — counting before concluding
+
+Two error signals were already being written to the trace, and nobody read them
+as errors: a **catalogue fallback** (the router did not bind the tool the model
+had to claim) and a **refusal at an interrupt** (you saw the proposed action and
+said no). Neither needs a model's judgement — telling "a correction" from "a new
+request" in free conversation is an open problem; these two are settled at write
+time.
+
+```bash
+axon trace --erreurs          # what failed, counted per tool and per target
+axon incidents --capturer     # re-read the trace, derive the new incidents
+axon incidents --projet axon  # keep one repository only
+```
+
+**Counts, not rates.** At single-user volume a ratio says nothing — "three
+fallbacks on `gmail_send_email` this month" reads, "4.2 %" does not.
+
+A fallback attests that selection did not bind the tool that was claimed — *not*
+that the claimed tool was the right one. Counting stays honest; hardening a gate
+on that count without re-reading a sample would teach the gate the model's own
+mistake. The warning is printed under the table, because that is the moment one
+is tempted to turn a number into a rule.
+
+Incidents live in their own global journal (`~/.axon/incidents.jsonl`) so a
+lesson can serve across conversations — and they carry a **`projet`** column, so
+a routing lesson learned in one repository is never silently generalised to
+another whose tool catalogue is different. The capture pass is idempotent and
+manual. See [`docs/apprentissage.md`](docs/apprentissage.md).
+
 ### ASCII previews & animations
 
 The browser-driving tools render their page as an ASCII frame anchored to the

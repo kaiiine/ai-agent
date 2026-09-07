@@ -36,7 +36,7 @@ d'être du module.
 ### Le schéma
 
 ```
-run_id · seq · at · source · axon_sha
+run_id · seq · at · source · projet · axon_sha
 genre · intent · groupes · outils_lies · outil · cible
 policy · confirmation · resultat · verification · erreur
 tokens_entree · tokens_sortie · latence_ms · backend · modele · extra
@@ -44,6 +44,14 @@ tokens_entree · tokens_sortie · latence_ms · backend · modele · extra
 
 `source` vaut `tui`, `cron`, `api` ou `mcp`. Elle isole d'un coup le chemin que
 personne ne regarde.
+
+`projet` est le dépôt d'où part le run, ou `—` hors dépôt. Ajoutée par
+`feat/memory` : le journal d'incidents qui s'appuie dessus est global pour servir
+d'une conversation à l'autre, et sans provenance il mélangerait des leçons qui ne
+se transposent pas — le catalogue d'outils d'un dépôt n'est pas celui d'un autre.
+Elle est résolue **à chaque run**, pas une fois par processus : l'agent shell
+déplace le `cwd` en cours de session. Voir
+[`docs/apprentissage.md`](apprentissage.md).
 
 `verification` vaut `ok`, `casse`, ou **`none` écrit explicitement** quand rien
 ne sait contrôler cette action. `verifier()` ne couvre aujourd'hui que `.py` et
@@ -60,6 +68,7 @@ axon trace <run_id>            # un tour en entier (préfixe accepté)
 axon trace --route             # quel groupe gagne, à quel rang, et le filet
 axon trace --outils            # par outil : ok / erreur / bloqué / latence
 axon trace --llm               # tokens et latence par backend
+axon trace --erreurs           # ce qui a raté, par outil et par cible
 axon trace --source cron       # n'importe laquelle des vues, filtrée
 ```
 
