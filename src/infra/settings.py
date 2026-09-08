@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # Même valeur que `configs/base.yaml`. Les deux avaient divergé : le défaut
     # Python ne sert que si le YAML manque, donc l'écart ne se voyait jamais —
     # jusqu'au jour où le YAML manque.
-    coding_model: str = "minimax-m3:cloud"
+    coding_model: str = "gpt-oss:120b-cloud"
     coding_model_local: str = "qwen2.5-coder:7b"
     coding_num_ctx_local: int = 16_384   # KV cache local — ajuster selon VRAM GPU (.env: CODING_NUM_CTX_LOCAL=8192)
     ollama_api_key: str | None = None

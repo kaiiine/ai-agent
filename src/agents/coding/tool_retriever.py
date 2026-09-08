@@ -263,6 +263,46 @@ _TOOL_ANCHORS: dict[str, list[str]] = {
 #: figer la valeur — il tombe si le classement se déplace.
 _DISTANCE_MAX_MCP = 0.85
 
+#: Combien de DOMAINES distincts peuvent semer la sélection, et jusqu'où chercher
+#: pour les trouver. Balayé sur le jeu de réglage de `CORPUS-CODING.md`, étiqueté
+#: par l'utilisateur, puis CONSTATÉ sur le jeu tenu à l'écart :
+#:
+#:     domaines   rappel   tâches complètes   précision   outils liés
+#:            2    42,2 %          0/36          91,2 %          18,9
+#:            4    67,3 %         12/36          70,2 %          27,8   ≈ l'ancien
+#:            5    76,9 %         21/36          63,8 %          32,6   ← retenu
+#:            6    83,7 %         22/36          57,7 %          38,4
+#:            8    94,6 %         29/36          48,9 %          47,4
+#:
+#: 5 est le genou : les tâches complètement servies passent de 12 à 21 pour 4,8
+#: outils de plus, là où 6 n'en gagne qu'une pour 5,8 de plus. Sur le jeu tenu à
+#: l'écart, jamais consulté pour ce choix : rappel 60,0 → 70,0 %, complètes 7/24
+#: → 9/24, largeur 31,0 → 35,3.
+#:
+#: Ce qui se paie : la précision tombe de 75,9 à 61,4 %. On lie plus large pour
+#: cesser de rater. C'est le bon sens du compromis ici — un outil en trop coûte
+#: des tokens, un outil manquant coûte la tâche.
+#:
+#:     python outils/mesure_routage.py --coding
+_DOMAINES_MAX = 5
+_PROFONDEUR_GRAINES = 60
+
+#: Domaines qui AGISSENT, et le rang au-delà duquel on refuse de les semer.
+#:
+#: Élargir aux domaines distincts a fait remonter `shell` sur « lis le contenu de
+#: page.tsx » (rang 9) et « renomme le fichier du formulaire » (rang 19) — deux
+#: cas que `test_lire_un_fichier_ne_tire_pas_le_shell` garde exprès. Lire un
+#: fichier ne doit pas mettre `shell_run` à portée : le coût d'un faux positif
+#: n'y est pas en tokens.
+#:
+#: C'est `requires_top_rank` de l'orchestrateur, transposé — même motif, même
+#: raison : « ce seuil existe pour les groupes dont l'outil AGIT ». Mesuré sur le
+#: jeu de réglage, il coûte 0,7 point de rappel et une tâche complète sur 36.
+#:
+#: `git` agit aussi, mais il est le domaine le plus MANQUÉ (11 fois) : lui poser
+#: un seuil aggraverait ce que ce chantier corrige.
+_RANG_MAX_SI_AGIT = {"shell": 8}
+
 #: Dépendances ORIENTÉES : serveur MCP → groupe natif dont il a besoin.
 #:
 #: À ne pas confondre avec l'appartenance à un groupe, qui est symétrique et dont
@@ -371,14 +411,37 @@ class CodingToolRetriever:
 
         # 1. Semantic retrieval — avec les distances, pour pouvoir écarter une
         #    graine MCP qui n'a en réalité rien matché (cf. _DISTANCE_MAX_MCP).
+        #
+        #    Les graines comptent un DOMAINE chacune, plus un outil. Prendre les
+        #    `k` outils les plus proches laissait un seul serveur MCP rafler
+        #    toutes les places : mesuré sur les 60 tâches réelles de
+        #    `CORPUS-CODING.md`, les graines d'une tâche Blender étaient
+        #    `{blender: 8}` — huit sur huit — et il n'en restait aucune pour
+        #    `git`, `filesystem` ou `graphe`, pourtant attendus. 35 % des tâches
+        #    avaient un domaine à cinq graines ou plus.
+        #
+        #    C'est la pathologie que l'orchestrateur a déjà soignée, et son
+        #    en-tête la décrit mot pour mot : « le nombre d'ancres était devenu
+        #    un multiplicateur de probabilité d'être choisi, indépendamment de
+        #    la pertinence ». Sa cure fut de scorer des GROUPES ; ici on garde
+        #    l'index d'outils, mais une graine par domaine.
         resultats = self._store.similarity_search_with_score(
-            pont_linguistique(query), k=self._k)
-        seed_names = {
-            doc.metadata["tool_name"]
-            for doc, distance in resultats
-            if "tool_name" in doc.metadata
-            and (distance <= _DISTANCE_MAX_MCP or "__" not in doc.metadata["tool_name"])
-        }
+            pont_linguistique(query), k=_PROFONDEUR_GRAINES)
+        seed_names: list[str] = []
+        domaines_vus: set[str] = set()
+        for rang, (doc, distance) in enumerate(resultats, start=1):
+            nom = doc.metadata.get("tool_name")
+            if not nom or (distance > _DISTANCE_MAX_MCP and "__" in nom):
+                continue
+            domaine = nom.split("__", 1)[0] if "__" in nom else _TOOL_TO_GROUP.get(nom)
+            if domaine in domaines_vus:
+                continue
+            if rang > _RANG_MAX_SI_AGIT.get(domaine, _PROFONDEUR_GRAINES):
+                continue
+            domaines_vus.add(domaine)
+            seed_names.append(nom)
+            if len(domaines_vus) >= _DOMAINES_MAX:
+                break
 
         # 2. Group expansion
         selected: set[str] = set(_ALWAYS_INCLUDED)

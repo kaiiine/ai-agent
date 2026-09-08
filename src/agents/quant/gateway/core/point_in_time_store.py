@@ -25,8 +25,9 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from src.infra import chemins as _chemins
 
-STORE_DB = Path.home() / ".axon" / "sports_point_in_time.db"
+STORE_DB = _chemins.magasin_point_in_time()
 
 # Colonnes ajoutées en C4 (migrables par ADD COLUMN sur une base v1 existante),
 # par table.

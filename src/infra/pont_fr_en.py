@@ -4,8 +4,35 @@ Les descriptions d'outils MCP viennent de leurs serveurs, en anglais ; les
 requêtes d'AXON sont en français. `pont_linguistique` ajoute la traduction des
 intentions présentes, sans remplacer la requête.
 
-Consommé par le retriever de l'agent de code et par l'étage 2 du routage MCP.
-Neutre par nécessité : `src/mcp_client/` ne peut pas dépendre de `src/agents/`.
+Consommé à TROIS endroits — `orchestrator/tool_retriever`, `mcp_client/registry`
+et `agents/coding/tool_retriever`. Neutre par nécessité : `src/mcp_client/` ne
+peut pas dépendre de `src/agents/`.
+
+CE QU'IL APPORTE, MESURÉ PAR ABLATION. Le pont a longtemps porté la réputation de
+« n'apporter presque rien » — une phrase de `skills/retriever.py`, qui parle de
+l'index des SKILLS, où il n'est pas utilisé. Elle ne disait donc rien de ses
+usages réels. Mesuré en le remplaçant par l'identité :
+
+    étage 2 de l'orchestrateur   rappel réel 92/98 AVEC comme SANS,
+    (98 requêtes réelles)        largeur identique — aucun apport ici,
+                                 alors qu'il modifie 12 % des requêtes
+
+    suites de routage            4 échecs réels sans lui :
+    (91 tests)                     · 3 sur le routage MCP — vérification
+                                     visuelle, lecture d'état de scène,
+                                     requêtes d'interrogation
+                                   · 1 sur l'orchestrateur — « envoie le
+                                     recap dans le salon »
+
+Il est donc porteur pour le MCP, dont les descriptions sont en anglais, et inerte
+sur le routage natif où les documents de groupe sont déjà en français. C'est
+exactement ce que son intention annonçait, et personne ne l'avait vérifié.
+
+Pour rejouer : remplacer le corps de `pont_linguistique` par `return query`, puis
+
+    pytest tests/test_mcp_routing_specialist.py tests/test_tool_routing.py \\
+           tests/test_routing_generalization.py
+    python outils/mesure_routage.py --outils
 """
 from __future__ import annotations
 

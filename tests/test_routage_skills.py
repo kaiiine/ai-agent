@@ -158,3 +158,48 @@ def test_un_serveur_en_go_ne_reveille_pas_le_chasseur_derreurs():
     retenues = skills_pertinentes("un serveur en Go", "coding")
 
     assert "silent-failure-hunter" not in retenues[:2]
+
+
+# ── l'ordre du classement hybride ─────────────────────────────────────────────
+def test_le_dense_mene_le_classement():
+    """Les alias étaient placés DEVANT le classement dense. Refait sur les deux
+    jeux de référence, l'ordre s'inverse : 18/22 contre 11/22 au rang 1, et
+    strictement rien de gagné au top 5 — la seule métrique que voit le modèle,
+    puisque le catalogue en montre cinq.
+
+    Ils sont déjà dans le document indexé ; les remettre devant, c'est les
+    compter deux fois."""
+    from src.skills.retriever import _retriever
+
+    _retriever._build_index()
+    visible = _retriever._visible("coding")
+    requete = "crée une API FastAPI"
+
+    trouves = _retriever._index.similarity_search(requete, k=max(20, len(_retriever._skills)))
+    dense = [t.metadata["name"] for t in trouves if t.metadata.get("name") in visible]
+
+    assert skills_pertinentes(requete, "coding")[0] == dense[0]
+
+
+def test_un_skill_nomme_mais_absent_du_dense_entre_quand_meme():
+    """Le lexical reste un FILET : il ajoute, il ne déplace plus."""
+    from src.skills.retriever import _retriever, termes_identifiants
+
+    _retriever._load()
+    visible = _retriever._visible("coding")
+    nomme = next(n for n in visible if "nextjs" in n)
+    terme = next(iter(termes_identifiants(nomme, visible[nomme]) - {nomme}), nomme)
+
+    assert nomme in skills_pertinentes(f"aide-moi avec {terme}", "coding")
+
+
+def test_lecart_entre_les_deux_jeux_est_documente():
+    """Il vaut 20,5 points AVANT comme APRÈS le changement d'ordre : il ne venait
+    pas des alias. Ce test fige le constat pour qu'une future « correction » du
+    classement ne soit pas créditée de l'avoir comblé."""
+    from tests.corpus_routage_skills import REGLAGE, TENU_A_L_ECART
+
+    def top5(jeu):
+        return sum(a in skills_pertinentes(q, "coding", 5) for q, a in jeu) / len(jeu)
+
+    assert top5(REGLAGE) - top5(TENU_A_L_ECART) > 0.10

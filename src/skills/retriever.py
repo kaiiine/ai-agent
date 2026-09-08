@@ -39,12 +39,36 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
 def _document(name: str, skill: dict) -> str:
     """Ce qu'on indexe pour un skill : son nom, ses alias, sa description.
 
-    Mesuré sur dix requêtes de référence en français, réponse attendue connue,
-    avec le filtrage de portée en place :
+    La docstring affirmait, sur dix requêtes d'un jeu aujourd'hui disparu :
 
         description seule                    4/10
-        + nom + alias                       10/10
+        + nom + alias                       10/10     ← justifiait d'indexer les alias
         + nom + alias + ancres               9/10
+
+    Rejoué le 2 septembre 2026 sur `tests/corpus_routage_skills.py` :
+
+        forme                     r1 régl  top5 régl   r1 TENU  top5 TENU
+        alias indexés (en place)    81,8 %     95,5 %    56,2 %     75,0 %
+        alias hors document         72,7 %     95,5 %    62,5 %     81,2 %
+        hors doc. + promotion       68,2 %     95,5 %    56,2 %     81,2 %
+
+    Les alias ne gagnent RIEN au top 5 du jeu de réglage — les trois formes y
+    sont à égalité — et coûtent 6,2 points au top 5 du jeu tenu à l'écart. C'est
+    la signature du surajustement : curés en regardant le premier jeu, gratuits
+    dessus, coûteux sur des formulations neuves.
+
+    ILS RESTENT QUAND MÊME, et c'est un arbitrage, pas une conclusion. Les
+    retirer fait tomber « rends ce composant accessible » du rang 1 au rang 16 et
+    « améliore le référencement » au rang 6 — hors du budget de cinq, donc ces
+    skills ne seraient plus montrées. Le gain est agrégé, la perte est ciblée sur
+    les requêtes qui DÉSIGNENT leur domaine, et deux tests l'encodent déjà.
+    Promouvoir l'alias quand il désigne sans ambiguïté répare ces deux cas et
+    reprend les 6,2 points, mais rend 6 points de rang 1 ailleurs.
+
+    Le choix appartient à l'utilisateur : rappel moyen sur des tournures neuves,
+    ou garantie sur les tournures qui nomment. Rejouer les trois formes :
+
+        python outils/mesure_routage.py --documents
 
     Les descriptions sont des chapelets de mots-clés anglais et les questions
     arrivent en français : le nom et les alias rapprochent les deux.
@@ -321,22 +345,37 @@ class SkillRetriever:
         coup, soit 2 241 tokens dans la description de `load_skill`, à chaque
         tour ; devant une liste pareille, il n'en choisissait aucune.
 
-        Le classement est HYBRIDE, et l'ordre a été mesuré sur vingt requêtes dont
-        on connaît la bonne réponse :
+        Le DENSE passe en premier, les noms trouvés lexicalement ne font que
+        compléter. L'ordre inverse — lexical d'abord — a longtemps tenu ici sur
+        la foi d'une mesure faite sur vingt requêtes plus anciennes. Refaite sur
+        `tests/corpus_routage_skills.py`, elle s'inverse :
 
-            dense seul                  rappel@1 55 %   rappel@3 65 %
-            dense + pont linguistique   rappel@1 55 %   rappel@3 70 %
-            lexical puis dense          rappel@1 75 %   rappel@3 80 %   @5 95 %
+                              rang 1              top 5 (ce que le modèle voit)
+            lexical d'abord   11/22 réglage        21/22 réglage · 12/16 tenu
+            dense d'abord     18/22 réglage        21/22 réglage · 12/16 tenu
 
-        Le pont linguistique n'apporte presque rien : la langue n'était pas la
-        cause. `fiche` et `exo` disent « HTML/CSS » et « HTML/JS », ce qui les
-        rapproche de toute requête web — la largeur d'un document achète de la
-        proximité avec tout, comme pour les groupes d'outils.
+        Les alias ne gagnent RIEN au top 5 — la seule métrique qui compte, le
+        catalogue en montrant cinq — et coûtent 32 points au rang 1. Ils sont déjà
+        DANS le document indexé : les remettre devant le classement, c'est les
+        compter deux fois. Ils restent en filet, ajoutés après : un skill nommé
+        mais absent du dense entre encore, sans pouvoir déplacer personne.
 
-        Ce qui débloque, ce sont les alias curés à la main : une requête qui NOMME
-        un domaine (`next.js`, `accessible`, `référencement`) élit sa skill sans
-        passer par l'embedding. « fais-moi un site vitrine en Next.js » rendait
-        `fiche, exo, browser-driving` et met maintenant `nextjs` en tête.
+        CE QUE ÇA NE RÉPARE PAS. L'écart réglage↔tenu au top 5 vaut 20,5 points
+        AVANT comme APRÈS. Il ne venait donc pas d'un surajustement aux alias,
+        contrairement à ce qu'on croyait : il vient des documents eux-mêmes. Ils
+        sont en anglais et nomment la SOLUTION, quand la requête est en français
+        et décrit le SYMPTÔME —
+
+            « des failles dans mon application »   ↔ "Security vulnerability … OWASP"
+            « tsc refuse de compiler »             ↔ "TypeScript error resolution"
+            « quelles fonctions ne sont plus       ↔ "Dead code cleanup … knip,
+              appelées »                              depcheck, ts-prune"
+
+        Le jeu de réglage a été écrit à côté de ces documents et en partage le
+        vocabulaire ; le jeu tenu à l'écart dit la même intention autrement. Le
+        combler demande d'écrire le vocabulaire de symptôme DANS les skills, pas
+        d'ajouter un mécanisme de classement : cinq ont déjà été mesurés sans
+        qu'aucun ne gagne (voir `voisins_de`).
         """
         visible = self._visible(scope)
         if not visible:
@@ -357,7 +396,9 @@ class SkillRetriever:
             except Exception:                                # noqa: BLE001
                 denses = []
 
-        classe = nommees + [n for n in denses if n not in nommees]
+        # Le dense mène, le lexical complète. Inverser coûtait 32 points de
+        # rang 1 sans rien rendre au top 5 — voir la docstring.
+        classe = denses + [n for n in nommees if n not in denses]
         return classe[:budget] or list(visible)[:budget]
 
     def list_names(self, scope: str|None = None) -> list[str]:

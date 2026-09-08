@@ -1,0 +1,186 @@
+"""Les tours qui n'ont de sens que par le tour d'avant — et ceux qui n'en ont pas besoin.
+
+Deux jeux, séparés AVANT tout réglage. C'est la leçon des alias de skills, où une
+liste curée à la main scorait 95,5 % sur ce qui avait servi à la construire et
+75,0 % sur ce qui ne l'avait pas — vingt points de surajustement invisibles tant
+qu'un seul jeu existait.
+
+Le partage est fait par le HACHAGE de la requête, pas par choix : `sha1 % 10 < 6`.
+Il se rejoue à l'identique et ne peut pas être arrangé après coup.
+
+ATTENTION — les 38 tours elliptiques sont étiquetés PAR L'ASSISTANT, pas par
+l'utilisateur, qui est la vérité terrain sur ses propres formulations. Le critère
+appliqué : elliptique = aucun signal de domaine, la requête n'a de sens que par
+le tour précédent. « c'est quoi la météo de demain ? » n'est donc PAS elliptique
+— vague, mais autoportante. À contester au cas par cas.
+
+Les autonomes viennent du corpus principal : une requête qui porte une étiquette
+de groupe se comprend seule par construction.
+"""
+
+#: Elliptiques — servent à régler le détecteur.
+ELLIPSES_REGLAGE = (
+    "Nan aujourd'hui",
+    "c'est bin je veins de répondre a esq questions",
+    "je t'ai rep",
+    "nan elle est beaucoup trop loins, il faut que la tuile tu l'enleves du modele",
+    'du coup ?',
+    'vasy poursuit alors',
+    'tout est good ?',
+    'nan fais le toi',
+    "j'ai 6€",
+)
+
+#: Elliptiques — JAMAIS regardées pendant le réglage.
+ELLIPSES_TENUES = (
+    'tu peux reprendre',
+    'comment ça ?',
+    "voici l'uid: d76a1407c0cd4d36a68d379a89863c07",
+    'nan pas la puce M5, la puce M2 pro je veux',
+    '??? regarde',
+    'nan je veux que tu le fasses dans le serveur kaine',
+    'vasy supprime els alors',
+    'lance le',
+    "c'est fait normalement, e viens de le faire, check et dis moi",
+    'et pareil pour les user scenarion ? le deisgné autrement ?',
+)
+
+#: Autoportantes — le détecteur ne doit pas s'y déclencher.
+AUTONOMES_REGLAGE = (
+    'Créer moi in projet',
+    "c'est le wta a prague",
+    "et potu les matchs de foot ? aujour'hui il y en a pas mal tu peux regarder pour",
+    'https://sketchfab.com/3d-models/7-igloo-6e1362cd70304fd39abd7917a26e10fa',
+    'Coucou ça va ?',
+    'et en combiné tu as quoi à me porposer ?',
+    "OK j'aimerai faire des paris sur sur sur, je m'en fous de la cote",
+    "OK j'aimerai faire des paris sportifs sûr, je m'en fous de la cote",
+    "J'ai 20€ de bankroll",
+    'Ok montre moi des paris/combinés surs qui me permettraient de faire environ un x2',
+    "c'est quoi la météo de demain ?",
+    "ok mtn peux tu t'y connecter et créer dans ce serveur une paire de clefs ssh",
+    'vérifie sur internet',
+    'coucou',
+    'Surveille le cours du Bitcoin toutes les 2 minutes pendant 1h et notifie-moi sur Slack dans test-cron si le prix change de plus de 1%',
+    'Surveille le cours du Bitcoin toutes les 2 minutes et notifie-moi sur Slack dans test-cron dès que le prix change de plus de 0.1%',
+    'Surveille moi le match de tennis Vaentova contre Joint (je suis pour Valentova) toutes les 5min et envoies une notif sur le canal test-cron',
+    'Tu peux envoyer le meme message a nicolas danquigny sur slack stp',
+    'Peux tu me dire qui est favorable au basket entre wahsington mystics et las vegas ? (il joe actuellement le amch)',
+    'Regarde bien a nouveau, les amtch que tu dis perdu sont encore en cours et il gagnesnt , regarde tout bien',
+    "Pux tu regarder tous les meilleurs pornos pour aujour'hui. Ton apri d'hier a été raté... Je veux un pari sur cette fois ci j'ai 5€ a mettre, le but est de finir la journée avec 15 à 30€",
+    "Hmm peux tu regarder voir s'il n'y a pas moins risqu&é ? estime moi le purcentage de réussite sur ce vombot",
+    "Peux-tu me dire si y'a de bons paris ?",
+    "Peux tu me dire s'il y a de bon paris sportifs a faire la en ce moment ou pas ?",
+    "J'ai 5€ a mettre, trouve moi le meilleur ocmbiné pour faire au moins x2 voire x3",
+    "J'ai 5€ a mettre, trouve moi les meilleurs paris sirtifs ou combinés pour faire au moins x2 voire x3 sur mes gains",
+    'Peux tu faire des recherhes internet pour assuré ce que tu dis sur les paris safe et moderate',
+    'le match kansas city il est quand ?',
+    "J'ai 4€ a metre dans des paris sportifs avec comme but de faire un x2 voire x3, tu aurais des paris quasi sur et certains ou combos a faire en ce moment pour ça ?",
+    "je  suis sur tout, je veux juste lesmeilleursnmises pour jouer aujour'dhui",
+    'je veyx des matchs plus récents, demain ou après demain max, pas 21 aout..',
+    'surveille moi alors les entreprises cotes en bourse',
+    'gznre quans je lance saphire alpha ça me dis "vous ne pouvez pas utiliser ceete carte de jeu"',
+    "Tu peux surveiller chaque jour le cours d'actions des entreprises partout dans le monde (je veux TOUT) et tu me fais des rapports sur le canal test-cron",
+    "'utilise dunctl, tu peux tout me close stp",
+    "Crée un cube rouge au centre de la scène Blender, puis dis-moi ce qu'il y a dans la scène.",
+    'Peux tu supprimer mle cube rouge et me faire une camionnette de safari',
+    "Extrude le plus, ce n'est pas assez encore la",
+    'Peux tu sur blender rendre le cube rouge',
+    'fais moi la scene demandé sur blender',
+    "Peux tu me faire une scene sur blender d'un igloo sur une baquise avec une tuile de l'igloo qui floote dans l'air ?",
+    "Refais l'igloo, je veux quelque chsoe de ce type la: 6e1362cd70304fd39abd7917a26e10fa  juste une des briques du cote tu l'loignes de quelques centmetres et u la fais flotter avec une animation",
+    'essaye avec lui, ça passera 224f673917e6486eb08c496baf77ce84',
+    "Supprime l'igloo que tu avais fais avant pour ne garder que celui de sketchlab, et fais flotter une pierre de l'igloo du cote droit avec une animation",
+    'reprend le texte sur quoi faire a nice et envoie le sur Slack à Nicolas Danquigny',
+    'envoie le mail de nouveau',
+    "J'ai 20€ de bankroll et 20€ de freebets, donne moi des parsi sur afin d'augmenter mes gains, j'aiemrais un but de x2 voire x3 mais je veux surtout que le pari soit sur",
+    "Regarde tous les matchs atp au tennis, et dis moi les paris a faire sur matchs les plus surs ou les meilleurs combinés a faire aujourd'hui ou demain matin",
+    'en sachant que je veux que du tennis, tu en penses quoi de gagnant tiafoe, nakashima, pegula ? pour toi ce paris est il sur de passer ? tu le situerais ou ?',
+    'vérifie par tp meme les version e tla mienne',
+    'Combien coute un macbook pro avc une puce Apple M2 pro, 16go sur le site officielle apple ?',
+    "regarde sur d'autres sites pour voir",
+    "J'ai 20 € de bankroll et 20 € de freebets. Tous sports, toutes compétitions, maintenant ou demain matin.",
+    "porpose quand meme pour l'experimentale",
+    "J'ai 20 €, les meilleurs paris tennis aujourd'hui ?",
+    'FAIS moi le prjet de A à Z, développe moi tout vasy en suivant la spec',
+    'reprend ou tu en étais sans rien oublier',
+    "reprend le site next js et termne le moi comme le dis la spec, n'oublie rien",
+    "tu auras de paris sur du foot ou du tennis avec les memes consignes qu'ua début ?",
+    "Ce soit im y a psg aston villa, tu pense quoi de ce match ? c'est quoi tn porni avec ton puircentage ?",
+    "il y a des paris ou des combinés qui te semblent intéressant pour faire du x2 voire x3 ? il faut que lesparis soitsure à plus de 90% sur l'evenement",
+    "d'accord mais quels sont les paris en review onl, peux tu me les montrer stp",
+    'Fais moi une recherche sur le dog argentin',
+    "Tu peux réparer le bug qu'il y a sur le repo axon-landing stp",
+    "c'es tquoi la mété demain ?",
+    'Quelle est la météo de demain ?',
+    "Tu peux me faire un rapport d'une vingtaine de pages avec des pages annexes ou il y a des photos tableaux etc.. sur la seconde guerre mondiale ? fais le sut google doc",
+    'noraml tu n\'as pas de clef api, lance depuis mon terminal directement un ollama run [model_name] "hello" et la tu auras ta réponse',
+    'pour le tennis tu en as aussi pour le atp ou wta ??',
+    "le truc virtual box tu peux me le supprimer au meme titre que les versions d'android stp ?",
+    'il me rste cbm de stockage ?',
+    'tu pourrais regarder mes derniers mails stp',
+    'dans mon serveur kaine, tu peux me génrer une clef ssh dessus stp ? en ed2... ?',
+    'peux tu vérifier tout ça ?',
+    'tu penses quoi de ce pari ?',
+    "dans rag et ai-agent qu'est ce qui prend le plus d'esapce ? comment c'est possible ? c'est cuda ?",
+    'vasy suppirme les caches, les volumes docker, les runtimes flatpack inutiliées',
+    "refais, je veux des paris qui sont sur de passer, je m'en fous de la cote",
+    'écris un mail a qtdufour@gmail.com pour lui dire bonjour',
+    "Le mail n'a pas été envoyé. c'est pour mon boss donc ne soit pas aussi direct. Prépare un nouveau brouillon avec gmail_send_email en tenant compte de cette demande.",
+)
+
+#: Autoportantes — tenues à l'écart.
+AUTONOMES_TENUES = (
+    'ok trouve moi les meilleurs paris sportifs pour les match duu 1aout',
+    'et envoie lui la lsite des meilleurs casino du coins à faire',
+    'et demain ? fais moi un tableau es prvisions de suesnes temperature',
+    'coucou ça va ?',
+    '~/.local/bin/fan-max-test',
+    'Peux tu me norifier sur mon pc a 15h40 que je dois appeler Nicolas stp',
+    "Notifie moi aujourd'hui a 15h45 que je dois aller voir macopine sur mon pc stp",
+    "Peux tu envoyer un message a Nicolas Danquigny en lui expliquant ce qui est entrain de se passer sur le bitcoin en c moment, s'il faut investir ou non etc...",
+    'peux tu me donner els meilleurss cotes a jouer en pari sportifs',
+    "Fais moi une liste plus grande inclunt les apris de demain, qu'est ce qui est le plus safe pour me faire un peu d'argent",
+    'Je veux que tu me note ce paris sportifs combinés, reverifie tout bien maintenant pour avoir les derniers scores',
+    'Je veux que tu me trouves un combien qui soit au essus de 80% de chance de réussite',
+    'Je veux que tu ùe donnes mon pari combine sur les match de baseball Atlantas Braves, Detroit Tigers et pour le football Houston Dynamo, Los angeles',
+    "Peux tu me dire s'il y a de bon pris a faire la en ce moment ou pas ?",
+    "Peux tu me dire s'il y a de bon paris a faire la en ce moment ou pas ?",
+    "Peux-tu me dire si y'a de bons paris à faire en foot en ce moment ?",
+    'Tu peux me donner les meillerus pronos sportifs du moment stp',
+    "tu aurais d'autes paris a me faire qui sont sur, sur d'autres sport style tennis ou autre ?",
+    "cherche d'autres paris a faire ou des combines sur et certains pour arriver au moins sur un x2 et si posible x3",
+    'il y a as mal de tennis en ce moment, regarde la dessus',
+    "je veux des paris pour aujourd'hui, pas dans 1 mois",
+    'fais moi une camionnette de safari',
+    'Peux tu juste donner du volume au logo en faisant  une extrusion dessus ? comme ça il sera lui aussi 3d',
+    'Peux tu juste donner du volume au logo en faisant  une extrusion dessus sur blender ? comme ça il sera lui aussi 3d',
+    "Refais l'igloo sur blender, je veux quelque chsoe de ce type la: 6e1362cd70304fd39abd7917a26e10fa (uuid sur sketchlab)",
+    "tu peux rendre l'une des briques de l'igloo sur e cote et la déplacé un peu sur le cote, moitié de la brique dans l'igloo l'autre moitié dehors",
+    "Tu e penses quoi du paris sportif que Lyion gagne et les deux équipes marquent entre Sparta Prague et Lyon ? Tu l'évaluerais comment ce pari ?",
+    'peux tu envoyer tout ça à Nicolas Danquigny sur Slack stp',
+    'Peux tu me dire si mon ollama cli est a jour ou pas ? et comment le mettre a jour ? check avec qui l a été installé etc.',
+    "J'ai 20 € de bankroll et 20 € de freebets. Je veux les meilleures opportunités disponibles maintenant ou demain matin. Tous sports, toutes compétitions. Simple ou combiné.",
+    'ajoute moi ses dépendances et continue: Toutes listées dans le plan (lucide‑react, clsx, tailwind‑merge, framer‑motion, lenis, shadcn/ui, @radix‑ui/react‑slot)',
+    'contoinue alors, reprend le travail et finin moi tout ça',
+    'Au tennis tu me conseilles quoi comme paris sportifs a faire qui est quasi sur de passer ? je préfere un combiné par aileurs',
+    "j'ai 10€ et tous les sports, et sur un combiné ou si tu as des paris simples, mais faut que le pari soit sur. La le but c'est d'aoir iun cimbiné qui est sur et certain de passer",
+    'Quelle est la meteo de demain a Suresnes ?',
+    'je vux plus de détail, un tableau de toutes les heurs',
+    'Cherche sur le web les dernieres nouveautes de LangGraph en 2026 et resume les',
+    "J'ai une bankrool de 20€ j'aimerais faire un combine de paris sportif pour atteindre un x2, tu me conseilles quoi ? ens chantq ueje veux que le âri soit sur de passer",
+    "je n'ai aps des réisuds de nAS qui grattent quelques go et des rasidus de andrpoid avec des versions ?",
+    'tu peux rajouter des arbres etc.. diversifie es slides',
+    "J'aimerais faire des paris sportifs sur n'importe quel sport, des combinés de préférence, tu me conseillerais quoi ? (j'ai 6€ de bankoll)",
+    'tu peux accéder a mon serveur disyant kaine ?',
+    "peux tu renommer ma cmlef u recrer la clef pour qu'elle soit revocnnus avec un nom normal stp ?",
+    "peux tu analyser encore plus end étail mour savoir qu'est ce qui prend autant de place ? je veux tout savoir, que e soit dans documents, dans les docker qui tourne etc...",
+    'liste moi les gros dossiers dans projet perso',
+    'il me reste cbm de stockage ?',
+    'Tu me conseillerais quoi comme combine de paris sportif a faire en ce moment ?',
+    'Envoie un mail a qtdufour@gmail.com pour lui dire bonjour',
+    "Le mail n'a pas été envoyé. rédige un peu plus quand meme, et demande lui si ces vacances se sont bien passées. Prépare un nouveau brouillon avec gmail_send_email en tenant compte de cette demande.",
+    'nvoie un mail a qtdufour@gmail.com pour lui dire bonjour',
+    'tu peux mettre le fan mode en mode max pour tester pendant 5sec et le remettre en mode auto pares ?',
+)
+

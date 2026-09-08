@@ -9,9 +9,10 @@ import unicodedata
 from pathlib import Path
 
 import requests
+from src.infra import chemins as _chemins
 
 API_URL = "https://v3.football.api-sports.io"
-CACHE_DB = Path.home() / ".axon" / "quant_cache.db"
+CACHE_DB = _chemins.cache_quant()
 CACHE_TTL = 6 * 3600  # 6h — les stats d'avant-match ne bougent pas toutes les minutes
 TIMEOUT = 15
 

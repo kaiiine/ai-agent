@@ -24,6 +24,7 @@ from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_core.documents import Document
 
+from src.infra import chemins as _chemins
 from src.infra.pont_fr_en import pont_linguistique
 from src.infra.retrieval import build_catalog_document, unique
 
@@ -690,6 +691,8 @@ _CRON_GROUP = "cron"
 # `weather` (Paris, la ville) et « cherche un papier » élit `desktop`
 # (presse-papiers). Un homographe ne se corrige pas en réécrivant la description
 # — essayé, mesuré : la variante qui gagne cette requête perd sur le corpus.
+# Balayé : 3 coûte 1,8 point de rappel, 7 n'en rend aucun.
+#     python outils/mesure_routage.py --constantes
 _TOP_GROUPS = 5
 
 # ── Requêtes composites ───────────────────────────────────────
@@ -716,18 +719,49 @@ _CLAUSE_MIN_CHARS = 7
 # Marge de distance RELATIVE au meilleur groupe de la clause. Les distances se
 # tassent entre 0,67 et 0,90 sur ce corpus : un seuil absolu ne sépare rien,
 # une marge relative si.
+# INERTE sur le corpus réel : balayée de 0,10 à 0,30, le rappel ne bouge pas
+# (93,0 %) et la largeur non plus. Elle ne discrimine que sur les requêtes
+# multi-clauses, trop peu nombreuses ici pour peser. Gardée faute d'une raison de
+# la changer, pas parce qu'un chiffre la défend.
+#     python outils/mesure_routage.py --constantes
 _MARGE_CLAUSE = 0.20
 # Plafond de l'union. Une requête à deux intentions a besoin de deux domaines,
 # donc de plus de cinq groupes ; 8 est le point où le rappel multi-clauses cesse
 # de progresser franchement (82,6 % à 8, 87,0 % à 10 pour deux groupes de plus).
+# Balayé : 5 et 6 coûtent 3,5 et 1,8 point ; 10 et 12 ne rendent rien.
+#     python outils/mesure_routage.py --constantes
 _MAX_GROUPES_UNION = 8
 
 # Plafond d'outils liés, épinglés compris. OpenAI recommande moins de 20 au
 # début d'un tour ; au-delà, la capacité du modèle à choisir se dégrade.
+#
+# RESTE À 16, et c'est un résultat, pas un statu quo. Balayé le 6 septembre 2026
+# sur le corpus réel — 98 requêtes, séparées en réglage et tenu à l'écart —
+# 12 y est indiscernable de 16 :
+#
+#     budget   rappel réglage   rappel TENU   outils liés
+#         10          89,5 %         92,7 %          10,0
+#         12          93,0 %         95,1 %          12,0
+#         16          93,0 %         95,1 %          15,8   ← en place
+#
+# Descendu à 12, TROIS tests de non-régression tombent — dont deux formulations
+# que le corpus réel ne contient pas : « ou en est ma copie de travail » pour
+# `git_status`, « balance ca dans le channel dev » pour Slack. Le corpus de
+# `tests/test_tool_routing.py` est plus large que celui de `CORPUS-ROUTAGE.md`
+# sur ces tournures.
+#
+# Les quatre outils supplémentaires achètent donc une assurance que le corpus
+# réel ne mesure pas. Un balayage sur un seul corpus aurait fait expédier la
+# baisse comme gratuite : c'est la même leçon que les deux jeux, à l'échelle des
+# corpus au lieu des requêtes.
+#
+#     python outils/mesure_routage.py --constantes
 _BUDGET_OUTILS = 16
 
 # Familles retenues dans un groupe qui en déclare. Deux, pas une : une
 # demande porte souvent sur un acte et sa donnée — les cotes ET le pari.
+# Balayé : 2 et 3 ne rendent aucun rappel et élargissent la sélection.
+#     python outils/mesure_routage.py --constantes
 _FAMILLES_MAX = 1
 
 # Ce que la porte d'écriture met à portée. `propose_file_change` accompagne
@@ -741,7 +775,7 @@ _RANG_INDICE = 4
 _GROUP_SOURCE, _TOOL_SOURCE = "group", "tool"
 
 
-_CACHE_DIR  = Path.home() / ".axon" / "tool_store"
+_CACHE_DIR  = _chemins.index_outils()
 _CACHE_HASH = _CACHE_DIR / "fingerprint.txt"
 
 
@@ -929,8 +963,14 @@ class ToolRetriever:
         return ([t for t in spec.tete if t in classes]
                 + [t for t in classes if t not in spec.tete])
 
+    #: Le groupe élu au rang 1 du dernier `get()`. Exposé parce que l'appelant en
+    #: a besoin et que le recalculer coûterait une recherche vectorielle de plus
+    #: par tour. Même forme que `graph._last_selected_tools`.
+    groupe_de_tete: str | None = None
+
     def get(self, query: str) -> list:
         ranked, rangs = self._rank_groups_detaille(query)
+        self.groupe_de_tete = ranked[0] if ranked else None
         groups = ranked + [g for g in _PINNED_GROUPS if g not in ranked]
 
         # Les trois portes déterministes, au même endroit et au même titre :
@@ -990,6 +1030,14 @@ class ToolRetriever:
         # quand `coding` gagne l'étage 1, pas dès qu'il apparaît — « lis le fichier
         # src/main.py » élit `filesystem` en tête et `coding` en second, et perdait
         # alors l'outil de lecture qu'il venait de trouver.
+        #
+        # C'est un INDICE, pas une barrière, et il faut le savoir avant de s'y
+        # fier : le `ToolNode` est construit sur les 105 outils, pas sur la
+        # sélection du tour, et le catalogue montre au modèle tous les noms.
+        # Mesuré sur gpt-oss:120b — demande claire, outil retiré de la liaison :
+        # il l'appelle DIRECTEMENT depuis le catalogue et l'appel s'exécute.
+        # Pour interdire vraiment, il faut retirer du CATALOGUE, comme le font
+        # `BLOCKED_TOOLS` en mode plan et `_EXPLORATION` en délégation.
         if ranked and ranked[0] == "coding":
             for group in ("git", "filesystem"):
                 selected -= set(TOOL_GROUPS[group].tools)

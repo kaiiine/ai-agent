@@ -166,6 +166,7 @@ from src.orchestrator.catalogue import (
     signaler_delegation as _signaler_delegation, _EXPLORATION,
     outil as _outil_du_catalogue, serveurs_actifs as _serveurs_actifs,
 )
+from src.orchestrator.ellipse import est_une_ellipse
 from src.orchestrator.tool_retriever import ToolRetriever
 
 
@@ -304,12 +305,22 @@ def _chat_node_factory():
 
         if last_human:
             query = _content_to_str(last_human.content)
-            if len(query.split()) < 8:
+            # Le test portait sur la LONGUEUR seule (« moins de huit mots ») et
+            # ratait « reprend ou tu en étais sans rien oublier » — huit mots
+            # pile, aucun domaine, et le routeur y répondait par `shell_ls`.
+            # `est_une_ellipse` exige en plus l'absence de signal de domaine :
+            # même rappel sur le jeu de réglage, +30 points sur le jeu tenu à
+            # l'écart, pour un coût de faux positif mesuré NUL.
+            if est_une_ellipse(query):
                 human_msgs = [
                     _content_to_str(m.content)
                     for m in state["messages"]
                     if isinstance(m, HumanMessage)
                 ]
+                # Premier tour d'une conversation : `human_msgs` ne contient que
+                # la requête elle-même, et le recollage la rend à l'identique.
+                # Le repli est donc défini, pas implicite — il n'y a rien à
+                # injecter quand il n'y a pas de tour d'avant.
                 query = " ".join(human_msgs[-3:])
         else:
             query = (
@@ -524,8 +535,34 @@ def _chat_node_factory():
         # git (_SHELL: "propose le message, attend la validation"), ainsi que le mode
         # plan (_PLAN_MODE: "wait for explicit validation"). Les intercepter casserait
         # ces flows volontairement conçus ainsi, ce qui serait pire que le bug d'origine.
+        # L'exclusion se réglait sur la LIAISON de l'outil, pas sur le sujet du
+        # tour. Or le routeur fait entrer `slack_send_message` par ricochet :
+        # mesuré sur les 142 requêtes réelles, 33 tours liaient un outil de flow
+        # et 29 n'avaient RIEN à voir avec Slack ou un commit — vingt pour cent
+        # des tours perdaient le garde-fou en silence, dont toutes les demandes
+        # de paris. Le groupe élu au rang 1 dit ce que le tour VISE, là où la
+        # liaison dit seulement ce qui était à portée : exiger le rang 1 fait
+        # tomber les exclusions accidentelles de 29 à 2, et les trois quarts des
+        # tours Slack légitimes y sont déjà.
+        #
+        # Le seuil a été BALAYÉ, pas choisi : élargir ne récupère rien avant le
+        # rang 3, et le coût y est prohibitif.
+        #
+        #     rang ≤ 1    3/4 légitimes    2 exclusions accidentelles   ← retenu
+        #     rang ≤ 2    3/4 légitimes    9   — dominé : rien de plus, 4,5×
+        #     rang ≤ 3    4/4 légitimes   15   — le 4e cas coûte 13 faux
+        #
+        # Le quatrième, à rang 3, perd son exclusion. Risque assumé et NON
+        # mesuré : un brouillon Slack court serait pris pour une question. Il
+        # n'est pas apparu sur les quatre tours légitimes — `gpt-oss` y appelle
+        # un outil, `gemini` y pose une vraie question — mais ces tours ont été
+        # joués SANS historique, or le brouillon ne naît qu'avec le contexte.
+        # `_has_prior_answers` reste la seconde échappatoire.
         confirmation_flow_tools = {"slack_send_message", "git_commit"}
-        has_confirmation_flow = any(t.name in confirmation_flow_tools for t in selected_tools)
+        _groupes_de_flow = {"slack", "git"}
+        has_confirmation_flow = (
+            any(t.name in confirmation_flow_tools for t in selected_tools)
+            and retriever.groupe_de_tete in _groupes_de_flow)
 
         # L'utilisateur a-t-il DÉJÀ répondu à un questionnaire dans cette conversation ?
         # Si oui, reposer des questions en texte libre est TOUJOURS une erreur — même

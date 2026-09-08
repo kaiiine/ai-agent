@@ -21,7 +21,9 @@ import time
 from pathlib import Path
 from typing import Optional
 
-_STATE_FILE = Path.home() / ".axon" / "key_pool_state.json"
+from src.infra import chemins as _chemins
+
+_STATE_FILE = _chemins.pool_de_cles()
 _DEFAULT_FALLBACK_ORDER = ["ollama_cloud", "gemini", "mistral"]
 
 COOLDOWN_RATE_LIMIT = 3600        # 1h — RPM/RPD hit

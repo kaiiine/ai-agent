@@ -15,8 +15,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 import sqlite3
+from src.infra import chemins as _chemins
 
-COVERAGE_DB = Path.home() / ".axon" / "sports_provider_coverage.db"
+COVERAGE_DB = _chemins.couverture_fournisseurs()
 
 # `fixture_checksum` : dataset EMBARQUÉ dans le dépôt, vérifié par son empreinte au
 # chargement. Ce n'est pas un appel réseau — le décrire comme tel serait faux — mais

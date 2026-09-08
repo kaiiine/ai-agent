@@ -54,7 +54,9 @@ _MAX_UNROUTED_TOOLS = 12  # routing indisponible : on expose sans noyer le conte
 
 
 def default_config_path() -> Path:
-    return Path(os.getenv("AXON_MCP_CONFIG") or (Path.home() / ".axon" / "mcp_servers.json"))
+    from src.infra import chemins
+
+    return chemins.serveurs_mcp()
 
 
 class MCPRuntime:

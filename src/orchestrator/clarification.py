@@ -155,13 +155,26 @@ def clarifier(state: dict) -> dict:
 
 
 def appel_clarification(message: Any) -> dict | None:
-    """L'appel à `ask_clarification` porté par ce message, s'il y en a un."""
+    """Le PREMIER appel à `ask_clarification` porté par ce message."""
+    appels = appels_clarification(message)
+    return appels[0] if appels else None
+
+
+def appels_clarification(message: Any) -> list[dict]:
+    """TOUS les appels à `ask_clarification` du message.
+
+    Le modèle en émet parfois plusieurs d'un même souffle — un par question.
+    Vécu sur « y a-t-il de bons paris à faire » : trois appels, un seul
+    questionnaire affiché, et les deux autres restaient sans `ToolMessage`.
+    `appels_en_attente` les voyait donc toujours en attente, le graphe revenait
+    au nœud, `messages[-1]` était alors le `ToolMessage` du premier — donc plus
+    aucun appel à traiter — et le tour se bloquait. Le modèle finissait par
+    reposer ses questions en texte libre.
+    """
     if not isinstance(message, AIMessage):
-        return None
-    for appel in getattr(message, "tool_calls", None) or []:
-        if appel.get("name") == "ask_clarification":
-            return appel
-    return None
+        return []
+    return [a for a in getattr(message, "tool_calls", None) or []
+            if a.get("name") == "ask_clarification"]
 
 
 def _questions(appel: dict) -> tuple[Question, ...]:
@@ -188,12 +201,23 @@ def clarifier_appel(state: dict) -> dict:
     rappelait l'outil — six fois sur un simple « coucou ». Les deux gardes
     anti-boucle cherchaient une clé `answers` que ce chemin ne produit jamais.
     """
-    appel = appel_clarification((state.get("messages") or [])[-1])
-    if appel is None:
+    messages = state.get("messages") or []
+    # Le porteur est le dernier AIMessage à outils, pas `messages[-1]` : quand un
+    # appel du lot a déjà sa réponse, le dernier message est un `ToolMessage` et
+    # le nœud ne trouvait plus rien à faire.
+    porteur = next((m for m in reversed(messages)
+                    if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)), None)
+    repondus = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
+    appels = [a for a in appels_clarification(porteur)
+              if a.get("id", "clarification") not in repondus]
+    if not appels:
         return {}
 
-    identifiant = appel.get("id", "clarification")
-    posees = _questions(appel)
+    identifiant = appels[0].get("id", "clarification")
+    # Les questions des appels FUSIONNENT : l'utilisateur répond à un
+    # questionnaire, pas à trois d'affilée. Chaque appel reçoit ensuite sa propre
+    # réponse — un fournisseur refuse un tour dont les paires sont déséquilibrées.
+    posees = tuple(q for a in appels for q in _questions(a))
 
     # Demander une information, ce n'est pas demander la permission. AXON garde
     # lui-même ce qui engage : la question en double n'ouvrait aucune porte.
@@ -203,25 +227,31 @@ def clarifier_appel(state: dict) -> dict:
     # prompt ; ici on laisse simplement passer.
     from src.agents.clarify.permission import SANS_OBJET, demande_une_permission
 
+    def _repondre_a_tous(charge: str) -> dict:
+        return {"messages": [
+            ToolMessage(content=charge, tool_call_id=a.get("id", "clarification"),
+                        name="ask_clarification")
+            for a in appels
+        ]}
+
     if posees and any(demande_une_permission(q.choix) for q in posees):
-        return {"messages": [ToolMessage(
-            content=json.dumps({"status": "ok", "message": SANS_OBJET},
-                               ensure_ascii=False),
-            tool_call_id=identifiant, name="ask_clarification")]}
+        return _repondre_a_tous(json.dumps({"status": "ok", "message": SANS_OBJET},
+                                           ensure_ascii=False))
 
     if not posees:
-        return {"messages": [ToolMessage(
-            content=json.dumps({"status": "error",
-                                "error": "Aucune question exploitable — reformule."}),
-            tool_call_id=identifiant, name="ask_clarification")]}
+        return _repondre_a_tous(json.dumps(
+            {"status": "error", "error": "Aucune question exploitable — reformule."}))
 
     reponses = demander(Demande(genre=CLARIFICATION, cle=identifiant, questions=posees))
 
     # ── À partir d'ici : une seule fois ─────────────────────────────────────
     echange = {q.texte: r for q, r in zip(posees, reponses)}
-    return {"messages": [ToolMessage(
-        content=json.dumps({"answers": echange}, ensure_ascii=False),
-        tool_call_id=identifiant, name="ask_clarification")]}
+    charge = json.dumps({"answers": echange}, ensure_ascii=False)
+    return {"messages": [
+        ToolMessage(content=charge, tool_call_id=a.get("id", "clarification"),
+                    name="ask_clarification")
+        for a in appels
+    ]}
 
 
 def appels_en_attente(state: dict) -> bool:

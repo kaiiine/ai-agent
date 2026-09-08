@@ -16,11 +16,11 @@ def schedule_task(
     stop_condition: str = "",
 ) -> str:
     """Planifie une tâche récurrente ou one-shot exécutée par le daemon Axon.
-    
-    description: libellé humain court ("Surveille score France-Espagne")
+
+    description: libellé humain court ("Récap quotidien des tickets Jira")
     prompt: ce que le daemon doit faire/vérifier à chaque exécution.
             Utilise {last_result} pour référencer l'état précédent.
-    interval_seconds: fréquence en secondes (300 = toutes les 5 min)
+    interval_sec: fréquence en secondes (300 = toutes les 5 min)
     notify_channels: ["desktop"] ou ["desktop","slack"] ou ["slack"]
     run_at: datetime ISO pour one-shot (ex: "2026-07-21T18:00:00"). Vide = répétitif.
     stop_condition: condition d'arrêt auto ("si le match est terminé"). Optionnel.
