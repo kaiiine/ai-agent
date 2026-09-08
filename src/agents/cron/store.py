@@ -7,9 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from filelock import FileLock
 from .type import CronTask
+from src.infra import chemins as _chemins
 
-CRON_FILE = Path.home() / ".axon" / "crons.json"
-LOG_DIR = Path.home() / ".axon" / "cron_logs"
+CRON_FILE = _chemins.crons()
+LOG_DIR = _chemins.journaux_cron()
 _LOCK = FileLock(str(CRON_FILE) + ".lock")
 
 def _load() -> list[CronTask]:

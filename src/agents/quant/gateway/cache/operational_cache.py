@@ -9,8 +9,9 @@ import json
 import sqlite3
 import time
 from pathlib import Path
+from src.infra import chemins as _chemins
 
-CACHE_DB = Path.home() / ".axon" / "sports_operational_cache.db"
+CACHE_DB = _chemins.cache_operationnel()
 
 TTL_SECONDS: dict[str, int] = {
     "fixtures": 24 * 3600,

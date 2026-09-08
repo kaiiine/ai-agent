@@ -58,9 +58,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from src.infra import chemins as _chemins
+
 #: Le fichier courant, et la génération précédente. Construire un `Path` ne
 #: touche pas le disque — l'import reste sans effet, cf. DETTE-001.
-FICHIER = Path.home() / ".axon" / "decisions.jsonl"
+FICHIER = _chemins.decisions()
 
 #: Au-delà, rotation. Deux générations au plus : de quoi couvrir un avant/après
 #: sans grandir sans fin sur la machine de quelqu'un.

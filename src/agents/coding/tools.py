@@ -545,6 +545,8 @@ def project_graph_query(project_path: str, symbol: str) -> dict:
 # load_skill vit dans src/skills/, partagé avec l'orchestrateur ; seule la portée
 # les distingue. Plus de repli : les skills .md sont l'unique source des guides.
 from src.skills.tools import make_load_skill
+import ast as _ast
+import re as _re
 
 load_skill = make_load_skill("coding")
 
@@ -553,6 +555,50 @@ load_skill = make_load_skill("coding")
 #: signature d'un backend qui a sérialisé une structure en XML au lieu de la
 #: rendre telle quelle.
 _BALISE_EN_TETE = _re_module.compile(r"^\s*<[a-zA-Z][\w.-]*>")
+
+
+#: Un nom de fichier qui est en fait un FRAGMENT DE CODE. Vécu : l'agent devait
+#: lire un `.xls` et a écrit 1,3 Ko de Python valide dans un fichier nommé
+#: `max_rows:` — le nom vient de son propre script, `def df_to_markdown(df,
+#: max_rows=20):`. Le chemin n'était validé nulle part ; seul le contenu l'était.
+#:
+#: Mesuré sur 92 445 fichiers réels du disque de l'utilisateur : « finit par `:` »
+#: en accroche UN — le fautif. « contient `(…=…)` » n'en accroche aucun. Les
+#: crochets de Next.js et les hachages base64 des caches Android, eux, sont de
+#: vrais noms : une règle plus large en aurait rejeté 1 845.
+_NOM_EST_DU_CODE = _re.compile(r":$|\(.*=.*\)|=.*\(.*\)")
+
+
+def _chemin_invalide(p: Path, content: str) -> str:
+    """Refuse un chemin qui n'est manifestement pas un nom de fichier.
+
+    Symétrique de `_contenu_invalide` : celui-là garde le contenu contre son
+    extension, celui-ci garde le nom contre ce qu'il devrait être. Le coût d'un
+    mauvais nom n'est pas l'écriture — c'est que le fichier devient introuvable
+    et inexécutable, et que l'agent poursuit comme si de rien n'était.
+    """
+    nom = p.name
+    if _NOM_EST_DU_CODE.search(nom):
+        return (f"Chemin refusé : « {nom} » n'est pas un nom de fichier, c'est un "
+                "morceau de code. Donne un chemin absolu se terminant par un nom "
+                "et son extension. Rien n'a été écrit.")
+
+    # Du Python structuré sans extension : le fichier ne se lance pas, aucun
+    # éditeur ne le colore, et `python fichier` marche par accident seulement.
+    # Mesuré : sur 1 280 fichiers sans extension du disque, UN SEUL contient du
+    # Python structuré — celui que ce garde-fou aurait refusé. `Makefile`,
+    # `LICENSE`, `Dockerfile` n'en contiennent pas.
+    if not p.suffix and content and len(content) > 20:
+        try:
+            arbre = _ast.parse(content)
+        except (SyntaxError, ValueError):
+            return ""
+        if any(isinstance(n, (_ast.Import, _ast.ImportFrom, _ast.FunctionDef,
+                              _ast.ClassDef)) for n in _ast.walk(arbre)):
+            return (f"Chemin refusé : « {nom} » n'a pas d'extension alors que le "
+                    "contenu est du Python. Écris-le en `.py` — sans extension il "
+                    "ne se lance pas et ne se relit pas. Rien n'a été écrit.")
+    return ""
 
 
 def _contenu_invalide(p: Path, content: str) -> str:
@@ -705,7 +751,7 @@ def propose_file_change(path: str, content: str, description: str = "") -> Dict[
     description = description.strip() or (
         f"création de {p.name}" if not p.exists() else f"réécriture de {p.name}")
 
-    refus = _contenu_invalide(p, content)
+    refus = _chemin_invalide(p, content) or _contenu_invalide(p, content)
     if refus:
         return {"status": "error", "error": refus}
 

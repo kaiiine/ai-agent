@@ -25,7 +25,9 @@ from src.llm.models import make_llm_gemini, make_llm_mistral, make_llm_ollama_cl
 
 from src.llm.prompts.cron import SYSTEME as _SYSTEM
 
-PID_FILE = Path.home() / ".axon" / "cron.pid"
+from src.infra import chemins as _chemins
+
+PID_FILE = _chemins.pid_cron()
 RELOAD_INTERVAL = 10 # sec
 
 

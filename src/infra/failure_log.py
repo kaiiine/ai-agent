@@ -16,7 +16,9 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-LOG_PATH = Path.home() / ".axon" / "backend_failures.jsonl"
+from src.infra import chemins as _chemins
+
+LOG_PATH = _chemins.echecs_backend()
 
 # Au-delà, on repart d'un fichier neuf : un journal de diagnostic ne doit pas
 # grandir sans fin sur la machine de quelqu'un.

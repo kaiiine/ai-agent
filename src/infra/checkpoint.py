@@ -20,9 +20,13 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, ToolMessage
 
 # ── Répertoire de données Axon ─────────────────────────────────────────────────
-_AXON_DIR   = Path.home() / ".axon"
-_DB_PATH    = _AXON_DIR / "memory.db"
-_LAST_FILE  = _AXON_DIR / "last_thread"
+# Déclaré dans `src/infra/chemins.py` : neuf fichiers recalculaient ce chemin, et
+# aucun ne pouvait être déplacé.
+from src.infra import chemins as _chemins
+
+_AXON_DIR   = _chemins.racine_etat()
+_DB_PATH    = _chemins.base_memoire()
+_LAST_FILE  = _chemins.dernier_thread()
 _CWD_FILE   = _AXON_DIR / "thread_cwds.json"
 
 _AXON_DIR.mkdir(parents=True, exist_ok=True)
