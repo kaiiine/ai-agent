@@ -33,6 +33,7 @@ from .attachments import (attachments as _attachments, open_file_picker,
                           get_clipboard_image, build_message_with_attachments)
 from .completer import SlashCompleter
 from .suggest import HistorySuggest
+from src.infra import chemins as _chemins
 
 console = Console()
 _BORDER = f"dim {ACCENT}"
@@ -313,7 +314,7 @@ def _historique():
     saisie doit démarrer même sans persistance.
     """
     try:
-        chemin = Path.home() / ".axon" / "input_history"
+        chemin = _chemins.historique_saisie()
         chemin.parent.mkdir(parents=True, exist_ok=True)
         return FileHistory(str(chemin))
     except Exception:

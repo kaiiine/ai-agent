@@ -44,10 +44,12 @@ from uuid import uuid4
 
 from src.infra import trace
 
+from src.infra import chemins as _chemins
+
 #: Jusqu'où le dernier export est allé. Sans elle, chaque passage renverrait tout
 #: le journal — sans dommage, grâce aux identifiants déterministes, mais pour
 #: rien.
-REPERE = Path.home() / ".axon" / "langfuse_export.json"
+REPERE = _chemins.repere_langfuse()
 
 #: Taille d'un lot. L'API accepte de gros corps, mais un lot énorme échoue en
 #: entier : découper rend l'échec partiel et réessayable.

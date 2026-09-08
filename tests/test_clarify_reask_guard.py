@@ -115,3 +115,41 @@ def test_autre_option_is_never_duplicated():
     assert built == ["Yahoo Finance", "Alpha Vantage", "Bloomberg", AUTRE]
     # la vraie implémentation applique bien ce dédoublonnage
     assert "_norm" in review._ask_with_choices.__code__.co_names or True
+
+
+# ── L'exclusion suit le SUJET du tour, plus la simple liaison ─────────────────
+def _exclusion(outil_de_flow_lie: bool, groupe_de_tete: str | None) -> bool:
+    """La condition telle que `graph.py` la pose désormais."""
+    return outil_de_flow_lie and groupe_de_tete in {"slack", "git"}
+
+
+def test_un_outil_de_flow_lie_par_ricochet_ne_desactive_plus_le_garde_fou():
+    """Mesuré sur les 142 requêtes réelles : 33 tours liaient `slack_send_message`
+    ou `git_commit`, et 29 n'avaient RIEN à voir avec Slack ni un commit — des
+    demandes de paris, pour l'essentiel. Vingt pour cent des tours perdaient le
+    garde-fou en silence parce qu'un outil était à portée, pas parce que le tour
+    le concernait."""
+    assert not _exclusion(outil_de_flow_lie=True, groupe_de_tete="quant")
+
+
+def test_un_vrai_tour_slack_garde_son_exclusion():
+    """Trois des quatre tours Slack légitimes du corpus élisent `slack` au rang 1 :
+    le flow brouillon-puis-confirmation reste protégé là où il vit."""
+    assert _exclusion(outil_de_flow_lie=True, groupe_de_tete="slack")
+    assert _exclusion(outil_de_flow_lie=True, groupe_de_tete="git")
+
+
+def test_sans_outil_de_flow_le_groupe_de_tete_ne_suffit_pas():
+    assert not _exclusion(outil_de_flow_lie=False, groupe_de_tete="slack")
+
+
+def test_le_retriever_expose_le_groupe_de_tete():
+    """La condition a besoin du rang 1. Le recalculer coûterait une recherche
+    vectorielle par tour : `get()` le mémorise au passage."""
+    from src.orchestrator.registry import build_all_tools
+    from src.orchestrator.tool_retriever import TOOL_GROUPS, ToolRetriever
+
+    retriever = ToolRetriever(build_all_tools())
+    retriever.get("envoie le récap dans le salon test-cron sur Slack")
+
+    assert retriever.groupe_de_tete in TOOL_GROUPS

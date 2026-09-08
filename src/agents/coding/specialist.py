@@ -491,6 +491,23 @@ _OUTILS_PRODUCTIFS = frozenset({
 })
 
 
+#: Combien de relances par étape restante, et la borne absolue.
+#:
+#: Le plafond était FIXE à deux — calibré sur des plans de trois ou quatre
+#: étapes. Sur un plan de quinze, AXON cédait après 13 % du travail et le modèle
+#: annonçait avoir terminé. Deux relances ne bornent pas la même chose selon la
+#: taille de ce qu'elles bornent.
+#:
+#: Borné à 20 : insister a un coût, abandonner aussi.
+_RELANCES_PAR_ETAPE = 2
+_RELANCES_MAX = 20
+
+
+def _plafond_de_relance(etapes: list) -> int:
+    """Deux relances par étape du plan, bornées."""
+    return min(max(2, _RELANCES_PAR_ETAPE * len(etapes)), _RELANCES_MAX)
+
+
 def interpreter_reponse(reponse, messages: list, tool_map: dict, tache: str):
     """`(appels, fini, rappel)` — ce que la boucle décidait après chaque réponse.
 
@@ -539,10 +556,14 @@ def interpreter_reponse(reponse, messages: list, tool_map: dict, tache: str):
     reste = [e for e in dev_plan.steps if not e.done] if dev_plan.steps else []
     if not reste:
         return [], True, ""
-    if _relances["texte"] < 2:
+    if _relances["texte"] < _plafond_de_relance(dev_plan.steps):
         _relances["texte"] += 1
-        return [], False, ("[System] You still have incomplete plan steps. "
-                           "Use your tools to continue — don't summarize yet.")
+        faits = len(dev_plan.steps) - len(reste)
+        return [], False, (
+            f"[SYSTEME] Plan inachevé : {faits}/{len(dev_plan.steps)} étapes. "
+            f"Il reste « {reste[0].label[:70]} »"
+            + (f" et {len(reste) - 1} autre(s)." if len(reste) > 1 else ".")
+            + " Reprends avec tes outils — ne conclus pas, ne résume pas.")
     # Un plan inachevé n'est pas un résultat, mais insister sans fin non plus.
     return [], True, ""
 

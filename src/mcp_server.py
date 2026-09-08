@@ -51,6 +51,7 @@ if str(_ROOT) not in sys.path:
 import mcp.types as types
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from src.infra import chemins as _chemins
 
 logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 logger = logging.getLogger(__name__)
@@ -201,7 +202,7 @@ async def call_tool(
 @app.list_resources()
 async def list_resources() -> list[types.Resource]:
     resources: list[types.Resource] = []
-    memory_dir = Path.home() / ".axon" / "memory"
+    memory_dir = _chemins.memoire_projet()
     if memory_dir.is_dir():
         for f in sorted(memory_dir.glob("*.md")):
             resources.append(types.Resource(
@@ -218,7 +219,7 @@ async def read_resource(uri: str) -> str:
     if not uri.startswith("axon://memory/"):
         raise ValueError(f"URI inconnue : {uri}")
     fname = uri.removeprefix("axon://memory/")
-    path = Path.home() / ".axon" / "memory" / fname
+    path = _chemins.memoire_projet() / fname
     if not path.exists():
         raise FileNotFoundError(f"Ressource introuvable : {path}")
     return path.read_text(encoding="utf-8")

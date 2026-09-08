@@ -10,8 +10,9 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from src.infra import chemins as _chemins
 
-LOG_FILE = Path.home() / ".axon" / "sports_gateway_decisions.log"
+LOG_FILE = _chemins.journal_decisions()
 
 
 def log_decision(

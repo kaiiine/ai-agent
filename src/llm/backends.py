@@ -110,6 +110,28 @@ def utilisables() -> list[str]:
             if not b.cles or any(os.environ.get(c, "").strip() for c in b.cles)]
 
 
+#: L'ordre dans lequel on se rabat quand un backend manque ou tombe.
+#:
+#: `noms()` rendait l'ordre de DÉCLARATION, qui place `ollama` en tête parce
+#: qu'il est le plus ancien. Tout ce qui choisissait « le premier disponible »
+#: tombait donc sur le modèle local — et un chiffre produit par un 4B local ne
+#: dit rien de ce que fera le modèle de production. Le local est un filet, pas
+#: un défaut : il vient en dernier, et il vient toujours, puisqu'il ne demande
+#: aucune clé.
+ORDRE_DE_REPLI: tuple[str, ...] = ("ollama_cloud", "gemini", "mistral", "ollama")
+
+
+def ordre_de_repli() -> list[str]:
+    """Les backends utilisables, du plus souhaité au dernier recours.
+
+    Ce qui est déclaré mais absent de la chaîne vient ensuite : un backend
+    nouvellement ajouté reste joignable sans qu'on ait à penser à l'inscrire ici.
+    """
+    dispo = set(utilisables())
+    chaine = [n for n in ORDRE_DE_REPLI if n in dispo]
+    return chaine + [n for n in BACKENDS if n in dispo and n not in chaine]
+
+
 def champ_modele(nom: str, defaut: str = "ollama_model") -> str:
     """Le champ de `settings` où vit le modèle choisi.
 

@@ -39,8 +39,10 @@ from pathlib import Path
 
 from src.infra import trace
 
+from src.infra import chemins as _chemins
+
 #: Construire un `Path` ne touche pas le disque — l'import reste sans effet.
-FICHIER = Path.home() / ".axon" / "incidents.jsonl"
+FICHIER = _chemins.incidents()
 
 #: Plus petit que le plafond de la trace : un incident est un condensé de
 #: plusieurs lignes, il en faut beaucoup moins pour dire la même chose.
